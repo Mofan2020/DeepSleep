@@ -1,0 +1,583 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		1918D7D77EC9140F31DE6718 /* AutomationRule.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4120515887C376197CCE7F9 /* AutomationRule.swift */; };
+		313486F9C714E8AC1436BE78 /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = 178D52B0BEF95859AB8B6D88 /* Components.swift */; };
+		373014038B076AA90C1FA300 /* HelperProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE3295E35F8D28B69A629A8F /* HelperProtocol.swift */; };
+		3A1481D80852929319D7370D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 7C643740D2392EB1F876E8BA /* Assets.xcassets */; };
+		3E5B62161B19BF1CCE6E1B22 /* ControlView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DEE905EAF64EFC038DFC418 /* ControlView.swift */; };
+		43965B2CAF6676C308E55526 /* SleepController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93C5E4B4358BF400FACC53DC /* SleepController.swift */; };
+		48A8411A91BC1725A62EAE46 /* HelperInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64A44533D85F54CB2BC70D48 /* HelperInstaller.swift */; };
+		49BA4D1FF2BB3180D79AA7D5 /* uninstall-helper.sh in Resources */ = {isa = PBXBuildFile; fileRef = 5C4F13990352AAC1FC42479A /* uninstall-helper.sh */; };
+		4CC529F69FC171A6A59CD5E3 /* AssertionKind.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0322343BBDEB6A664F907E5 /* AssertionKind.swift */; };
+		51B6C48355C4201E39EE0FD3 /* DeepSleepApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0343C5752D94A72187E5078B /* DeepSleepApp.swift */; };
+		51B9E0C05CAD5F9A566B8C72 /* LogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E329CAE64699407C2EF03425 /* LogView.swift */; };
+		54E4BE87EB3245B63EACF75B /* AutomationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAB733FD825537CF3DA93F8A /* AutomationView.swift */; };
+		5A4F40BF9A424BCCF3245E8B /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB38EC4337633D0035A86A60 /* MenuBarView.swift */; };
+		5CF047FA11D64F6D5A7CF6FB /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68F588C53CC45F52D04A434B /* AppDelegate.swift */; };
+		683EF363E4F084BEF59CD0EB /* BiometricAuth.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BE799E3FF01373354EC7D76 /* BiometricAuth.swift */; };
+		6F47FDDC8B8A8BCEF68E6621 /* HelperClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CAA06BD31D3CA20982FDE4C /* HelperClient.swift */; };
+		73ACAA59B7A7FB882CB55A50 /* AutomationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65EE86101EAC650FBB5F0CBB /* AutomationEngine.swift */; };
+		89D6B9C0B4DFC68071831BD1 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96ED86613A6A98B3C2D18307 /* main.swift */; };
+		92410274FE9694B7FA8A76D8 /* install-helper.sh in Resources */ = {isa = PBXBuildFile; fileRef = 960F8920CB0412CB44C5FB31 /* install-helper.sh */; };
+		9429A1EB6266F9702E9D9158 /* ScheduleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43F312DABC0A8AAF435E103B /* ScheduleView.swift */; };
+		B49E2B674BE4C8DBA32A22F6 /* HelperProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE3295E35F8D28B69A629A8F /* HelperProtocol.swift */; };
+		C58D488668AB8F3B538FC28C /* PowerSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0E2DA26DEFB4FB3396D7063 /* PowerSettingsView.swift */; };
+		E2B0737ADBFCBC9D4C33F3A6 /* UnixSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58014010D89130A9A194BE3F /* UnixSocket.swift */; };
+		E3CD86EC4A9AF02878100043 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2650D41E2F701CBC6738B29 /* ContentView.swift */; };
+		EE8F090E23622184B5D04D17 /* UnixSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58014010D89130A9A194BE3F /* UnixSocket.swift */; };
+		F9C83EB7C255F958694CAE61 /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 571B5897312541D688A35CB1 /* DashboardView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		5D8059AB5D1E934B1457F746 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A70E7CEF9846EEE400125BCF /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 703204CA0D067769A439102C;
+			remoteInfo = DeepSleepHelper;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		0343C5752D94A72187E5078B /* DeepSleepApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepSleepApp.swift; sourceTree = "<group>"; };
+		0DEE905EAF64EFC038DFC418 /* ControlView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlView.swift; sourceTree = "<group>"; };
+		17210D6CB4894B79813780AD /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		178D52B0BEF95859AB8B6D88 /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
+		43F312DABC0A8AAF435E103B /* ScheduleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleView.swift; sourceTree = "<group>"; };
+		571B5897312541D688A35CB1 /* DashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardView.swift; sourceTree = "<group>"; };
+		58014010D89130A9A194BE3F /* UnixSocket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnixSocket.swift; sourceTree = "<group>"; };
+		5BE799E3FF01373354EC7D76 /* BiometricAuth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BiometricAuth.swift; sourceTree = "<group>"; };
+		5C4F13990352AAC1FC42479A /* uninstall-helper.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = "uninstall-helper.sh"; sourceTree = "<group>"; };
+		5CAA06BD31D3CA20982FDE4C /* HelperClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelperClient.swift; sourceTree = "<group>"; };
+		64A44533D85F54CB2BC70D48 /* HelperInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelperInstaller.swift; sourceTree = "<group>"; };
+		65EE86101EAC650FBB5F0CBB /* AutomationEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationEngine.swift; sourceTree = "<group>"; };
+		68F588C53CC45F52D04A434B /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		7C643740D2392EB1F876E8BA /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		93C5E4B4358BF400FACC53DC /* SleepController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepController.swift; sourceTree = "<group>"; };
+		960F8920CB0412CB44C5FB31 /* install-helper.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = "install-helper.sh"; sourceTree = "<group>"; };
+		96ED86613A6A98B3C2D18307 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		A4120515887C376197CCE7F9 /* AutomationRule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationRule.swift; sourceTree = "<group>"; };
+		C0322343BBDEB6A664F907E5 /* AssertionKind.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssertionKind.swift; sourceTree = "<group>"; };
+		C621046B4A0FEBDD66540895 /* DeepSleep.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DeepSleep.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		CAB733FD825537CF3DA93F8A /* AutomationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationView.swift; sourceTree = "<group>"; };
+		D6B81675C2A48027F8DF140A /* DeepSleepHelper */ = {isa = PBXFileReference; includeInIndex = 0; path = DeepSleepHelper; sourceTree = BUILT_PRODUCTS_DIR; };
+		DB38EC4337633D0035A86A60 /* MenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarView.swift; sourceTree = "<group>"; };
+		DE3295E35F8D28B69A629A8F /* HelperProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelperProtocol.swift; sourceTree = "<group>"; };
+		E0E2DA26DEFB4FB3396D7063 /* PowerSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerSettingsView.swift; sourceTree = "<group>"; };
+		E329CAE64699407C2EF03425 /* LogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogView.swift; sourceTree = "<group>"; };
+		F2650D41E2F701CBC6738B29 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		19452EED5F5DD816BB33EA7C = {
+			isa = PBXGroup;
+			children = (
+				ECEB04EB4814B1A1D37C1900 /* DeepSleep */,
+				38B0F7B6872D64A4C6EE9E84 /* DeepSleepHelper */,
+				B08498667B75590523A8F293 /* Shared */,
+				30DD0D7E0ED513A527381A29 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		30DD0D7E0ED513A527381A29 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				C621046B4A0FEBDD66540895 /* DeepSleep.app */,
+				D6B81675C2A48027F8DF140A /* DeepSleepHelper */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		38B0F7B6872D64A4C6EE9E84 /* DeepSleepHelper */ = {
+			isa = PBXGroup;
+			children = (
+				96ED86613A6A98B3C2D18307 /* main.swift */,
+			);
+			path = DeepSleepHelper;
+			sourceTree = "<group>";
+		};
+		87CE46D332B4F3AF2889D27E /* Core */ = {
+			isa = PBXGroup;
+			children = (
+				C0322343BBDEB6A664F907E5 /* AssertionKind.swift */,
+				65EE86101EAC650FBB5F0CBB /* AutomationEngine.swift */,
+				A4120515887C376197CCE7F9 /* AutomationRule.swift */,
+				93C5E4B4358BF400FACC53DC /* SleepController.swift */,
+			);
+			path = Core;
+			sourceTree = "<group>";
+		};
+		A54D53C12E646CA216412D4B /* Privileged */ = {
+			isa = PBXGroup;
+			children = (
+				5CAA06BD31D3CA20982FDE4C /* HelperClient.swift */,
+				64A44533D85F54CB2BC70D48 /* HelperInstaller.swift */,
+			);
+			path = Privileged;
+			sourceTree = "<group>";
+		};
+		B08498667B75590523A8F293 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				DE3295E35F8D28B69A629A8F /* HelperProtocol.swift */,
+				58014010D89130A9A194BE3F /* UnixSocket.swift */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		B673396F005C8755E110A8B1 /* Auth */ = {
+			isa = PBXGroup;
+			children = (
+				5BE799E3FF01373354EC7D76 /* BiometricAuth.swift */,
+			);
+			path = Auth;
+			sourceTree = "<group>";
+		};
+		D5EBEFBEB0B48688AB35EA1C /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				7C643740D2392EB1F876E8BA /* Assets.xcassets */,
+				17210D6CB4894B79813780AD /* Info.plist */,
+				960F8920CB0412CB44C5FB31 /* install-helper.sh */,
+				5C4F13990352AAC1FC42479A /* uninstall-helper.sh */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		ECEB04EB4814B1A1D37C1900 /* DeepSleep */ = {
+			isa = PBXGroup;
+			children = (
+				B673396F005C8755E110A8B1 /* Auth */,
+				87CE46D332B4F3AF2889D27E /* Core */,
+				A54D53C12E646CA216412D4B /* Privileged */,
+				D5EBEFBEB0B48688AB35EA1C /* Resources */,
+				FC4B385FCF1AA271879C9157 /* Views */,
+				68F588C53CC45F52D04A434B /* AppDelegate.swift */,
+				0343C5752D94A72187E5078B /* DeepSleepApp.swift */,
+			);
+			path = DeepSleep;
+			sourceTree = "<group>";
+		};
+		FC4B385FCF1AA271879C9157 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				CAB733FD825537CF3DA93F8A /* AutomationView.swift */,
+				178D52B0BEF95859AB8B6D88 /* Components.swift */,
+				F2650D41E2F701CBC6738B29 /* ContentView.swift */,
+				0DEE905EAF64EFC038DFC418 /* ControlView.swift */,
+				571B5897312541D688A35CB1 /* DashboardView.swift */,
+				E329CAE64699407C2EF03425 /* LogView.swift */,
+				DB38EC4337633D0035A86A60 /* MenuBarView.swift */,
+				E0E2DA26DEFB4FB3396D7063 /* PowerSettingsView.swift */,
+				43F312DABC0A8AAF435E103B /* ScheduleView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		703204CA0D067769A439102C /* DeepSleepHelper */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 77D9D986F514975AA32971BD /* Build configuration list for PBXNativeTarget "DeepSleepHelper" */;
+			buildPhases = (
+				B270C8073640E7CF2423FB54 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = DeepSleepHelper;
+			packageProductDependencies = (
+			);
+			productName = DeepSleepHelper;
+			productReference = D6B81675C2A48027F8DF140A /* DeepSleepHelper */;
+			productType = "com.apple.product-type.tool";
+		};
+		8EECD2DF0612360142B148BA /* DeepSleep */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 75BA69671E884BA1925A08F7 /* Build configuration list for PBXNativeTarget "DeepSleep" */;
+			buildPhases = (
+				571324C492598142AF054E0C /* Sources */,
+				8D8B0C44DD3CFBAD1D836FF8 /* Resources */,
+				D7618AE2E7455818579873B9 /* Embed Privileged Helper */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				935227E06F9D207B189EC0CB /* PBXTargetDependency */,
+			);
+			name = DeepSleep;
+			packageProductDependencies = (
+			);
+			productName = DeepSleep;
+			productReference = C621046B4A0FEBDD66540895 /* DeepSleep.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A70E7CEF9846EEE400125BCF /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					703204CA0D067769A439102C = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Manual;
+					};
+					8EECD2DF0612360142B148BA = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Manual;
+					};
+				};
+			};
+			buildConfigurationList = DFC68133C0D37B3162E0D48E /* Build configuration list for PBXProject "DeepSleep" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 19452EED5F5DD816BB33EA7C;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 30DD0D7E0ED513A527381A29 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				703204CA0D067769A439102C /* DeepSleepHelper */,
+				8EECD2DF0612360142B148BA /* DeepSleep */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		8D8B0C44DD3CFBAD1D836FF8 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3A1481D80852929319D7370D /* Assets.xcassets in Resources */,
+				92410274FE9694B7FA8A76D8 /* install-helper.sh in Resources */,
+				49BA4D1FF2BB3180D79AA7D5 /* uninstall-helper.sh in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		D7618AE2E7455818579873B9 /* Embed Privileged Helper */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Embed Privileged Helper";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -euo pipefail\nDEST=\"${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Library/PrivilegedHelperTools\"\nmkdir -p \"${DEST}\"\nSRC=\"\"\nfor cand in \"${BUILT_PRODUCTS_DIR}/deepsleep-helper\" \\\n            \"${BUILT_PRODUCTS_DIR}/${CONFIGURATION}/deepsleep-helper\"; do\n  if [ -f \"${cand}\" ]; then SRC=\"${cand}\"; break; fi\ndone\nif [ -z \"${SRC}\" ]; then\n  echo \"error: deepsleep-helper binary not found in ${BUILT_PRODUCTS_DIR}\" >&2\n  exit 1\nfi\ncp -f \"${SRC}\" \"${DEST}/deepsleep-helper\"\nchmod 755 \"${DEST}/deepsleep-helper\"\necho \"embedded helper: ${DEST}/deepsleep-helper\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		571324C492598142AF054E0C /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5CF047FA11D64F6D5A7CF6FB /* AppDelegate.swift in Sources */,
+				4CC529F69FC171A6A59CD5E3 /* AssertionKind.swift in Sources */,
+				73ACAA59B7A7FB882CB55A50 /* AutomationEngine.swift in Sources */,
+				1918D7D77EC9140F31DE6718 /* AutomationRule.swift in Sources */,
+				54E4BE87EB3245B63EACF75B /* AutomationView.swift in Sources */,
+				683EF363E4F084BEF59CD0EB /* BiometricAuth.swift in Sources */,
+				313486F9C714E8AC1436BE78 /* Components.swift in Sources */,
+				E3CD86EC4A9AF02878100043 /* ContentView.swift in Sources */,
+				3E5B62161B19BF1CCE6E1B22 /* ControlView.swift in Sources */,
+				F9C83EB7C255F958694CAE61 /* DashboardView.swift in Sources */,
+				51B6C48355C4201E39EE0FD3 /* DeepSleepApp.swift in Sources */,
+				6F47FDDC8B8A8BCEF68E6621 /* HelperClient.swift in Sources */,
+				48A8411A91BC1725A62EAE46 /* HelperInstaller.swift in Sources */,
+				B49E2B674BE4C8DBA32A22F6 /* HelperProtocol.swift in Sources */,
+				51B9E0C05CAD5F9A566B8C72 /* LogView.swift in Sources */,
+				5A4F40BF9A424BCCF3245E8B /* MenuBarView.swift in Sources */,
+				C58D488668AB8F3B538FC28C /* PowerSettingsView.swift in Sources */,
+				9429A1EB6266F9702E9D9158 /* ScheduleView.swift in Sources */,
+				43965B2CAF6676C308E55526 /* SleepController.swift in Sources */,
+				E2B0737ADBFCBC9D4C33F3A6 /* UnixSocket.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B270C8073640E7CF2423FB54 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				373014038B076AA90C1FA300 /* HelperProtocol.swift in Sources */,
+				EE8F090E23622184B5D04D17 /* UnixSocket.swift in Sources */,
+				89D6B9C0B4DFC68071831BD1 /* main.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		935227E06F9D207B189EC0CB /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 703204CA0D067769A439102C /* DeepSleepHelper */;
+			targetProxy = 5D8059AB5D1E934B1457F746 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		0668A7129DE466A19386BF42 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGNING_ALLOWED = YES;
+				CODE_SIGNING_REQUIRED = YES;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = NO;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_STRICT_CONCURRENCY = minimal;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		11DCBFC325E79E87BAA76CEA /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				COMBINE_HIDPI_IMAGES = YES;
+				GCC_PREPROCESSOR_DEFINITIONS = "$(inherited) HELPER_BUILD=1";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.skyc8266.deepsleep.helper;
+				PRODUCT_NAME = "deepsleep-helper";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+			};
+			name = Debug;
+		};
+		28F8CFF8E2C5D4C659033151 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				COMBINE_HIDPI_IMAGES = YES;
+				GCC_PREPROCESSOR_DEFINITIONS = "$(inherited) HELPER_BUILD=1";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.skyc8266.deepsleep.helper;
+				PRODUCT_NAME = "deepsleep-helper";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+			};
+			name = Release;
+		};
+		5C6613A1A808F83D4AB554BC /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGNING_ALLOWED = YES;
+				CODE_SIGNING_REQUIRED = YES;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_STRICT_CONCURRENCY = minimal;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		6FCBAB88E803866C8EF4B56E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				INFOPLIST_FILE = DeepSleep/Resources/Info.plist;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.skyc8266.deepsleep;
+				PRODUCT_NAME = "Deep Sleep";
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		CDCD55103E3F8C6719E456C2 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				INFOPLIST_FILE = DeepSleep/Resources/Info.plist;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.skyc8266.deepsleep;
+				PRODUCT_NAME = "Deep Sleep";
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		75BA69671E884BA1925A08F7 /* Build configuration list for PBXNativeTarget "DeepSleep" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CDCD55103E3F8C6719E456C2 /* Debug */,
+				6FCBAB88E803866C8EF4B56E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		77D9D986F514975AA32971BD /* Build configuration list for PBXNativeTarget "DeepSleepHelper" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				11DCBFC325E79E87BAA76CEA /* Debug */,
+				28F8CFF8E2C5D4C659033151 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		DFC68133C0D37B3162E0D48E /* Build configuration list for PBXProject "DeepSleep" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5C6613A1A808F83D4AB554BC /* Debug */,
+				0668A7129DE466A19386BF42 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A70E7CEF9846EEE400125BCF /* Project object */;
+}

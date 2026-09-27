@@ -1,0 +1,12 @@
+# XcodeGen 的产物与构建缓存，可由 project.yml 重新生成
+build/
+DerivedData/
+
+# Xcode 用户态数据
+xcuserdata/
+*.xcuserdatad
+*.xcscmblueprint
+*.xccheckout
+
+# macOS
+.DS_Store

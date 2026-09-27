@@ -1,0 +1,87 @@
+name: DeepSleep
+options:
+  bundleIdPrefix: com.skyc8266
+  deploymentTarget:
+    macOS: "26.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MACOSX_DEPLOYMENT_TARGET: "26.0"
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGNING_REQUIRED: "YES"
+    CODE_SIGNING_ALLOWED: "YES"
+    DEVELOPMENT_TEAM: ""
+    ENABLE_HARDENED_RUNTIME: "NO"
+    ALWAYS_SEARCH_USER_PATHS: "NO"
+    CLANG_ENABLE_OBJC_ARC: "YES"
+    SWIFT_STRICT_CONCURRENCY: minimal
+    DEAD_CODE_STRIPPING: "YES"
+    ENABLE_USER_SCRIPT_SANDBOXING: "NO"
+
+targets:
+  DeepSleepHelper:
+    type: tool
+    platform: macOS
+    sources:
+      - path: Shared
+      - path: DeepSleepHelper
+    settings:
+      base:
+        PRODUCT_NAME: deepsleep-helper
+        PRODUCT_BUNDLE_IDENTIFIER: com.skyc8266.deepsleep.helper
+        SKIP_INSTALL: "YES"
+        GCC_PREPROCESSOR_DEFINITIONS: "$(inherited) HELPER_BUILD=1"
+
+  DeepSleep:
+    type: application
+    platform: macOS
+    sources:
+      - path: Shared
+      - path: DeepSleep
+        excludes:
+          - "Resources/install-helper.sh"
+          - "Resources/uninstall-helper.sh"
+      - path: DeepSleep/Resources/install-helper.sh
+        buildPhase: resources
+      - path: DeepSleep/Resources/uninstall-helper.sh
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_NAME: Deep Sleep
+        PRODUCT_BUNDLE_IDENTIFIER: com.skyc8266.deepsleep
+        INFOPLIST_FILE: DeepSleep/Resources/Info.plist
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        COMBINE_HIDPI_IMAGES: "YES"
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
+    dependencies:
+      - target: DeepSleepHelper
+        embed: false
+        codeSign: false
+    postBuildScripts:
+      - name: Embed Privileged Helper
+        basedOnDependencyAnalysis: false
+        script: |
+          set -euo pipefail
+          DEST="${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Library/PrivilegedHelperTools"
+          mkdir -p "${DEST}"
+          SRC=""
+          for cand in "${BUILT_PRODUCTS_DIR}/deepsleep-helper" \
+                      "${BUILT_PRODUCTS_DIR}/${CONFIGURATION}/deepsleep-helper"; do
+            if [ -f "${cand}" ]; then SRC="${cand}"; break; fi
+          done
+          if [ -z "${SRC}" ]; then
+            echo "error: deepsleep-helper binary not found in ${BUILT_PRODUCTS_DIR}" >&2
+            exit 1
+          fi
+          cp -f "${SRC}" "${DEST}/deepsleep-helper"
+          chmod 755 "${DEST}/deepsleep-helper"
+          echo "embedded helper: ${DEST}/deepsleep-helper"
