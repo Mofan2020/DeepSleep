@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		1918D7D77EC9140F31DE6718 /* AutomationRule.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4120515887C376197CCE7F9 /* AutomationRule.swift */; };
+		1C970D88D66C4F43D8AD1DAC /* PowerWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2DD20BF1CBB3194597701CA /* PowerWatcher.swift */; };
 		313486F9C714E8AC1436BE78 /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = 178D52B0BEF95859AB8B6D88 /* Components.swift */; };
 		373014038B076AA90C1FA300 /* HelperProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE3295E35F8D28B69A629A8F /* HelperProtocol.swift */; };
 		3A1481D80852929319D7370D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 7C643740D2392EB1F876E8BA /* Assets.xcassets */; };
@@ -63,6 +64,7 @@
 		93C5E4B4358BF400FACC53DC /* SleepController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepController.swift; sourceTree = "<group>"; };
 		960F8920CB0412CB44C5FB31 /* install-helper.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = "install-helper.sh"; sourceTree = "<group>"; };
 		96ED86613A6A98B3C2D18307 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		A2DD20BF1CBB3194597701CA /* PowerWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerWatcher.swift; sourceTree = "<group>"; };
 		A4120515887C376197CCE7F9 /* AutomationRule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationRule.swift; sourceTree = "<group>"; };
 		C0322343BBDEB6A664F907E5 /* AssertionKind.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssertionKind.swift; sourceTree = "<group>"; };
 		C621046B4A0FEBDD66540895 /* DeepSleep.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DeepSleep.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -109,6 +111,7 @@
 				C0322343BBDEB6A664F907E5 /* AssertionKind.swift */,
 				65EE86101EAC650FBB5F0CBB /* AutomationEngine.swift */,
 				A4120515887C376197CCE7F9 /* AutomationRule.swift */,
+				A2DD20BF1CBB3194597701CA /* PowerWatcher.swift */,
 				93C5E4B4358BF400FACC53DC /* SleepController.swift */,
 			);
 			path = Core;
@@ -317,6 +320,7 @@
 				51B9E0C05CAD5F9A566B8C72 /* LogView.swift in Sources */,
 				5A4F40BF9A424BCCF3245E8B /* MenuBarView.swift in Sources */,
 				C58D488668AB8F3B538FC28C /* PowerSettingsView.swift in Sources */,
+				1C970D88D66C4F43D8AD1DAC /* PowerWatcher.swift in Sources */,
 				9429A1EB6266F9702E9D9158 /* ScheduleView.swift in Sources */,
 				43965B2CAF6676C308E55526 /* SleepController.swift in Sources */,
 				E2B0737ADBFCBC9D4C33F3A6 /* UnixSocket.swift in Sources */,

@@ -113,6 +113,82 @@ tail -f /var/log/com.skyc8266.deepsleep.helper.log
 
 ## 设计决策记录
 
+### 为什么需要「期望态 + 对账」而不是「设置了就不管」
+
+实际威胁模型里有一个容易被忽略的场景：**外部程序（或系统本身）会改掉我们依赖的状态**。
+原本的实现每 10 秒读一次 `pmset -g`，但那只是「更新界面显示」——
+如果别的程序把 `disablesleep` 改回 0，Deep Sleep 只会把开关显示成关闭，不会纠回去。
+
+用户的语义是明确的：「我打开了阻止睡眠，就是不希望它睡」。所以必须主动纠偏。
+
+现在的三层防护：
+
+| 层 | 机制 | 覆盖的场景 |
+| --- | --- | --- |
+| 1 | 3 秒周期对账 | 空闲睡眠（idle timer 以分钟计，3 秒足够抢在到点前恢复） |
+| 2 | `PreventSystemSleep` 断言加固 | 合盖 / 菜单睡眠等**主动**请求（`disablesleep` 只在 powerd 评估空闲睡眠时起作用） |
+| 3 | 睡前拦截（`IORegisterForSystemPower` + `IOAllowPowerChange`） | 已经在睡眠等待路径上的最后机会 |
+
+第 3 层的安全边界写在 `PowerWatcher.swift` 里：**用户没有要求阻止睡眠时必须立刻放行**，
+且始终有 5 秒兜底超时，绝不允许出现「永远不放行」把系统吊死的状态。
+
+对账与 `reconcile()` 的分工：
+
+- `reconcile()` —— 让实际持有对齐用户意图（内部一致性）
+- `auditExternalState()` —— 让系统状态对齐我们的期望（对抗外部干扰）
+
+### 断言不会被外部进程取消（实测）
+
+`Assertion` 归创建它的进程所有，内核拒绝跨进程释放：
+
+```
+本进程 pid=57829 尝试释放 assertion id=35300（由另一个进程创建）
+IOPMAssertionRelease 返回: kIOReturnNotPermitted（被拒绝）
+```
+
+释放尝试后系统侧断言完好。系统确认把它算作阻止睡眠的贡献者：
+
+```
+sleep        1 (sleep prevented by UURemote, powerd, Deep Sleep)
+displaysleep 0 (display sleep prevented by Deep Sleep)
+```
+
+因此第 1、2 档保持状态不存在「被别人取消」的路径，唯一失效途径是本进程死亡。
+真正需要对抗外部改动的是 `pmset` 那一类持久设置。
+
+### 系统有权无视断言（Apple 官方文档）
+
+`kIOPMAssertionTypePreventSystemSleep` 的 Discussion 原文：
+
+> Assertions are just suggestions to the OS, and the OS can only honor them to
+> the best of its ability. In the case of low power or a thermal emergency,
+> the system may sleep anyway despite the assertion.
+
+低电量与过热保护时断言会被忽略，这是任何软件都无法绕过的边界。
+
+### IOKit 电源消息常量必须手动复现
+
+`kIOMessageSystemWillSleep` 等在 `IOMessage.h` 里由 C 宏 `iokit_common_msg()` 定义，
+Swift 无法导入宏。`PowerWatcher.swift` 里按同样的位运算规则复现，
+message 参数取自 SDK 头文件，并已用 C 程序编译比对确认：
+
+```
+kIOMessageCanSystemSleep      = 0xE0000270
+kIOMessageSystemWillSleep     = 0xE0000280
+kIOMessageSystemHasPoweredOn  = 0xE0000300
+```
+
+### 对账频率的可验证性
+
+「对账在跑」不能只靠读代码相信。`--status` 会输出 `audits=<n>` 计数：
+
+```
+$ "Deep Sleep" --hold idle-system --wait 10 --status
+hold=idle-system count=1 fullControl=off ... powerWatcher=on audits=3 lastRestore=none
+```
+
+10 秒得到 `audits=3`，与 3 秒周期一致。
+
 ### 为什么不用 SMJobBless
 
 SMJobBless 要求在 Apple Developer Program 中注册并与 Apple 建立信任关系的

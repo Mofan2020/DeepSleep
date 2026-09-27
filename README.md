@@ -120,10 +120,41 @@ open -a "Deep Sleep" --args --status
 | --- | --- |
 | `--hold <kinds>` | 逗号分隔。接受 `idle-system` / `display` / `system`，以及 `idle`、`screen`、`lid`、`all` 等别名 |
 | `--release` | 释放全部保持 |
-| `--status` | 输出当前状态，格式 `hold=... count=... fullControl=... sleepDisabled=...` |
+| `--status` | 输出当前状态，含 `powerWatcher=`、`audits=` 等诊断字段 |
+| `--wait <秒>` | 与 `--status` 配合，等一段时间后再报告（用于验证对账频率） |
+| `--enable-full-control` | 触发一次性管理员授权安装特权助手，等价于界面按钮 |
+| `--disable-full-control` | 卸载特权助手并恢复系统原状 |
 
 > 注意：`--hold` / `--release` 作用于启动它的那个实例。macOS 单实例机制下，
 > 对已运行的实例再次传参不会生效 —— 需要脚本化持续控制时，请用自动化规则。
+
+---
+
+## 外部改动的对抗
+
+`pmset` 那类设置是系统级的持久配置，任何 root 程序都能改。用户打开「阻止睡眠」的语义
+是「我不希望它睡」，所以 Deep Sleep 不会把设置写进去就不管，而是持续纠偏。
+
+三层防护：
+
+| 层 | 机制 | 覆盖场景 |
+| --- | --- | --- |
+| 1 | **3 秒周期对账** | 空闲睡眠。idle timer 以分钟计，3 秒足够抢在到点之前把设置改回去 |
+| 2 | **`PreventSystemSleep` 断言加固** | 合盖、菜单「睡眠」等**主动**请求。`disablesleep` 只在 powerd 评估空闲睡眠时生效，断言才能在决策阶段挡下来 |
+| 3 | **睡前拦截** | 已经走到睡眠等待路径时的最后机会。收到 `willSleep` 后系统会等待 `IOAllowPowerChange`，这段窗口里重建防护，powerd 即会取消本次睡眠 |
+
+第 3 层的安全边界：用户没有要求阻止睡眠时**立刻放行**，并且始终有 5 秒兜底超时 ——
+绝不允许出现「永远不放行」把系统吊死的状态。
+
+关于两个常见疑问：
+
+- **断言会被别的程序取消吗？** 不会。断言归创建它的进程所有，跨进程释放返回
+  `kIOReturnNotPermitted`（已实测）。系统也确认把它算作阻止睡眠的贡献者
+  （`sleep 1 (sleep prevented by ... Deep Sleep)`）。唯一失效途径是自己进程死亡，
+  这也是对账要覆盖的场景之一（助手进程被重启后断言会消失）。
+- **能保证一定不睡吗？** 不能。Apple 文档明确写着断言只是「建议」：
+  *"In the case of low power or a thermal emergency, the system may sleep anyway
+  despite the assertion."* 低电量与过热时任何软件都挡不住。
 
 ---
 
@@ -141,6 +172,7 @@ DeepSleep/
 │   ├── Core/
 │   │   ├── AssertionKind.swift     断言类型定义（能力清单）
 │   │   ├── SleepController.swift   核心状态机：意图合并 → 实际持有
+│   │   ├── PowerWatcher.swift      电源事件监听（睡前拦截 + 唤醒对账）
 │   │   ├── AutomationRule.swift    自动化规则模型
 │   │   └── AutomationEngine.swift  规则求值引擎
 │   ├── Privileged/
@@ -158,6 +190,10 @@ DeepSleep/
 
 把两个以 root 身份运行的 shell 脚本单独放在 `Resources/` 而不是内联进 Swift 字符串，
 是为了让它们可以被 `sh -n` 静态检查和 dry-run 验证。
+
+`scripts/` 下是配套工具：`make-icon.py` 生成应用图标，
+`helper-probe.py` 直接与特权助手对话（排查与端到端测试），
+`try-release-assertion.swift` 验证跨进程断言释放会被拒绝。
 
 ---
 
@@ -182,6 +218,11 @@ DeepSleep/
 
 - Debug 与 Release 均可构建，产物结构、Bundle ID、最低系统版本正确
 - 应用启动后真实创建系统级 assertion，`pmset -g assertions` 可观察到
+- 系统确认 Deep Sleep 的断言计入阻止睡眠的贡献者：
+  `sleep 1 (sleep prevented by UURemote, powerd, Deep Sleep)`
+- 跨进程释放断言被内核拒绝（`kIOReturnNotPermitted`），断言归创建者所有
+- 电源事件监听注册成功（`powerWatcher=on`），睡前拦截与唤醒对账通道可用
+- 3 秒周期对账真实运行：`--wait 10 --status` 返回 `audits=3`
 - 正常退出（AppleEvent quit）会走清理路径并释放全部 assertion
 - `BiometricAuth` 环境下 `deviceOwnerAuthentication` 可用，`biometryType = touchID`
 - 安装/卸载脚本通过 `sh -n` 语法检查、变量缺失保护、源文件缺失保护
@@ -192,6 +233,8 @@ DeepSleep/
 未实测：
 
 - 助手的**真实安装**与提权操作（需要一次管理员授权；`sudo` 无法在无交互环境下完成）
+- `disablesleep` 被外部改回后的**自动恢复**（依赖助手，助手未装则无法写入）
+- 睡前拦截的实际效果（需要真的触发一次睡眠等待，且同样依赖助手持有的断言）
 - Touch ID 弹窗的实际交互（需要人工按指纹确认）
 
 详见 `docs/notes.md`。

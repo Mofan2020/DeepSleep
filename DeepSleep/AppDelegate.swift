@@ -90,6 +90,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 emit(summary(from: controller))
                 index += 1
 
+            case "--wait":
+                // 让 --status 能在运行一段时间后再报告，
+                // 用于验证周期对账确实按预期频率在跑。
+                guard index + 1 < arguments.count, let seconds = Double(arguments[index + 1]) else {
+                    emit("--wait 需要一个秒数，例如 --wait 10")
+                    index += 1
+                    continue
+                }
+                try? await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000))
+                index += 2
+
+            case "--enable-full-control":
+                // 触发一次性管理员授权，安装特权助手。
+                // 与界面上的按钮等价，便于脚本化部署。
+                emit("正在请求管理员授权以安装特权助手…")
+                await controller.installHelper()
+                await controller.refreshHelperState()
+                emit(summary(from: controller))
+                index += 1
+
+            case "--disable-full-control":
+                emit("正在卸载特权助手并恢复系统原状…")
+                await controller.uninstallHelper()
+                emit(summary(from: controller))
+                index += 1
+
             default:
                 index += 1
             }
@@ -102,12 +128,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sorted { $0.rawValue < $1.rawValue }
             .map(\.cliName)
             .joined(separator: ",")
-        return """
+        let base = """
         hold=\(active.isEmpty ? "none" : active) \
         count=\(controller.activeAssertions.count) \
         fullControl=\(controller.helperState.isReady ? "on" : "off") \
-        sleepDisabled=\(controller.sleepDisabled ? "1" : "0")
+        sleepDisabled=\(controller.sleepDisabled ? "1" : "0") \
+        desiredSleepDisabled=\(controller.desiredSleepDisabled ? "1" : "0") \
+        backingAssertion=\(controller.sleepDisabledBacking ? "1" : "0") \
+        powerWatcher=\(PowerWatcher.shared.isRegistered ? "on" : "off")
         """
+        return base + " " + controller.auditSummary
     }
 
     /// 同时写到标准输出与系统日志，两条通路都能取到结果。

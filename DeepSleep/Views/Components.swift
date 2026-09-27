@@ -88,6 +88,10 @@ struct AssertionRow: View {
     @EnvironmentObject private var controller: SleepController
 
     private var isRuleDriven: Bool { controller.ruleAssertions.contains(kind) }
+    /// 「完全禁止系统睡眠」会额外持有一枚 PreventSystemSleep 断言作为加固。
+    private var isSleepDisabledBacking: Bool {
+        controller.sleepDisabledBacking && kind == .preventSystemSleep
+    }
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
@@ -105,6 +109,9 @@ struct AssertionRow: View {
                     }
                     if isRuleDriven {
                         Tag(text: "自动化维持", color: .purple)
+                    }
+                    if isSleepDisabledBacking {
+                        Tag(text: "由完全禁止睡眠加固", color: .orange)
                     }
                 }
                 Text(kind.subtitle)

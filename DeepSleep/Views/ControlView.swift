@@ -92,7 +92,7 @@ struct ControlView: View {
 
         SectionCard(
             title: "完全禁止系统睡眠",
-            subtitle: "写入系统级设置（pmset disablesleep），效果是连合上盖子也不会睡眠。这是控制力最强、也最耗电的一档。",
+            subtitle: "写入系统级设置（pmset disablesleep），效果是连合上盖子也不会睡眠。这是控制力最强、也最耗电的一档。开启后会同时持有一枚系统级断言，并在每 3 秒的对账中持续校验——被外部程序改回时立即恢复。",
             symbol: "exclamationmark.octagon",
             accent: .orange
         ) {

@@ -107,6 +107,44 @@ final class SleepController: ObservableObject {
     /// 本应用是否开启了 `disablesleep`，用于退出时按需恢复。
     private var didEnableSleepDisabled = false
 
+    /// 用户是否要求「完全禁止系统睡眠」。这是**期望态**：
+    /// 外部程序改动 pmset 只会改变实际态，不会改变这里，对账时据此纠正。
+    @Published private(set) var desiredSleepDisabled = false
+
+    /// 是否因为「完全禁止系统睡眠」而额外持有 PreventSystemSleep 断言。
+    /// disablesleep 是持久设置，但主动睡眠请求（合盖 / 菜单睡眠）不一定等它，
+    /// 同时持有断言能让 powerd 在睡眠决策阶段就看到我们的意图。
+    @Published private(set) var sleepDisabledBacking = false
+
+    /// 对账失败的历史，用于在日志里说明「恢复失败」而不是静默失效。
+    private var consecutiveAuditFailures = 0
+
+    /// 对账统计。暴露出来是为了让「对账在跑」这件事可以被外部验证，
+    /// 而不是只能相信代码。
+    @Published private(set) var auditCount = 0
+    @Published private(set) var lastRestoreAt: Date?
+
+    /// 已进行的对账次数与最近一次自动恢复时间，供 CLI / 界面诊断。
+    var auditSummary: String {
+        let restore = lastRestoreAt.map {
+            ISO8601DateFormatter().string(from: $0)
+        } ?? "none"
+        return "audits=\(auditCount) lastRestore=\(restore)"
+    }
+
+    /// 当前所有意图的并集。
+    private var desiredAssertions: Set<AssertionKind> {
+        var desired = manualAssertions.union(ruleAssertions)
+        if sleepDisabledBacking { desired.insert(.preventSystemSleep) }
+        return desired
+    }
+
+    /// 用户是否表达了「我要保持清醒」的意图。
+    /// 睡前拦截时用它做同步判断（必须极快，不能有 IO）。
+    private var wantsToStayAwake: Bool {
+        desiredSleepDisabled || !desiredAssertions.isEmpty
+    }
+
     let automation = AutomationEngine()
 
     private var localAssertionIDs: [AssertionKind: IOPMAssertionID] = [:]
@@ -126,6 +164,27 @@ final class SleepController: ObservableObject {
                 await self.reconcile()
             }
         }
+
+        // 睡前拦截：只读内存状态，必须同步返回。
+        PowerWatcher.shared.shouldPreventSleep = { [weak self] in
+            guard let self else { return false }
+            return MainActor.assumeIsolated { self.wantsToStayAwake }
+        }
+
+        // 睡前重建防护（可以做 IO）。
+        PowerWatcher.shared.rebuildProtection = { [weak self] in
+            guard let self else { return false }
+            return await self.rebuildProtection()
+        }
+
+        // 唤醒后立刻对账：睡眠期间设置可能被外部改动。
+        PowerWatcher.shared.didWake = { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                self.appendLog("系统已唤醒，正在核对电源设置")
+                await self.auditExternalState()
+            }
+        }
     }
 
     // MARK: - 生命周期
@@ -136,7 +195,11 @@ final class SleepController: ObservableObject {
         await refreshPowerSettings()
         await refreshScheduledWake()
         automation.start()
+        PowerWatcher.shared.start()
         startRefreshLoop()
+        if !PowerWatcher.shared.isRegistered {
+            appendLog("电源事件监听未注册，睡前拦截与唤醒对账不可用", isError: true)
+        }
     }
 
     func shutdown() async {
@@ -145,6 +208,7 @@ final class SleepController: ObservableObject {
         countdownTimer?.invalidate()
         countdownTimer = nil
         automation.stop()
+        PowerWatcher.shared.stop()
 
         // 释放助手侧的 assertion，避免 app 退出后残留占用。
         for kind in remoteHeld {
@@ -158,14 +222,16 @@ final class SleepController: ObservableObject {
         appendLog("Deep Sleep 退出，已释放全部 assertion")
     }
 
+    /// 对账周期。3 秒是为了把「外部改动 → 恢复」的窗口压到最小：
+    /// 空闲睡眠通常以分钟计，3 秒足够赶在计时到点之前纠正；
+    /// 主动睡眠请求则由 PowerWatcher 的睡前拦截兜底。
     private func startRefreshLoop() {
-        let timer = Timer(timeInterval: 10, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 3, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
-                self.batteryIsOnAC = AutomationEngine.isOnACPower()
-                if !self.helperState.isReady {
-                    await self.refreshHelperState()
-                }
+                let onAC = AutomationEngine.isOnACPower()
+                if self.batteryIsOnAC != onAC { self.batteryIsOnAC = onAC }
+                await self.auditExternalState()
             }
         }
         RunLoop.main.add(timer, forMode: .common)
@@ -177,19 +243,22 @@ final class SleepController: ObservableObject {
 
     func refreshHelperState() async {
         guard HelperInstaller.isInstalled else {
-            helperState = .notInstalled
+            if helperState != .notInstalled { helperState = .notInstalled }
             return
         }
         let probe = await HelperClient.shared.probe()
+        let next: HelperState
         if probe.reachable {
             if let version = probe.version, version != HelperConstants.protocolVersion {
-                helperState = .versionMismatch(helper: version, app: HelperConstants.protocolVersion)
+                next = .versionMismatch(helper: version, app: HelperConstants.protocolVersion)
             } else {
-                helperState = .ready(version: probe.version ?? HelperConstants.protocolVersion)
+                next = .ready(version: probe.version ?? HelperConstants.protocolVersion)
             }
         } else {
-            helperState = .installedNotRunning(probe.detail)
+            next = .installedNotRunning(probe.detail)
         }
+        // 3 秒一次对账会反复调用本方法，只有真正变化时才发布，避免无谓的界面重绘。
+        if helperState != next { helperState = next }
     }
 
     /// 一次性安装助手。这是全流程中**唯一**需要管理员授权的一步。
@@ -248,7 +317,9 @@ final class SleepController: ObservableObject {
             manualAssertions.insert(kind)
         } else {
             guard manualAssertions.contains(kind) else {
-                if ruleAssertions.contains(kind) {
+                if sleepDisabledBacking && kind == .preventSystemSleep {
+                    banner = Banner(level: .info, text: "「\(kind.title)」由「完全禁止系统睡眠」加固维持，请在「完全控制」页关闭该功能")
+                } else if ruleAssertions.contains(kind) {
                     banner = Banner(level: .info, text: "「\(kind.title)」正由自动化规则维持，请到「自动化」页调整对应规则")
                 }
                 return
@@ -276,7 +347,7 @@ final class SleepController: ObservableObject {
         isReconciling = true
         defer { isReconciling = false }
 
-        let desired = manualAssertions.union(ruleAssertions)
+        let desired = desiredAssertions
 
         // 先释放多余的，再申请缺少的，避免「先申请后释放」造成短暂冲突。
         for kind in activeAssertions.subtracting(desired) {
@@ -287,12 +358,16 @@ final class SleepController: ObservableObject {
         }
     }
 
-    private func acquire(_ kind: AssertionKind) async {
+    /// - Parameter requireConfirmation: 自动恢复场景传 false。
+    ///   用户此前已经就同一意图授权过，恢复是延续该意图，不该反复弹指纹。
+    private func acquire(_ kind: AssertionKind, requireConfirmation: Bool = true) async {
         if kind.requiresPrivilege {
             guard helperState.isReady else { return }
-            guard await confirmPrivilegedAction(reason: "允许 Deep Sleep \(kind.title)") else {
-                manualAssertions.remove(kind)
-                return
+            if requireConfirmation {
+                guard await confirmPrivilegedAction(reason: "允许 Deep Sleep \(kind.title)") else {
+                    manualAssertions.remove(kind)
+                    return
+                }
             }
             do {
                 let response = try await HelperClient.shared.send(.init(
@@ -336,10 +411,8 @@ final class SleepController: ObservableObject {
 
     private func release(_ kind: AssertionKind) async {
         if kind.requiresPrivilege {
-            guard remoteHeld.contains(kind) else {
-                activeAssertions.remove(kind)
-                return
-            }
+            // 不依赖 remoteHeld 判断：对账时可能发现助手持有了我们记录之外的断言，
+            // 那种情况同样需要发释放命令。
             _ = try? await HelperClient.shared.send(.init(
                 command: .releaseAssertion,
                 arguments: ["kind": privilegeKind(for: kind).rawValue]
@@ -396,26 +469,43 @@ final class SleepController: ObservableObject {
         guard await confirmPrivilegedAction(reason: disabled ? "允许 Deep Sleep 完全禁止系统睡眠" : "允许 Deep Sleep 恢复系统睡眠") else {
             return
         }
+
+        // 先落期望态：即使这一次写入失败，后续对账也会持续把它纠回来。
+        desiredSleepDisabled = disabled
+        // 加固：同时持有一个 PreventSystemSleep 断言。
+        // disablesleep 只在 powerd 评估空闲睡眠时起作用，而合盖 / 菜单睡眠是
+        // 主动请求，断言才能让 powerd 在决策阶段就挡下来。
+        sleepDisabledBacking = disabled
+        await reconcile()
+
+        await applySleepDisabled(disabled, announce: true)
+        await refreshPowerSettings()
+    }
+
+    /// 真正把 disablesleep 写进系统。
+    /// - Parameter announce: 自动恢复时不打扰用户，只写日志。
+    @discardableResult
+    private func applySleepDisabled(_ enabled: Bool, announce: Bool) async -> Bool {
         do {
             let response = try await HelperClient.shared.send(.init(
                 command: .setSleepDisabled,
-                arguments: ["enabled": disabled ? "1" : "0"]
+                arguments: ["enabled": enabled ? "1" : "0"]
             ))
-            if response.success {
-                sleepDisabled = disabled
-                didEnableSleepDisabled = disabled
-                appendLog(response.message)
-                banner = Banner(level: .success, text: response.message)
-            } else {
-                appendLog("设置失败：\(response.message)", isError: true)
-                banner = Banner(level: .error, text: response.message)
+            guard response.success else {
+                appendLog("设置 disablesleep 失败：\(response.message)", isError: true)
+                if announce { banner = Banner(level: .error, text: response.message) }
+                return false
             }
+            didEnableSleepDisabled = enabled
+            sleepDisabled = enabled
+            appendLog(announce ? response.message : "已自动恢复系统睡眠设置：\(response.message)")
+            if announce { banner = Banner(level: .success, text: response.message) }
+            return true
         } catch {
-            appendLog("设置失败：\(error.localizedDescription)", isError: true)
-            banner = Banner(level: .error, text: error.localizedDescription)
+            appendLog("设置 disablesleep 失败：\(error.localizedDescription)", isError: true)
+            if announce { banner = Banner(level: .error, text: error.localizedDescription) }
+            return false
         }
-        // 以系统实际值为准，避免 UI 与真实状态不一致。
-        await refreshPowerSettings()
     }
 
     /// 退出时若本应用开启过 disablesleep，则恢复系统默认行为。
@@ -427,6 +517,129 @@ final class SleepController: ObservableObject {
         ))
         didEnableSleepDisabled = false
         appendLog("退出前已恢复系统睡眠设置")
+    }
+
+    // MARK: - 外部改动对账
+
+    /// 核对「我们依赖的系统状态」是否被外部改动，并纠正。
+    ///
+    /// 与 `reconcile()` 的分工：
+    ///   `reconcile()`         让实际持有对齐用户意图（内部一致性）
+    ///   `auditExternalState()` 让系统状态对齐我们的期望（对抗外部干扰）
+    func auditExternalState() async {
+        await auditHelperProcess()
+        await auditRemoteAssertions()
+        await auditLocalAssertions()
+        await auditSleepDisabled()
+        auditCount += 1
+    }
+
+    /// 助手进程可能被重启（崩溃、被 bootout、系统更新），
+    /// 新进程不持有任何断言，而旧断言已随旧进程消失。
+    private func auditHelperProcess() async {
+        guard HelperInstaller.isInstalled else { return }
+        let wasReady = helperState.isReady
+        await refreshHelperState()
+        if wasReady && !helperState.isReady {
+            appendLog("特权助手已失去响应，待其恢复后将重建断言", isError: true)
+        }
+    }
+
+    /// 核心：核对助手实际持有的断言是否与我们的期望一致。
+    private func auditRemoteAssertions() async {
+        guard HelperInstaller.isInstalled, helperState.isReady else { return }
+        let expected = desiredAssertions.filter { $0.requiresPrivilege }
+
+        guard let response = try? await HelperClient.shared.send(.init(command: .status), timeout: 5),
+              response.success else {
+            return
+        }
+
+        let held = Set(
+            (response.payload["assertions"] ?? "")
+                .split(separator: ",")
+                .compactMap { PrivilegedAssertionKind(rawValue: String($0)) }
+                .map(assertionKind(for:))
+        )
+
+        // 1) 助手丢了我们以为还在的断言 —— 最典型的场景是助手进程被重启。
+        let lost = remoteHeld.subtracting(held)
+        if !lost.isEmpty {
+            remoteHeld.subtract(lost)
+            activeAssertions.subtract(lost)
+            appendLog("助手已丢失「\(lost.map(\.title).sorted().joined(separator: "、"))」，正在重建", isError: true)
+        }
+
+        // 2) 助手持有我们不再需要的（此前释放未成功），补一次释放。
+        let surplus = held.subtracting(expected)
+        for kind in surplus {
+            await release(kind)
+        }
+
+        // 3) 重建缺失的。这里是自动恢复，不再要求授权确认。
+        for kind in expected.subtracting(held) {
+            appendLog("重建「\(kind.title)」")
+            await acquire(kind, requireConfirmation: false)
+        }
+    }
+
+    /// 本地断言归本进程所有，外部无法释放，这里只防御内部状态漂移。
+    private func auditLocalAssertions() async {
+        let drifted = activeAssertions.filter { !$0.requiresPrivilege && localAssertionIDs[$0] == nil }
+        for kind in drifted {
+            activeAssertions.remove(kind)
+            appendLog("本地断言「\(kind.title)」状态异常，正在重新申请", isError: true)
+            await acquire(kind, requireConfirmation: false)
+        }
+
+        let orphans = localAssertionIDs.keys.filter { !activeAssertions.contains($0) }
+        for kind in orphans {
+            if let identifier = localAssertionIDs.removeValue(forKey: kind) {
+                IOPMAssertionRelease(identifier)
+            }
+        }
+    }
+
+    /// 回应「别的程序把 pmset 改回去了」的核心逻辑。
+    private func auditSleepDisabled() async {
+        guard desiredSleepDisabled, helperState.isReady else { return }
+
+        if Self.readPowerSettingsLocally()["SleepDisabled"] == "1" {
+            consecutiveAuditFailures = 0
+            return
+        }
+
+        appendLog("检测到 disablesleep 被外部改回，立即恢复以防系统进入睡眠", isError: true)
+        let restored = await applySleepDisabled(true, announce: false)
+        if restored {
+            consecutiveAuditFailures = 0
+            lastRestoreAt = Date()
+            return
+        }
+        consecutiveAuditFailures += 1
+        if consecutiveAuditFailures >= 3 {
+            banner = Banner(
+                level: .error,
+                text: "系统睡眠设置反复被外部改回且恢复失败，请检查是否有其他电源管理工具在同时运行。"
+            )
+        }
+    }
+
+    /// 睡前拦截调用的重建流程。返回防护是否已恢复。
+    private func rebuildProtection() async -> Bool {
+        await auditExternalState()
+        if desiredSleepDisabled {
+            return Self.readPowerSettingsLocally()["SleepDisabled"] == "1"
+        }
+        return desiredAssertions.subtracting(activeAssertions).isEmpty
+    }
+
+    private func assertionKind(for privilegeKind: PrivilegedAssertionKind) -> AssertionKind {
+        switch privilegeKind {
+        case .preventSystemSleep:      return .preventSystemSleep
+        case .preventIdleSystemSleep:  return .preventIdleSystemSleep
+        case .preventIdleDisplaySleep: return .preventIdleDisplaySleep
+        }
     }
 
     // MARK: - 电源设置读写
