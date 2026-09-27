@@ -326,7 +326,8 @@ final class SleepController: ObservableObject {
         if result == kIOReturnSuccess {
             localAssertionIDs[kind] = identifier
             activeAssertions.insert(kind)
-            appendLog("已获取「\(kind.title)」")
+            // 记录 assertion ID：排查时可用 IOPMAssertionRelease 反证断言归属。
+            appendLog("已获取「\(kind.title)」（assertion id \(identifier)）")
         } else {
             appendLog("获取「\(kind.title)」失败，IOReturn 0x\(String(result, radix: 16))", isError: true)
             banner = Banner(level: .error, text: "无法获取「\(kind.title)」，系统拒绝了该请求")
