@@ -41,7 +41,8 @@
 ### 其他
 
 - 倒计时睡眠（到点自动进入睡眠）
-- 菜单栏常驻面板
+- 菜单栏常驻：左键打开主界面，右键弹出快速设置
+- 关掉所有窗口后隐藏 Dock 图标，应用继续在菜单栏后台运行
 - 运行日志页
 
 ---
@@ -124,6 +125,7 @@ open -a "Deep Sleep" --args --status
 | `--wait <秒>` | 与 `--status` 配合，等一段时间后再报告（用于验证对账频率） |
 | `--enable-full-control` | 触发一次性管理员授权安装特权助手，等价于界面按钮 |
 | `--disable-full-control` | 卸载特权助手并恢复系统原状 |
+| `--window-self-test` | 自检窗口显示与 Dock 图标策略（关窗 → 隐藏 Dock → 重开 → 恢复） |
 
 > 注意：`--hold` / `--release` 作用于启动它的那个实例。macOS 单实例机制下，
 > 对已运行的实例再次传参不会生效 —— 需要脚本化持续控制时，请用自动化规则。
@@ -158,6 +160,27 @@ open -a "Deep Sleep" --args --status
 
 ---
 
+## 菜单栏与 Dock 图标
+
+菜单栏图标用 AppKit 的 `NSStatusItem` 手动搭建，而不是 SwiftUI 的 `MenuBarExtra`
+—— 后者的点击一律弹出它自己的面板，**无法区分左右键**，做不到「左键打开、右键设置」。
+
+| 操作 | 行为 |
+| --- | --- |
+| **左键**点图标 | 打开主界面（窗口已存在则直接前置，保留界面上的选中项） |
+| **右键**点图标 | 弹出快速设置菜单：三项保持开关、30 分钟倒计时、打开主界面、退出 |
+| Control + 左键 | 同右键（触控板与鼠标的通用习惯） |
+
+菜单每次弹出都重新构建，所以开关的勾选状态永远是当下的真实状态，不需要订阅同步。
+需要 root 的那一项在没启用完全控制时会标注「需先启用完全控制」，而不是点了没反应。
+
+**Dock 图标是动态的。** 关掉所有窗口后应用切换为 `.accessory` 激活策略：
+Dock 图标消失，进程继续在菜单栏后台运行；再次打开界面时切回 `.regular`。
+最小化的窗口仍然算「有窗口」—— 否则 Dock 图标一消失，用户就再也找不回那个窗口了。
+关掉窗口后从访达或聚焦再次打开会触达 `applicationShouldHandleReopen`，把界面叫回来。
+
+---
+
 ## 项目结构
 
 ```
@@ -167,8 +190,11 @@ DeepSleep/
 │   ├── HelperProtocol.swift        命令 / 响应 / 常量定义
 │   └── UnixSocket.swift            UNIX socket 封装（长度前缀分帧）
 ├── DeepSleep/                      主应用
-│   ├── DeepSleepApp.swift          App 入口（窗口 + 菜单栏）
-│   ├── AppDelegate.swift           生命周期清理 + 命令行接口
+│   ├── DeepSleepApp.swift          App 入口（主窗口场景）
+│   ├── AppDelegate.swift           生命周期 + 命令行接口 + 窗口自检
+│   ├── Windows/
+│   │   ├── MenuBarController.swift 菜单栏图标：左键打开 / 右键设置
+│   │   └── WindowCoordinator.swift 主窗口显示与 Dock 图标策略
 │   ├── Core/
 │   │   ├── AssertionKind.swift     断言类型定义（能力清单）
 │   │   ├── SleepController.swift   核心状态机：意图合并 → 实际持有
@@ -193,7 +219,8 @@ DeepSleep/
 
 `scripts/` 下是配套工具：`make-icon.py` 生成应用图标，
 `helper-probe.py` 直接与特权助手对话（排查与端到端测试），
-`try-release-assertion.swift` 验证跨进程断言释放会被拒绝。
+`try-release-assertion.swift` 验证跨进程断言释放会被拒绝，
+`dump-windows.swift` 从进程外部查看 Deep Sleep 的窗口是否真的出现。
 
 ---
 
@@ -229,6 +256,11 @@ DeepSleep/
 - 脚本 dry-run：正确生成 LaunchDaemon plist（`plutil -lint` 通过）、
   拷贝出的助手校验和与源文件一致、socket 就绪检测与超时路径均正确
 - 助手非 root 运行会被守卫拒绝（退出码 1）
+- 菜单栏图标创建成功，左键 / 右键 / Control+左键三种点击判定均正确
+- 右键菜单构建正确：持有两项保持时显示 `☑ 阻止空闲睡眠`、`☑ 保持屏幕常亮`，
+  未持有的保持 `☐`
+- 关掉主窗口后激活策略自动切到 `accessory`（Dock 图标消失），进程继续运行
+- 再次打开后窗口恢复、激活策略切回 `regular`
 
 未实测：
 
@@ -236,6 +268,8 @@ DeepSleep/
 - `disablesleep` 被外部改回后的**自动恢复**（依赖助手，助手未装则无法写入）
 - 睡前拦截的实际效果（需要真的触发一次睡眠等待，且同样依赖助手持有的断言）
 - Touch ID 弹窗的实际交互（需要人工按指纹确认）
+- 用真实鼠标 / 触控板点击菜单栏图标。自检覆盖的是点击判定逻辑与菜单内容，
+  系统级的鼠标事件合成需要「辅助功能」权限，未做
 
 ---
 

@@ -16,6 +16,9 @@ struct DeepSleepApp: App {
             ContentView()
                 .environmentObject(controller)
                 .frame(minWidth: 940, minHeight: 640)
+                // 把 SwiftUI 的 openWindow 动作与主窗口对象交给 AppKit 侧的
+                // 菜单栏控制器——窗口关闭后要用它把界面重新叫回来。
+                .background(WindowEnvironmentBridge())
         }
         .windowResizability(.contentMinSize)
         .defaultSize(width: 1000, height: 700)
@@ -37,11 +40,5 @@ struct DeepSleepApp: App {
                 .keyboardShortcut("l", modifiers: [.command, .shift])
             }
         }
-
-        MenuBarExtra("Deep Sleep", systemImage: "moon.zzz.fill") {
-            MenuBarView()
-                .environmentObject(controller)
-        }
-        .menuBarExtraStyle(.window)
     }
 }

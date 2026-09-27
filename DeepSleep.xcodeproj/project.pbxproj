@@ -20,8 +20,8 @@
 		51B6C48355C4201E39EE0FD3 /* DeepSleepApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0343C5752D94A72187E5078B /* DeepSleepApp.swift */; };
 		51B9E0C05CAD5F9A566B8C72 /* LogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E329CAE64699407C2EF03425 /* LogView.swift */; };
 		54E4BE87EB3245B63EACF75B /* AutomationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAB733FD825537CF3DA93F8A /* AutomationView.swift */; };
-		5A4F40BF9A424BCCF3245E8B /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB38EC4337633D0035A86A60 /* MenuBarView.swift */; };
 		5CF047FA11D64F6D5A7CF6FB /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68F588C53CC45F52D04A434B /* AppDelegate.swift */; };
+		5E8C2C5C7356AE760C7CBF15 /* MenuBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13BD008C8B73D8005C11EFAC /* MenuBarController.swift */; };
 		683EF363E4F084BEF59CD0EB /* BiometricAuth.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BE799E3FF01373354EC7D76 /* BiometricAuth.swift */; };
 		6F47FDDC8B8A8BCEF68E6621 /* HelperClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CAA06BD31D3CA20982FDE4C /* HelperClient.swift */; };
 		73ACAA59B7A7FB882CB55A50 /* AutomationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65EE86101EAC650FBB5F0CBB /* AutomationEngine.swift */; };
@@ -30,6 +30,7 @@
 		9429A1EB6266F9702E9D9158 /* ScheduleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43F312DABC0A8AAF435E103B /* ScheduleView.swift */; };
 		B49E2B674BE4C8DBA32A22F6 /* HelperProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE3295E35F8D28B69A629A8F /* HelperProtocol.swift */; };
 		C58D488668AB8F3B538FC28C /* PowerSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0E2DA26DEFB4FB3396D7063 /* PowerSettingsView.swift */; };
+		C7CAF9096B3F0A12F35B8126 /* WindowCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2955F2519DCC800EC189D9EA /* WindowCoordinator.swift */; };
 		E2B0737ADBFCBC9D4C33F3A6 /* UnixSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58014010D89130A9A194BE3F /* UnixSocket.swift */; };
 		E3CD86EC4A9AF02878100043 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2650D41E2F701CBC6738B29 /* ContentView.swift */; };
 		EE8F090E23622184B5D04D17 /* UnixSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58014010D89130A9A194BE3F /* UnixSocket.swift */; };
@@ -49,8 +50,10 @@
 /* Begin PBXFileReference section */
 		0343C5752D94A72187E5078B /* DeepSleepApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepSleepApp.swift; sourceTree = "<group>"; };
 		0DEE905EAF64EFC038DFC418 /* ControlView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlView.swift; sourceTree = "<group>"; };
+		13BD008C8B73D8005C11EFAC /* MenuBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarController.swift; sourceTree = "<group>"; };
 		17210D6CB4894B79813780AD /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		178D52B0BEF95859AB8B6D88 /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
+		2955F2519DCC800EC189D9EA /* WindowCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowCoordinator.swift; sourceTree = "<group>"; };
 		43F312DABC0A8AAF435E103B /* ScheduleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleView.swift; sourceTree = "<group>"; };
 		571B5897312541D688A35CB1 /* DashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardView.swift; sourceTree = "<group>"; };
 		58014010D89130A9A194BE3F /* UnixSocket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnixSocket.swift; sourceTree = "<group>"; };
@@ -70,7 +73,6 @@
 		C621046B4A0FEBDD66540895 /* DeepSleep.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DeepSleep.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		CAB733FD825537CF3DA93F8A /* AutomationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationView.swift; sourceTree = "<group>"; };
 		D6B81675C2A48027F8DF140A /* DeepSleepHelper */ = {isa = PBXFileReference; includeInIndex = 0; path = DeepSleepHelper; sourceTree = BUILT_PRODUCTS_DIR; };
-		DB38EC4337633D0035A86A60 /* MenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarView.swift; sourceTree = "<group>"; };
 		DE3295E35F8D28B69A629A8F /* HelperProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelperProtocol.swift; sourceTree = "<group>"; };
 		E0E2DA26DEFB4FB3396D7063 /* PowerSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerSettingsView.swift; sourceTree = "<group>"; };
 		E329CAE64699407C2EF03425 /* LogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogView.swift; sourceTree = "<group>"; };
@@ -86,6 +88,15 @@
 				B08498667B75590523A8F293 /* Shared */,
 				30DD0D7E0ED513A527381A29 /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		284FB8464946649C95DE126E /* Windows */ = {
+			isa = PBXGroup;
+			children = (
+				13BD008C8B73D8005C11EFAC /* MenuBarController.swift */,
+				2955F2519DCC800EC189D9EA /* WindowCoordinator.swift */,
+			);
+			path = Windows;
 			sourceTree = "<group>";
 		};
 		30DD0D7E0ED513A527381A29 /* Products */ = {
@@ -162,6 +173,7 @@
 				A54D53C12E646CA216412D4B /* Privileged */,
 				D5EBEFBEB0B48688AB35EA1C /* Resources */,
 				FC4B385FCF1AA271879C9157 /* Views */,
+				284FB8464946649C95DE126E /* Windows */,
 				68F588C53CC45F52D04A434B /* AppDelegate.swift */,
 				0343C5752D94A72187E5078B /* DeepSleepApp.swift */,
 			);
@@ -177,7 +189,6 @@
 				0DEE905EAF64EFC038DFC418 /* ControlView.swift */,
 				571B5897312541D688A35CB1 /* DashboardView.swift */,
 				E329CAE64699407C2EF03425 /* LogView.swift */,
-				DB38EC4337633D0035A86A60 /* MenuBarView.swift */,
 				E0E2DA26DEFB4FB3396D7063 /* PowerSettingsView.swift */,
 				43F312DABC0A8AAF435E103B /* ScheduleView.swift */,
 			);
@@ -318,12 +329,13 @@
 				48A8411A91BC1725A62EAE46 /* HelperInstaller.swift in Sources */,
 				B49E2B674BE4C8DBA32A22F6 /* HelperProtocol.swift in Sources */,
 				51B9E0C05CAD5F9A566B8C72 /* LogView.swift in Sources */,
-				5A4F40BF9A424BCCF3245E8B /* MenuBarView.swift in Sources */,
+				5E8C2C5C7356AE760C7CBF15 /* MenuBarController.swift in Sources */,
 				C58D488668AB8F3B538FC28C /* PowerSettingsView.swift in Sources */,
 				1C970D88D66C4F43D8AD1DAC /* PowerWatcher.swift in Sources */,
 				9429A1EB6266F9702E9D9158 /* ScheduleView.swift in Sources */,
 				43965B2CAF6676C308E55526 /* SleepController.swift in Sources */,
 				E2B0737ADBFCBC9D4C33F3A6 /* UnixSocket.swift in Sources */,
+				C7CAF9096B3F0A12F35B8126 /* WindowCoordinator.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

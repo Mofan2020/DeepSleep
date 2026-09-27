@@ -223,8 +223,89 @@ pid 55022(Deep Sleep): [0x...] 00:00:03 PreventUserIdleSystemSleep named: ""
 对已运行实例再次传参不会生效。若要做脚本化的持续控制，
 应使用自动化规则，或在未运行实例时启动。
 
+### 为什么菜单栏不用 MenuBarExtra
+
+SwiftUI 的 `MenuBarExtra` 只提供「点击 → 弹出自己的面板」这一种交互，
+**拿不到点击事件本身**，因此无法区分左右键。需求是左键打开主界面、右键做设置，
+只能改用 AppKit 的 `NSStatusItem`：
+
+```swift
+button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+```
+
+默认只有左键抬起会发出动作，右键会被直接丢掉 —— 不显式声明两种事件就收不到右键。
+
+菜单弹出用 `menu.popUp(positioning:at:in:)` 而不是
+
+```swift
+statusItem.menu = menu          // 反例
+statusItem.button?.performClick(nil)
+statusItem.menu = nil
+```
+
+后者会把菜单挂到状态项上，收起时必须记得摘掉，否则下一次左键也会弹菜单。
+`popUp` 没有这个状态要维护。
+
+### 直接运行可执行文件时 SwiftUI 不会创建窗口
+
+自检一开始报告「3 秒内没等到主窗口」，打印 `NSApp.windows` 却是 7 个窗口，
+且全部 `titled=false` —— 主窗口根本没被创建。
+
+原因不是代码有问题，而是**启动方式**：
+
+```sh
+# 不会创建主窗口：进程直接由终端拉起，没有经过 LaunchServices
+"Deep Sleep.app/Contents/MacOS/Deep Sleep" --window-self-test
+
+# 正常创建，1000x700
+open -a "Deep Sleep.app"
+```
+
+直接执行 bundle 内的可执行文件时 SwiftUI 不会自动开窗。用户实际都是走
+Finder / Spotlight / `open` 启动，所以这不影响使用；但**自动化测试必须用 `open` 启动**，
+否则测的根本不是用户会走的路径。
+
+用 `open` 又会丢掉 stdout，所以自检读取输出走这两个选项：
+
+```sh
+open -a "Deep Sleep.app" --stdout out.log --stderr err.log --args --window-self-test
+```
+
+### 为什么把点击判定和菜单构建拆出来
+
+这两件事原本都埋在 `@objc` 的点击回调里，自动化测试碰不到：
+
+- `isSecondaryClick(eventType:modifiers:)` 抽成静态纯函数，自检可以直接传入
+  `.leftMouseUp` / `.rightMouseUp` / `[.control]` 验证判定，不必合成系统事件。
+- `makeMenu()` 从 `presentMenu()` 抽出来，自检可以只构建不弹出。菜单弹出是**模态的**，
+  自动化测试一旦触发就会卡死在那里，所以只能验证内容而不能验证弹出。
+
+`NSStatusBar` 也没有查询接口，为了确认菜单栏图标真的建起来了，
+控制器留了一个弱引用 `MenuBarController.current` 供自检核对 ——
+否则只能「读代码觉得应该建了」。
+
+### 为什么 Dock 图标的判断条件要处理三个例外
+
+隐藏 Dock 图标的触发条件是「所有窗口都关了」，判据用 `NSApp.windows`，
+但要处理三个例外：
+
+- **popover 与菜单都是 `NSPanel`**，它们开合不代表用户关掉了应用界面，
+  必须先排除，否则右键菜单一收起就可能误判。
+- **最小化的窗口算「有窗口」**。若把它算作没有窗口而隐藏 Dock 图标，
+  用户就失去把那个窗口找回来的唯一入口（Dock 上的缩略图）。
+- 窗口关闭通知发出时，该窗口**还在 `NSApp.windows` 里**且 `isVisible` 仍为 true，
+  立即判断会把最后一个窗口误算成可见窗口，Dock 图标永远不隐藏。
+  所以要等一轮事件处理之后再判断。
+
+### 为什么状态栏图标固定不随状态变化
+
+菜单栏图标保持固定的月亮（`moon.zzz.fill`）。状态变化改用 menu 首行的文字摘要
+（「正在保持清醒 · 2 项」/「允许正常睡眠」/「已完全禁止睡眠（含合盖）」）表达。
+图标频繁变形在菜单栏里反而更难一眼认出是哪个应用。
+
 ## 后续可做
 
 - 分发用的开发者签名与公证流程
 - 跨零点时间段规则的边界测试（已有实现，缺自动化测试）
 - 规则与 assertion 状态的持久化恢复（当前每次启动从空白开始）
+- 菜单栏图标的可选样式（有人偏好用颜色区分「正在保持清醒」）

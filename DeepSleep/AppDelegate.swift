@@ -10,11 +10,29 @@ import AppKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
+    /// 菜单栏常驻入口。必须由 AppDelegate 强引用，
+    /// 否则控制器一释放，NSStatusItem 跟着消失、图标直接不见。
+    private var menuBar: MenuBarController?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        WindowCoordinator.shared.observeWindowLifecycle()
+
         Task { @MainActor in
             await SleepController.shared.bootstrap()
+            // 菜单栏手动搭：需要区分左键（打开主界面）与右键（快速设置），
+            // SwiftUI 的 MenuBarExtra 做不到这件事。
+            menuBar = MenuBarController(controller: .shared)
             await Self.handleLaunchArguments()
         }
+    }
+
+    /// 关掉所有窗口后应用退成菜单栏模式（没有 Dock 图标），
+    /// 此时从访达或聚焦再次打开应该把界面带回来，而不是「点了没反应」。
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            Task { @MainActor in WindowCoordinator.shared.showMainWindow() }
+        }
+        return true
     }
 
     /// 退出前先异步清理：释放 assertion、按需恢复 disablesleep。
@@ -39,6 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     ///   --hold <kinds>   逗号分隔，接受 idle-system / display / system 及其别名
     ///   --release        释放全部保持
     ///   --status         把当前状态输出到标准输出
+    ///   --window-self-test  自检窗口显示与 Dock 图标策略
     /// 例如：`open -a "Deep Sleep" --args --hold idle-system,display`
     @MainActor
     private static func handleLaunchArguments() async {
@@ -116,6 +135,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 emit(summary(from: controller))
                 index += 1
 
+            case "--window-self-test":
+                await Self.runWindowSelfTest()
+                index += 1
+
             default:
                 index += 1
             }
@@ -135,9 +158,80 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sleepDisabled=\(controller.sleepDisabled ? "1" : "0") \
         desiredSleepDisabled=\(controller.desiredSleepDisabled ? "1" : "0") \
         backingAssertion=\(controller.sleepDisabledBacking ? "1" : "0") \
-        powerWatcher=\(PowerWatcher.shared.isRegistered ? "on" : "off")
+        powerWatcher=\(PowerWatcher.shared.isRegistered ? "on" : "off") \
+        dockIcon=\(NSApp.activationPolicy() == .accessory ? "hidden" : "visible")
         """
         return base + " " + controller.auditSummary
+    }
+
+    /// 窗口显示与 Dock 图标策略的自检。
+    /// 覆盖真实路径：关掉主窗口应当隐藏 Dock 图标，再次打开应当恢复并置前。
+    /// 这套行为靠肉眼点菜单栏很难稳定复现，所以留一个可脚本化的入口。
+    @MainActor
+    private static func runWindowSelfTest() async {
+        func snapshot() -> String {
+            // 注意：NSApplication 上这是方法，NSRunningApplication 上才是属性。
+            let policy = NSApp.activationPolicy() == .accessory
+                ? "accessory（无 Dock 图标）"
+                : "regular（有 Dock 图标）"
+            let visible = NSApp.windows.filter {
+                !($0 is NSPanel) && $0.isVisible && $0.styleMask.contains(.titled)
+            }
+            return "policy=\(policy) visibleWindows=\(visible.count)"
+        }
+
+        emit("窗口自检开始 —— \(snapshot())")
+        // 菜单栏入口是这次改动的核心之一，NSStatusBar 没有查询接口，
+        // 只能靠控制器自己登记的弱引用确认它确实建起来了。
+        emit("菜单栏入口 —— \(MenuBarController.current == nil ? "缺失" : "已就绪")")
+
+        // 左键必须打开主界面、右键必须弹出设置，两边错一个都会让用户觉得「点了没反应」。
+        let leftPrimary = !MenuBarController.isSecondaryClick(eventType: .leftMouseUp, modifiers: [])
+        let rightSecondary = MenuBarController.isSecondaryClick(eventType: .rightMouseUp, modifiers: [])
+        let controlSecondary = MenuBarController.isSecondaryClick(eventType: .leftMouseUp, modifiers: [.control])
+        emit("点击判定 —— 左键=\(leftPrimary ? "打开主界面" : "判定错误")"
+             + " / 右键=\(rightSecondary ? "弹出设置" : "判定错误")"
+             + " / Control+左键=\(controlSecondary ? "弹出设置" : "判定错误")")
+
+        // 菜单内容也一并校验：弹出菜单是模态的，自动化测试会卡死，
+        // 所以只构建不弹出，核对项数与勾选状态。
+        if let menu = MenuBarController.current?.makeMenu() {
+            let titles = menu.items.filter { !$0.isSeparatorItem }.map {
+                ($0.state == .on ? "☑ " : "☐ ") + $0.title
+            }
+            emit("右键菜单 \(titles.count) 项 —— \(titles.joined(separator: " | "))")
+        } else {
+            emit("右键菜单 —— 构建失败")
+        }
+
+        // 主窗口由 SwiftUI 在启动流程里创建，可能比这里晚一拍，最多等 3 秒。
+        var window: NSWindow?
+        for _ in 0..<30 {
+            window = NSApp.windows.first {
+                !($0 is NSPanel) && $0.isVisible && $0.styleMask.contains(.titled)
+            }
+            if window != nil { break }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        guard let window else {
+            // 失败时把窗口的真实情况打出来，否则分不清是「SwiftUI 没创建」
+            // 还是「创建了但被上面的过滤条件排除掉」。
+            let detail = NSApp.windows.map {
+                "「\($0.title)」visible=\($0.isVisible) titled=\($0.styleMask.contains(.titled)) panel=\($0 is NSPanel)"
+            }.joined(separator: " / ")
+            emit("窗口自检失败：3 秒内没等到主窗口。NSApp.windows 共 \(NSApp.windows.count) 个：\(detail.isEmpty ? "（空）" : detail)")
+            return
+        }
+
+        // 1. 关掉主窗口：应当退成菜单栏模式，Dock 图标消失但进程继续跑。
+        window.performClose(nil)
+        try? await Task.sleep(nanoseconds: 700_000_000)
+        emit("关闭主窗口后 —— \(snapshot())")
+
+        // 2. 从菜单栏入口重新打开：应当重新出现窗口并恢复 Dock 图标。
+        WindowCoordinator.shared.showMainWindow()
+        try? await Task.sleep(nanoseconds: 700_000_000)
+        emit("重新打开后 —— \(snapshot())")
     }
 
     /// 同时写到标准输出与系统日志，两条通路都能取到结果。
