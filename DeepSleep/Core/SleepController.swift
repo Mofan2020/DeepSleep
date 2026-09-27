@@ -97,6 +97,38 @@ final class SleepController: ObservableObject {
     @Published var banner: Banner?
     @Published private(set) var log: [LogEntry] = []
 
+    /// 日志保留条数上限。超出后从最旧的开始丢弃。
+    @Published var logRetentionCount: Int = 500 {
+        didSet {
+            let clamped = max(50, min(logRetentionCount, 5000))
+            guard clamped == logRetentionCount else {
+                // 回写会再次触发 didSet，那时值已收敛，不会无限递归。
+                logRetentionCount = clamped
+                return
+            }
+            UserDefaults.standard.set(clamped, forKey: Self.logCountKey)
+            trimLog()
+        }
+    }
+
+    /// 日志保留天数上限。0 表示不按时间清理。
+    @Published var logRetentionDays: Int = 7 {
+        didSet {
+            let clamped = max(0, min(logRetentionDays, 365))
+            guard clamped == logRetentionDays else {
+                logRetentionDays = clamped
+                return
+            }
+            UserDefaults.standard.set(clamped, forKey: Self.logDaysKey)
+            trimLog()
+        }
+    }
+
+    /// 已被自动清除的条数。让用户知道日志「被清理过」，
+    /// 而不是某天发现记录莫名少了一截。
+    @Published private(set) var trimmedLogCount = 0
+    @Published private(set) var lastTrimAt: Date?
+
     /// 提权操作是否每次都要求本地授权确认。
     @Published var requireConfirmationPerAction: Bool {
         didSet {
@@ -154,9 +186,13 @@ final class SleepController: ObservableObject {
     private var isReconciling = false
 
     private static let confirmationKey = "com.skyc8266.deepsleep.confirmEachAction"
+    private static let logCountKey = "com.skyc8266.deepsleep.logRetentionCount"
+    private static let logDaysKey = "com.skyc8266.deepsleep.logRetentionDays"
 
     private init() {
         requireConfirmationPerAction = UserDefaults.standard.object(forKey: Self.confirmationKey) as? Bool ?? true
+        logRetentionCount = UserDefaults.standard.object(forKey: Self.logCountKey) as? Int ?? 500
+        logRetentionDays = UserDefaults.standard.object(forKey: Self.logDaysKey) as? Int ?? 7
         automation.onDesiredAssertionsChanged = { [weak self] desired in
             Task { @MainActor in
                 guard let self else { return }
@@ -498,6 +534,10 @@ final class SleepController: ObservableObject {
             }
             didEnableSleepDisabled = enabled
             sleepDisabled = enabled
+            // 告诉监控器这是自己写的，下一轮 diff 别把它当成外部干预。
+            PowerActivityMonitor.shared.noteSelfWrite(
+                key: "SleepDisabled", value: enabled ? "1" : "0"
+            )
             appendLog(announce ? response.message : "已自动恢复系统睡眠设置：\(response.message)")
             if announce { banner = Banner(level: .success, text: response.message) }
             return true
@@ -532,6 +572,12 @@ final class SleepController: ObservableObject {
         await auditLocalAssertions()
         await auditSleepDisabled()
         auditCount += 1
+
+        // 外部活动扫描不跟 3 秒节奏：枚举断言很便宜，但读一次设置要 spawn
+        // 一个 pmset 进程，6 秒一次足够看清变化。
+        if auditCount % 2 == 0 {
+            PowerActivityMonitor.shared.scan()
+        }
     }
 
     /// 助手进程可能被重启（崩溃、被 bootout、系统更新），
@@ -645,48 +691,29 @@ final class SleepController: ObservableObject {
     // MARK: - 电源设置读写
 
     func refreshPowerSettings() async {
-        if helperState.isReady {
-            if let response = try? await HelperClient.shared.send(.init(command: .readPowerSettings)),
-               response.success {
-                powerSettings = response.payload
-                sleepDisabled = response.payload["SleepDisabled"] == "1"
-                return
-            }
+        if helperState.isReady,
+           let response = try? await HelperClient.shared.send(.init(command: .readPowerSettings)),
+           response.success,
+           // 助手读不到 SleepDisabled 时不要把它当成「值为 0」。
+           // 旧版助手的解析不认 TAB 分隔就会这样，而「读不到」被当成 0
+           // 会让「完全禁止睡眠」看起来根本没生效。这种情况下回退到本地读取
+           // （`pmset -g` 不需要 root），以本进程的读数为准。
+           response.payload["SleepDisabled"] != nil {
+            powerSettings = response.payload
+            sleepDisabled = response.payload["SleepDisabled"] == "1"
+            return
         }
-        // 助手不可用时退回本地只读方式（`pmset -g` 不需要 root）。
+        // 助手不可用或读数不完整时退回本地只读方式。
         powerSettings = Self.readPowerSettingsLocally()
         sleepDisabled = powerSettings["SleepDisabled"] == "1"
     }
 
+    /// 读取系统电源设置。
+    /// 解析逻辑在 Shared/PMSetOutput.swift，与特权助手共用同一份实现 ——
+    /// 这里原本有一份自己的解析代码，因为只按空格切而读不到 TAB 分隔的
+    /// `SleepDisabled`，导致对账永远误判「设置被外部改回」。
     static func readPowerSettingsLocally() -> [String: String] {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
-        process.arguments = ["-g"]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
-        do {
-            try process.run()
-        } catch {
-            return [:]
-        }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard let text = String(data: data, encoding: .utf8) else { return [:] }
-
-        var settings: [String: String] = [:]
-        for rawLine in text.split(separator: "\n") {
-            let line = rawLine.trimmingCharacters(in: .whitespaces)
-            guard !line.isEmpty, !line.hasSuffix(":") else { continue }
-            let parts = line.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
-            guard parts.count == 2 else { continue }
-            var value = String(parts[1]).trimmingCharacters(in: .whitespaces)
-            if let paren = value.firstIndex(of: "(") {
-                value = String(value[value.startIndex..<paren]).trimmingCharacters(in: .whitespaces)
-            }
-            settings[String(parts[0])] = value
-        }
-        return settings
+        PMSetOutput.readCurrent()
     }
 
     func writePowerSetting(key: String, value: String) async {
@@ -702,6 +729,10 @@ final class SleepController: ObservableObject {
             ))
             banner = Banner(level: response.success ? .success : .error, text: response.message)
             appendLog(response.message, isError: !response.success)
+            if response.success {
+                // 同上：自己写的改动要标记来源，否则会被当成外部干预。
+                PowerActivityMonitor.shared.noteSelfWrite(key: key, value: value)
+            }
         } catch {
             appendLog("修改电源设置失败：\(error.localizedDescription)", isError: true)
             banner = Banner(level: .error, text: error.localizedDescription)
@@ -847,15 +878,40 @@ final class SleepController: ObservableObject {
     // MARK: - 日志
 
     func appendLog(_ text: String, isError: Bool = false) {
-        let entry = LogEntry(date: Date(), text: text, isError: isError)
-        log.append(entry)
-        if log.count > 300 {
-            log.removeFirst(log.count - 300)
-        }
+        log.append(LogEntry(date: Date(), text: text, isError: isError))
+        trimLog()
         NSLog("[DeepSleep] %@", text)
+    }
+
+    /// 按条数与天数两个维度裁剪日志。
+    ///
+    /// 两个维度都要，因为失效方式不同：只限条数时，一台安静运行的机器会把
+    /// 几个月前的日志一直留着；只限天数时，一个话痨循环能在几小时内把内存
+    /// 撑爆 —— 对账循环正是后者，判断一错就是每 3 秒一条。
+    private func trimLog() {
+        var removed = 0
+
+        if log.count > logRetentionCount {
+            removed += log.count - logRetentionCount
+            log.removeFirst(log.count - logRetentionCount)
+        }
+
+        if logRetentionDays > 0,
+           let cutoff = Calendar.current.date(byAdding: .day, value: -logRetentionDays, to: Date()),
+           let oldest = log.first?.date,
+           oldest < cutoff {
+            let kept = log.filter { $0.date >= cutoff }
+            removed += log.count - kept.count
+            log = kept
+        }
+
+        guard removed > 0 else { return }
+        trimmedLogCount += removed
+        lastTrimAt = Date()
     }
 
     func clearLog() {
         log.removeAll()
+        trimmedLogCount = 0
     }
 }

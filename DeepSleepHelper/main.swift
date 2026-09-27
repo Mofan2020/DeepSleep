@@ -25,30 +25,123 @@ import Darwin
 
 // MARK: - 日志
 
-private let logQueue = DispatchQueue(label: "com.skyc8266.deepsleep.helper.log")
-private let maxLogBytes = 1 * 1024 * 1024
+/// 日志写入与轮转。
+///
+/// 状态都收在这个实例里，且只在它自己的串行队列上访问 ——
+/// 助手会并发处理多个连接，日志不能互相踩。
+///
+/// 轮转同时管两个维度，缺一个都会出事：
+///   - **按天**归档：跨天后把当前文件改名成 `xxx.log.YYYY-MM-DD`。
+///     只按大小管的话，一个安静的时期会把很久以前的记录一直堆在同一个文件里，
+///     根本分不清「什么时候发生的」。
+///   - **按大小**截尾：单日文件超过上限时保留末尾内容。
+///     原先是超过就直接删掉整个文件 —— 那等于在出问题的时候，
+///     把最该看的最近几行一起丢掉。
+/// 另外定期清理超过保留天数的归档文件，这才是「不写爆磁盘」的真正保证。
+private final class LogWriter {
 
-private func logLine(_ message: String) {
-    let stamp = ISO8601DateFormatter().string(from: Date())
-    let line = "[\(stamp)] [helper] \(message)\n"
-    logQueue.async {
-        let data = Data(line.utf8)
-        FileHandle.standardError.write(data)
-        let path = HelperConstants.logPath
-        if let attributes = try? FileManager.default.attributesOfItem(atPath: path),
-           let size = attributes[.size] as? Int, size > maxLogBytes {
-            try? FileManager.default.removeItem(atPath: path)
+    static let shared = LogWriter()
+
+    private let queue = DispatchQueue(label: "com.skyc8266.deepsleep.helper.log")
+    private let maxBytes = 512 * 1024
+    private let retentionDays = 7
+
+    private let archiveFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+
+    /// 上次清理归档的时间，避免每次写日志都扫一遍目录。
+    private var lastCleanup = Date.distantPast
+
+    func write(_ message: String) {
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        let data = Data("[\(stamp)] [helper] \(message)\n".utf8)
+        queue.async { [self] in
+            rotateIfNeeded()
+            if !append(data) {
+                // 写文件失败时才退回 stderr。
+                // 正常情况下不写 stderr：LaunchDaemon 的 StandardErrorPath
+                // 已经指向同一个日志文件，两边都写会让每一行都重复两次 ——
+                // 看起来就像「每个命令都被执行了两次」。
+                FileHandle.standardError.write(data)
+            }
         }
-        if FileManager.default.fileExists(atPath: path) {
+    }
+
+    // MARK: - 轮转
+
+    private var path: String { HelperConstants.logPath }
+
+    private func rotateIfNeeded() {
+        let manager = FileManager.default
+
+        if let attributes = try? manager.attributesOfItem(atPath: path) {
+            let size = attributes[.size] as? Int ?? 0
+            let modified = attributes[.modificationDate] as? Date ?? Date()
+
+            if !Calendar.current.isDateInToday(modified) {
+                let archived = "\(path).\(archiveFormatter.string(from: modified))"
+                try? manager.removeItem(atPath: archived)
+                try? manager.moveItem(atPath: path, toPath: archived)
+            } else if size > maxBytes {
+                trimTail(keeping: maxBytes / 2)
+            }
+        }
+
+        cleanUpArchives(manager)
+    }
+
+    /// 保留文件尾部若干字节，并在换行处切割，免得留下半行乱码。
+    private func trimTail(keeping bytes: Int) {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              data.count > bytes else { return }
+        let tail = data.suffix(bytes)
+        let cleaned = tail.firstIndex(of: 0x0A).map { tail[tail.index(after: $0)...] } ?? tail
+        try? Data(cleaned).write(to: URL(fileURLWithPath: path))
+    }
+
+    private func cleanUpArchives(_ manager: FileManager) {
+        guard Date().timeIntervalSince(lastCleanup) > 3600 else { return }
+        lastCleanup = Date()
+
+        let directory = (path as NSString).deletingLastPathComponent
+        let prefix = (path as NSString).lastPathComponent + "."
+        guard let cutoff = Calendar.current.date(byAdding: .day, value: -retentionDays, to: Date()),
+              let entries = try? manager.contentsOfDirectory(atPath: directory) else { return }
+
+        for entry in entries where entry.hasPrefix(prefix) {
+            let stamp = String(entry.dropFirst(prefix.count))
+            guard let date = archiveFormatter.date(from: stamp), date < cutoff else { continue }
+            try? manager.removeItem(atPath: (directory as NSString).appendingPathComponent(entry))
+        }
+    }
+
+    /// 追加到日志文件，返回是否成功。
+    private func append(_ data: Data) -> Bool {
+        let manager = FileManager.default
+        if manager.fileExists(atPath: path) {
             if let handle = FileHandle(forWritingAtPath: path) {
                 defer { try? handle.close() }
                 _ = try? handle.seekToEnd()
-                try? handle.write(contentsOf: data)
+                do {
+                    try handle.write(contentsOf: data)
+                    return true
+                } catch {
+                    return false
+                }
             }
+            return false
         } else {
-            FileManager.default.createFile(atPath: path, contents: data)
+            return manager.createFile(atPath: path, contents: data)
         }
     }
+}
+
+private func logLine(_ message: String) {
+    LogWriter.shared.write(message)
 }
 
 // MARK: - 进程执行
@@ -161,24 +254,11 @@ private enum PMSet {
         "autorestart", "lidwake", "gpuswitch", "halfdim", "disablesleep"
     ]
 
-    /// 读取系统级电源设置，解析成键值对（全部走 `pmset -g`，只读不需要 root）。
+    /// 读取系统级电源设置（全部走 `pmset -g`，只读不需要 root）。
+    /// 解析交给 Shared/PMSetOutput.swift 的共享实现 —— 这里原本有一份
+    /// 只按空格切分的副本，读不到 TAB 分隔的 `SleepDisabled`。
     static func readSettings() -> [String: String] {
-        let result = runProcess("/usr/bin/pmset", ["-g"])
-        var settings: [String: String] = [:]
-        for rawLine in result.output.split(separator: "\n") {
-            let line = rawLine.trimmingCharacters(in: .whitespaces)
-            guard !line.isEmpty, !line.hasSuffix(":") else { continue }
-            let parts = line.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
-            guard parts.count == 2 else { continue }
-            let key = String(parts[0])
-            var value = String(parts[1]).trimmingCharacters(in: .whitespaces)
-            // `sleep 1 (sleep prevented by ...)` → 只保留数值部分
-            if let paren = value.firstIndex(of: "(") {
-                value = String(value[value.startIndex..<paren]).trimmingCharacters(in: .whitespaces)
-            }
-            settings[key] = value
-        }
-        return settings
+        PMSetOutput.readCurrent()
     }
 
     static func writeSetting(key: String, value: String) -> Result<Void, OperationFailure> {

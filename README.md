@@ -7,6 +7,7 @@
 - **应用名**：Deep Sleep
 - **最低系统**：macOS 26.0
 - **语言 / 框架**：Swift 5、SwiftUI + AppKit、IOKit、LocalAuthentication
+- **当前版本**：1.1.0
 
 ---
 
@@ -44,6 +45,8 @@
 - 菜单栏常驻：左键打开主界面，右键弹出快速设置
 - 关掉所有窗口后隐藏 Dock 图标，应用继续在菜单栏后台运行
 - 运行日志页
+- 外部活动：谁在阻止休眠、谁改了电源设置
+- 日志自动清除（按条数与天数双重裁剪）
 
 ---
 
@@ -126,6 +129,8 @@ open -a "Deep Sleep" --args --status
 | `--enable-full-control` | 触发一次性管理员授权安装特权助手，等价于界面按钮 |
 | `--disable-full-control` | 卸载特权助手并恢复系统原状 |
 | `--window-self-test` | 自检窗口显示与 Dock 图标策略（关窗 → 隐藏 Dock → 重开 → 恢复） |
+| `--blockers` | 列出当前所有在阻止休眠的进程 |
+| `--changes` | 列出检测到的电源设置改动（区分自身与外部） |
 
 > 注意：`--hold` / `--release` 作用于启动它的那个实例。macOS 单实例机制下，
 > 对已运行的实例再次传参不会生效 —— 需要脚本化持续控制时，请用自动化规则。
@@ -181,6 +186,94 @@ Dock 图标消失，进程继续在菜单栏后台运行；再次打开界面时
 
 ---
 
+## 修复记录：为什么会一直报「设置被外部改回」
+
+1.1.0 之前，日志会持续输出「检测到 disablesleep 被外部改回，立即恢复」，
+大约每 3 秒一条。**但系统里的值一直是 1，没有任何程序在跟 Deep Sleep 抢控制权。**
+
+根因是 `pmset -g` 的解析只按空格切分，而这份输出的分隔符是混用的：
+
+```
+System-wide power settings:
+ SleepDisabled		1        ← TAB 分隔
+Currently in use:
+ standby              0        ← 空格对齐
+```
+
+`SleepDisabled` 因为切不出两段被 `guard parts.count == 2` 整行跳过，
+于是每轮对账都判定「值不是 1」→ 无条件重写一遍 → 下一轮重复。
+写入本身是成功的，所以系统状态一直正确，只有日志在空转。
+
+更麻烦的是这段解析在 **app 与特权助手各有一份**，同一个 bug 存在两处。
+现已合并到 `Shared/PMSetOutput.swift` 共用，并配了回归测试
+`scripts/test-pmset-parse.swift`（直接编译真实源码、喂真实 `pmset` 输出做断言）。
+
+另外补了一道防御：助手返回的读数里缺少 `SleepDisabled` 时不再当作「值为 0」，
+而是回退到本地读取。这样即使装的是旧版助手，界面上的状态也是对的。
+
+顺带修掉一个很有迷惑性的问题：助手日志里每条记录都出现两次，看起来像
+「每个命令被执行了两遍」。原因是 LaunchDaemon 的 `StandardOutPath` 与
+`StandardErrorPath` 都指向同一个日志文件，而代码里又显式写了这个文件 ——
+同一行写了两遍。统计调用次数时必须把它算进去：改动前看到的 1406 条
+`setSleepDisabled`，实际是 703 次调用，与「35 分钟 ÷ 3 秒」完全吻合。
+
+---
+
+## 日志不会写爆磁盘
+
+两处日志，两套策略：
+
+| 位置 | 存储 | 清理方式 |
+| --- | --- | --- |
+| 应用内「运行日志」页 | 内存，不写磁盘 | 按**条数**（默认 500，可调 50–5000）+ 按**天数**（默认 7，可调 0–365）双重裁剪 |
+| 助手日志 `HelperConstants.logPath` | 文件 | 按**天**归档为 `.log.YYYY-MM-DD`；单日超 512 KB 保留尾部；超过 7 天的归档自动删除 |
+
+两个维度都要，因为失效方式不同：只限条数时，一台安静运行的机器会把几个月前的
+日志一直留着；只限天数时，一个话痨循环能在几小时内把内存撑爆 —— 对账循环正是
+后者，判断一错就是每 3 秒一条（上面那条修复记录就是真实例子）。
+
+助手日志原本超过 1 MB 就整个删掉，那等于在出问题的时候把最该看的最近几行一起丢掉；
+现在改成保留尾部、并在换行处切割，不留半行乱码。
+
+---
+
+## 外部活动：谁在碰电源管理
+
+电源控制是多方博弈，Deep Sleep 只是其中之一。界面上的「外部活动」页回答两个问题。
+
+### 谁在阻止休眠
+
+用 `IOPMCopyAssertionsByProcess()` 直接向内核取当前所有电源断言，按进程分组，
+标出是「阻止系统睡眠」还是「仅阻止屏幕睡眠」，并显示断言原因字符串。
+Deep Sleep 自己的断言也会列出并标记「本应用」，方便对照。
+
+`UserIsActive` 这类不计入 —— 那是系统对「用户正在操作」的描述，
+不是某个程序在索要保持清醒。
+
+进程名优先用 `NSRunningApplication` 取；取不到时（powerd、coreaudiod 这类系统
+守护进程）退回 `proc_pidpath` 读可执行文件路径的末段。
+
+```sh
+open -a "Deep Sleep" --args --blockers
+```
+
+### 谁改了电源设置
+
+每 6 秒对 `pmset -g` 做一次快照比对，记录变化的键、旧值、新值和时间。
+
+**能确定的**：改了什么、从什么变成什么、什么时候，以及**是不是 Deep Sleep 自己改的**
+（我们跟踪自己的写入，所以能明确排除自己）。
+
+**不能确定的**：是哪个进程写进去的。macOS 没有公开 API 给出这个信息，
+所以这里不猜一个进程名出来，只给事实。
+（`pmset -g log` 只有睡眠/唤醒事件，不含设置变更记录，对这个问题没有帮助，已实测。）
+
+```sh
+open -a "Deep Sleep" --args --changes
+```
+
+---
+
 ## 项目结构
 
 ```
@@ -188,7 +281,8 @@ DeepSleep/
 ├── project.yml                     XcodeGen 工程定义
 ├── Shared/                         两个 target 共用的代码
 │   ├── HelperProtocol.swift        命令 / 响应 / 常量定义
-│   └── UnixSocket.swift            UNIX socket 封装（长度前缀分帧）
+│   ├── UnixSocket.swift            UNIX socket 封装（长度前缀分帧）
+│   └── PMSetOutput.swift           `pmset -g` 解析（app 与助手共用一份）
 ├── DeepSleep/                      主应用
 │   ├── DeepSleepApp.swift          App 入口（主窗口场景）
 │   ├── AppDelegate.swift           生命周期 + 命令行接口 + 窗口自检
@@ -199,6 +293,7 @@ DeepSleep/
 │   │   ├── AssertionKind.swift     断言类型定义（能力清单）
 │   │   ├── SleepController.swift   核心状态机：意图合并 → 实际持有
 │   │   ├── PowerWatcher.swift      电源事件监听（睡前拦截 + 唤醒对账）
+│   │   ├── PowerActivityMonitor.swift  外部活动：谁在阻止休眠 / 谁改了设置
 │   │   ├── AutomationRule.swift    自动化规则模型
 │   │   └── AutomationEngine.swift  规则求值引擎
 │   ├── Privileged/
@@ -261,6 +356,10 @@ DeepSleep/
   未持有的保持 `☐`
 - 关掉主窗口后激活策略自动切到 `accessory`（Dock 图标消失），进程继续运行
 - 再次打开后窗口恢复、激活策略切回 `regular`
+- `pmset -g` 解析回归测试全部通过；真实系统读数 `SleepDisabled = 1`（修复前读成 `nil`）
+- 外部改动检测端到端验证：运行中用助手 socket 把 `ttyskeepawake` 从 1 改成 0，
+  6 秒内被识别并记为「外部改动」，`1 → 0` 与来源都正确
+- `--blockers` 正确列出微信、UU远程、coreaudiod、powerd 等进程，并标出 Deep Sleep 自己
 
 未实测：
 

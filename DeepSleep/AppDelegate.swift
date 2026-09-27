@@ -58,6 +58,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     ///   --release        释放全部保持
     ///   --status         把当前状态输出到标准输出
     ///   --window-self-test  自检窗口显示与 Dock 图标策略
+    ///   --blockers       列出当前所有在阻止休眠的进程
+    ///   --changes        列出检测到的电源设置改动
     /// 例如：`open -a "Deep Sleep" --args --hold idle-system,display`
     @MainActor
     private static func handleLaunchArguments() async {
@@ -137,6 +139,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             case "--window-self-test":
                 await Self.runWindowSelfTest()
+                index += 1
+
+            case "--blockers":
+                Self.emitBlockers()
+                index += 1
+
+            case "--changes":
+                Self.emitChanges()
                 index += 1
 
             default:
@@ -232,6 +242,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         WindowCoordinator.shared.showMainWindow()
         try? await Task.sleep(nanoseconds: 700_000_000)
         emit("重新打开后 —— \(snapshot())")
+    }
+
+    /// 列出当前所有在阻止休眠的进程。排查时不必打开界面。
+    /// 这里用实时查询而不是界面上的缓存，命令行取到的就是此刻的状态。
+    @MainActor
+    private static func emitBlockers() {
+        let blockers = PowerActivityMonitor.currentBlockers()
+        guard !blockers.isEmpty else {
+            emit("当前没有任何进程在阻止休眠")
+            return
+        }
+        for blocker in blockers {
+            let selfMark = blocker.isSelf ? "（本应用）" : ""
+            emit("\(blocker.name)\(selfMark)  pid=\(blocker.pid)")
+            for assertion in blocker.assertions {
+                let scope = assertion.preventsSystemSleep ? "阻止系统睡眠" : "仅阻止屏幕睡眠"
+                let reason = assertion.reason.isEmpty ? "" : " — \(assertion.reason)"
+                emit("    [\(scope)] \(assertion.type)\(reason)")
+            }
+        }
+    }
+
+    /// 列出检测到的电源设置改动。自身与外部改动都列出，只是分开标记 ——
+    /// 用户需要的是完整时间线，而不是只留下「别人的」那部分。
+    @MainActor
+    private static func emitChanges() {
+        let changes = PowerActivityMonitor.shared.changes
+        guard !changes.isEmpty else {
+            emit("尚未检测到电源设置被改动")
+            return
+        }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        for change in changes.prefix(20) {
+            let source = change.bySelf ? "Deep Sleep" : "外部改动"
+            emit("[\(formatter.string(from: change.date))] [\(source)] "
+                 + "\(change.key)：\(change.oldValue ?? "（无）") → \(change.newValue)")
+        }
     }
 
     /// 同时写到标准输出与系统日志，两条通路都能取到结果。
