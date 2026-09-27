@@ -237,6 +237,12 @@ DeepSleep/
 - 睡前拦截的实际效果（需要真的触发一次睡眠等待，且同样依赖助手持有的断言）
 - Touch ID 弹窗的实际交互（需要人工按指纹确认）
 
+---
+
+## 许可证
+
+MIT License，见 [LICENSE](LICENSE)。Copyright © 2026 Skyc8266。
+
 详见 `docs/notes.md`。
 
 ---
