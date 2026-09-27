@@ -313,7 +313,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 助手的版本状态。命令行可查，不必为了看一眼版本去翻界面。
     @MainActor
     private static func emitHelperVersion() {
-        emit("应用内置助手构建 \(HelperConstants.helperBuild)")
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        emit("应用版本 \(version)")
         emit("助手版本状态 —— \(HelperVersionManager.shared.state.text)")
     }
 

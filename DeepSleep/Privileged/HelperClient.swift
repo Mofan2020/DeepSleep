@@ -72,8 +72,8 @@ final class HelperClient {
     struct Probe {
         let reachable: Bool
         let protocolVersion: Int?
-        /// 助手的构建序号。旧版助手不回报这个字段，因此为 nil。
-        let build: Int?
+        /// 助手自身二进制的 SHA-256。旧版助手不回报这个字段，因此为 nil。
+        let digest: String?
         let detail: String
     }
 
@@ -84,11 +84,11 @@ final class HelperClient {
             return Probe(
                 reachable: true,
                 protocolVersion: response.payload["version"].flatMap { Int($0) },
-                build: response.payload["build"].flatMap { Int($0) },
+                digest: response.payload["digest"],
                 detail: response.message
             )
         } catch {
-            return Probe(reachable: false, protocolVersion: nil, build: nil,
+            return Probe(reachable: false, protocolVersion: nil, digest: nil,
                          detail: error.localizedDescription)
         }
     }

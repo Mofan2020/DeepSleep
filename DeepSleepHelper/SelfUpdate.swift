@@ -53,10 +53,6 @@ enum HelperSelfUpdate {
         guard let expectedDigest = arguments["sha256"]?.lowercased(), expectedDigest.count == 64 else {
             return .failure(.badArguments("缺少或非法的 sha256（应为 64 位十六进制）"))
         }
-        guard let newBuild = arguments["build"].flatMap({ Int($0) }) else {
-            return .failure(.badArguments("缺少或非法的 build"))
-        }
-
         // 1) 来源必须是应用内置的助手。
         guard source.hasSuffix(embeddedRelativePath) else {
             return .failure(.rejected("来源不是应用内置的助手路径"))
@@ -82,19 +78,50 @@ enum HelperSelfUpdate {
             return .failure(.rejected("校验和不匹配（文件损坏或已被替换）"))
         }
 
-        // 4) 必须严格更新。
-        guard newBuild > HelperConstants.helperBuild else {
-            return .failure(.rejected(
-                "构建序号 \(newBuild) 不大于当前 \(HelperConstants.helperBuild)，"
-                + "不予降级或重装"))
+        // 4) 不能是「换成一个和当前完全一样的东西」。
+        //
+        // 判据用内容摘要而不是版本号或构建序号：摘要相同就说明装着的那份和要装的
+        // 这份是同一个二进制，重装毫无意义，还会让调用方以为更新失败。
+        //
+        // 这一条同时保证了收敛 —— 替换成功后两边摘要必然一致，下次不会再触发更新，
+        // 不存在来回替换的循环。这比「版本号必须递增」更省事：不需要任何人为维护的
+        // 数字，也不会因为忘记改版本号而漏掉一次真实的更新。
+        let current = selfDigest()
+        guard !current.isEmpty else {
+            return .failure(.rejected("读不到自身的二进制，无法判断是否需要替换"))
+        }
+        guard digest != current else {
+            return .failure(.rejected("来源内容与当前一致，无需更新"))
         }
 
-        let script = makeScript(source: source, newBuild: newBuild)
+        let script = makeScript(source: source)
         guard schedule(script) else {
             return .failure(.rejected("无法启动更新脚本"))
         }
         return .success(())
     }
+
+    /// 当前装着的这份助手二进制的摘要。
+    ///
+    /// 用途有二：回应应用对「你是哪一份」的询问，以及判断一次自我更新请求是否
+    /// 真的会带来变化。结果缓存：本进程存活期间自己的二进制不会被替换
+    /// （替换流程必然先让本进程退出），所以不必反复读盘。
+    static func selfDigest() -> String {
+        cachedDigestLock.lock()
+        defer { cachedDigestLock.unlock() }
+        if let cached = cachedDigest { return cached }
+
+        guard let data = FileManager.default.contents(atPath: HelperConstants.installedHelperPath),
+              !data.isEmpty else {
+            return ""
+        }
+        let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        cachedDigest = digest
+        return digest
+    }
+
+    private static var cachedDigest: String?
+    private static let cachedDigestLock = NSLock()
 
     // MARK: - 脚本
 
@@ -102,7 +129,7 @@ enum HelperSelfUpdate {
     ///
     /// 为什么必须由外部脚本做：替换「正在运行的自己」要求先退出进程，
     /// 而进程一旦退出，就没有代码能继续执行了 —— 这一步只能交给外面的进程。
-    private static func makeScript(source: String, newBuild: Int) -> String {
+    private static func makeScript(source: String) -> String {
         """
         #!/bin/sh
         # 由 deepsleep-helper 生成，用完即删。

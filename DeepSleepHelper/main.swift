@@ -297,17 +297,17 @@ private final class CommandHandler {
     func handle(_ request: HelperRequest) -> HelperResponse {
         switch request.command {
         case .ping:
-            // 回报 build 号，应用据此判断是否需要更新助手。
+            // 回报自身二进制的摘要：应用据此判断装着的助手是不是它内置的那一份。
             return .ok("pong", payload: [
                 "version": "\(HelperConstants.protocolVersion)",
-                "build": "\(HelperConstants.helperBuild)"
+                "digest": HelperSelfUpdate.selfDigest()
             ])
 
         case .status:
             let settings = PMSet.readSettings()
             return .ok("status", payload: [
                 "version": "\(HelperConstants.protocolVersion)",
-                "build": "\(HelperConstants.helperBuild)",
+                "digest": HelperSelfUpdate.selfDigest(),
                 "assertions": assertions.heldKinds().joined(separator: ","),
                 "sleepDisabled": settings["SleepDisabled"] ?? "0",
                 "pid": "\(getpid())"

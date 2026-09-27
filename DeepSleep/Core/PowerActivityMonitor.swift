@@ -225,8 +225,8 @@ final class PowerActivityMonitor: ObservableObject {
             found.append(PowerRival(
                 bundleID: bundleID,
                 name: app.localizedName ?? bundleID,
-                note: "程序里包含 pmset / 睡眠设置相关代码，可能自行修改系统电源设置，"
-                    + "与 Deep Sleep 互相覆盖"
+                note: "程序里包含 pmset / 睡眠设置相关代码，可能自行修改系统电源设置。"
+                    + "Deep Sleep 不会去关掉它，但会把设置纠正回你要的状态。"
             ))
         }
 

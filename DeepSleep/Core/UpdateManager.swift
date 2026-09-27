@@ -336,6 +336,8 @@ final class UpdateManager: ObservableObject {
         let checksumURL: URL?
     }
 
+    /// GitHub 上的一条 release。
+    /// 注意它没有 `latest` 的含义 —— 我们是把列表拉回来自己挑的。
     private struct GitHubRelease: Decodable {
         struct Asset: Decodable {
             let name: String
@@ -348,22 +350,49 @@ final class UpdateManager: ObservableObject {
         }
         let tagName: String
         let assets: [Asset]
+        /// 草稿状态的 release 只有仓库维护者能看到，绝不该装给用户。
+        let draft: Bool
+        /// 预发布版本。**保留它** —— 本仓库的发布习惯就是标 Pre-release。
+        let prerelease: Bool
 
         enum CodingKeys: String, CodingKey {
             case tagName = "tag_name"
             case assets
+            case draft
+            case prerelease
         }
     }
 
+    /// 拉取可用 Release 里版本最高的那一个。
+    ///
+    /// **不用 `/releases/latest`**：那个接口不返回预发布版本。本仓库的发布习惯
+    /// 就是标 Pre-release，用它的结果是明明有 Release 却永远 404 —— 曾经就
+    /// 因为这个接口少考虑了一层，把「有 Release 但都是预发布」误判成了「没有 Release」。
+    ///
+    /// 改为列出最近若干条，丢掉草稿（未发布的东西不该自动装给用户），
+    /// 保留预发布，再用版本号比较取最高的那条。
     private func fetchLatestRelease() async throws -> ReleaseInfo {
-        let url = URL(string: "https://api.github.com/repos/\(Self.owner)/\(Self.repo)/releases/latest")!
+        let url = URL(string:
+            "https://api.github.com/repos/\(Self.owner)/\(Self.repo)/releases?per_page=30")!
         let data = try await fetch(url)
 
-        let release: GitHubRelease
+        let releases: [GitHubRelease]
         do {
-            release = try JSONDecoder().decode(GitHubRelease.self, from: data)
+            releases = try JSONDecoder().decode([GitHubRelease].self, from: data)
         } catch {
             throw UpdateError.malformedRelease
+        }
+
+        // 版本号解析不出来的条目直接跳过：判断不了就不让它参与比较，
+        // 而不是硬塞一个「版本 0」或「版本无限大」进去。
+        let candidates = releases
+            .filter { !$0.draft }
+            .filter { SemanticVersion.parse($0.tagName) != nil }
+
+        guard let release = candidates.max(by: { lhs, rhs in
+            (SemanticVersion.compare(lhs.tagName, rhs.tagName) ?? 0) < 0
+        }) else {
+            throw UpdateError.noUsableRelease
         }
 
         guard let asset = release.assets.first(where: { $0.name == Self.assetName }),
@@ -435,6 +464,8 @@ final class UpdateManager: ObservableObject {
 
     enum UpdateError: LocalizedError {
         case malformedRelease
+        /// 列出了 Release，但没有一条能用于自动更新（全是草稿，或版本号解析不了）。
+        case noUsableRelease
         case missingAsset(String)
         case emptyDownload
         case badChecksumFile
@@ -449,6 +480,8 @@ final class UpdateManager: ObservableObject {
             switch self {
             case .malformedRelease:
                 return "Release 信息无法解析"
+            case .noUsableRelease:
+                return "没有可用于自动更新的 Release（都是草稿，或版本号无法解析）"
             case .missingAsset(let name):
                 return "该 Release 里没有 \(name)"
             case .emptyDownload:
