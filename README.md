@@ -7,7 +7,7 @@
 - **应用名**：Deep Sleep
 - **最低系统**：macOS 26.0
 - **语言 / 框架**：Swift 5、SwiftUI + AppKit、IOKit、LocalAuthentication
-- **当前版本**：1.2.0
+- **当前版本**：1.2.1
 
 ---
 
@@ -495,6 +495,30 @@ DeepSleep/
   下载、校验、替换三段已分别验证，缺的是串起来的端到端）
 - 助手的**真实自我更新**（当前装着的是旧版助手，它不认识该命令，
   需要先重装一次拿到支持自我更新的版本）
+
+---
+
+## 维护与开发
+
+**要改这个项目的代码，先读 [`docs/`](docs/README.md)。** 那套文档讲的是
+「代码为什么长这样」和「改动时要注意什么」—— 这两件事代码本身说不清楚。
+
+| 文档 | 内容 |
+| --- | --- |
+| [docs/README.md](docs/README.md) | 索引：五分钟跑起来、文档保鲜机制、硬约定 |
+| [docs/architecture.md](docs/architecture.md) | 架构与运作逻辑：权限模型、三层防护、对账范围、两套更新机制 |
+| [docs/maintenance.md](docs/maintenance.md) | 维护手册：常见改动怎么做、怎么验证、调试工具 |
+| [docs/release.md](docs/release.md) | 发布流程：从改版本号到 `gh release create`，含检查清单 |
+| [docs/gotchas.md](docs/gotchas.md) | 踩过的坑 —— **想简化某段代码之前先看这里** |
+
+文档与代码的一致性由脚本保证，改完跑一次：
+
+```sh
+python3 scripts/check-docs.py
+```
+
+它会比对文档里的命令行参数表、协议命令表、版本号与代码是否一致 ——
+过期的文档比没有文档更糟，所以这件事不靠自觉。
 
 ---
 
