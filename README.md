@@ -7,7 +7,7 @@
 - **应用名**：Deep Sleep
 - **最低系统**：macOS 26.0
 - **语言 / 框架**：Swift 5、SwiftUI + AppKit、IOKit、LocalAuthentication
-- **当前版本**：1.1.0
+- **当前版本**：1.2.0
 
 ---
 
@@ -46,7 +46,9 @@
 - 关掉所有窗口后隐藏 Dock 图标，应用继续在菜单栏后台运行
 - 运行日志页
 - 外部活动：谁在阻止休眠、谁改了电源设置
+- 外部活动还会点名**其他会改电源设置的软件**（例如 AlDente），见下文
 - 日志自动清除（按条数与天数双重裁剪）
+- 自动更新：应用从 GitHub Release 拉取并自行替换，助手版本不一致时自我更新
 
 ---
 
@@ -131,6 +133,10 @@ open -a "Deep Sleep" --args --status
 | `--window-self-test` | 自检窗口显示与 Dock 图标策略（关窗 → 隐藏 Dock → 重开 → 恢复） |
 | `--blockers` | 列出当前所有在阻止休眠的进程 |
 | `--changes` | 列出检测到的电源设置改动（区分自身与外部） |
+| `--rivals` | 列出其他会修改电源设置的程序 |
+| `--helper-version` | 显示特权助手的版本状态与内置构建号 |
+| `--update-check` | 立即检查应用更新并输出结果 |
+| `--update-script` | 打印将要执行的更新器脚本（只打印，不执行；用于人工审查） |
 
 > 注意：`--hold` / `--release` 作用于启动它的那个实例。macOS 单实例机制下，
 > 对已运行的实例再次传参不会生效 —— 需要脚本化持续控制时，请用自动化规则。
@@ -272,6 +278,80 @@ open -a "Deep Sleep" --args --blockers
 open -a "Deep Sleep" --args --changes
 ```
 
+### 谁在跟 Deep Sleep 抢控制权
+
+有一类程序**既不持有断言、也不阻止自己睡眠**，而是直接去改系统电源设置 ——
+它们不会出现在断言列表里，也不会在系统日志里留名。
+
+实测抓到过一个真实例子：**AlDente**（`com.apphousekitchen.aldente-pro` 1.39.4）
+自带「完全禁用睡眠」功能，其二进制里直接含 `completelyDisableSleep`、
+`isSleepDisabled`、`Failed to execute pmset command:` 等字符串，并且直接调用 `pmset`。
+它和 Deep Sleep 会互相覆盖同一批设置 —— 这类冲突是真实存在的，不是理论上的。
+
+```sh
+open -a "Deep Sleep" --args --rivals
+```
+
+检测方式：扫描当前运行的非 Apple 应用，在可执行文件里搜索 `disablesleep` /
+`SleepDisabled` 字符串常量，结果按包路径缓存（同一个二进制内容不会变）。
+读不到文件一律当作「不是」—— 这个列表宁可漏报也不要误报，
+一个总在冤枉别的程序的警示等于没有警示。
+
+---
+
+## 更新
+
+两条互相独立的更新路径。
+
+### 应用自己
+
+启动 15 秒后检查 GitHub Release 的 `latest`，下载资产里固定名为 `DeepSleep.zip` 的包。
+
+**只有在版本号严格更高时才更新。** 判断用分段数字比较而非字符串 ——
+`"1.10.0" < "1.9.0"` 在字符串比较下是 true，方向一错就是「永远在更新」。
+版本号解析失败一律按「没有更新」处理，绝不按「有更新」处理：
+宁可漏一次，也不能陷入每回都重装下载的循环。
+
+安装前的校验，任何一步不过就放弃：
+
+| 检查 | 排除的情况 |
+| --- | --- |
+| zip 能解开 | 中断的下载 |
+| 里面的 `.app` 的 bundle id 是 `com.skyc8266.deepsleep` | 拿错了东西 |
+| 版本号与 Release 声称的一致 | 版本错配 |
+| 通过 `codesign --verify` | 包结构损坏 |
+| 若 Release 附了 `DeepSleep.zip.sha256`，比对摘要 | 内容被改动 |
+
+替换由**临时目录里的独立脚本**完成 —— 因为 `.app` 正是要被替换的对象，脚本不能住在里面。
+脚本先等本进程退出（最多 30 秒），再「挪走旧的 → 放入新的」，任一步失败都回滚，
+并且**不用 `rm -rf` 去清目标路径**：那样一旦「挪走旧的」这步失败，
+会把用户的应用直接删掉且再也回不来。
+
+脚本可以用 `--update-script` 打印出来人工审查。这个 dry-run 出口不是装饰 ——
+它正是在开发期抓出上面那个回滚缺陷的方式。
+
+### 特权助手
+
+助手二进制装在 `/Library/PrivilegedHelperTools/`，可能落后于应用内置的版本。
+因为助手本来就是 root 常驻，可以**自己替换自己**（`updateSelf` 命令），
+所以这种更新不需要再输一次管理员密码。
+
+版本判据是一个整数构建号 `HelperConstants.helperBuild`，
+**改 `DeepSleepHelper/` 下的代码就要把它 +1**。判据是「已安装 < 内置」
+而不是「两者不相等」—— 后者在应用比助手旧时会反复降级再升级。
+此外每次运行最多尝试一次，且更新后必须重新探测到新构建号才算成功。
+
+`updateSelf` 的校验（这是全项目权限最高的一条路径，它能把一个 root 二进制
+写进 `/Library`）：
+
+1. 来源必须是 `Deep Sleep.app` 内部的助手路径（固定相对路径）
+2. 那个 `.app` 的 `CFBundleIdentifier` 必须是 `com.skyc8266.deepsleep`
+3. 文件的 SHA-256 必须与调用方给的一致
+4. 新构建号必须**严格大于**当前值 —— 不降级、不同版本重装
+
+> 旧版助手不认识 `updateSelf`，收到它会返回解码错误而**不是崩溃**（已实测）。
+> 这种情况被识别为「需要重新授权安装一次」，而不是反复重试。
+
 ---
 
 ## 项目结构
@@ -282,7 +362,8 @@ DeepSleep/
 ├── Shared/                         两个 target 共用的代码
 │   ├── HelperProtocol.swift        命令 / 响应 / 常量定义
 │   ├── UnixSocket.swift            UNIX socket 封装（长度前缀分帧）
-│   └── PMSetOutput.swift           `pmset -g` 解析（app 与助手共用一份）
+│   ├── PMSetOutput.swift           `pmset -g` 解析（app 与助手共用一份）
+│   └── Version.swift               版本号解析与比较（自动更新的判断依据）
 ├── DeepSleep/                      主应用
 │   ├── DeepSleepApp.swift          App 入口（主窗口场景）
 │   ├── AppDelegate.swift           生命周期 + 命令行接口 + 窗口自检
@@ -294,6 +375,8 @@ DeepSleep/
 │   │   ├── SleepController.swift   核心状态机：意图合并 → 实际持有
 │   │   ├── PowerWatcher.swift      电源事件监听（睡前拦截 + 唤醒对账）
 │   │   ├── PowerActivityMonitor.swift  外部活动：谁在阻止休眠 / 谁改了设置
+│   │   ├── UpdateManager.swift     应用自更新：检查、校验、替换
+│   │   ├── HelperVersionManager.swift  助手版本检测与自我更新
 │   │   ├── AutomationRule.swift    自动化规则模型
 │   │   └── AutomationEngine.swift  规则求值引擎
 │   ├── Privileged/
@@ -306,7 +389,8 @@ DeepSleep/
 │       ├── install-helper.sh       以 root 运行的安装脚本
 │       └── uninstall-helper.sh     以 root 运行的卸载脚本
 └── DeepSleepHelper/
-    └── main.swift                  特权助手守护进程
+    ├── main.swift                  特权助手守护进程
+    └── SelfUpdate.swift            助手替换自己（权限最高的一条路径）
 ```
 
 把两个以 root 身份运行的 shell 脚本单独放在 `Resources/` 而不是内联进 Swift 字符串，
@@ -315,7 +399,11 @@ DeepSleep/
 `scripts/` 下是配套工具：`make-icon.py` 生成应用图标，
 `helper-probe.py` 直接与特权助手对话（排查与端到端测试），
 `try-release-assertion.swift` 验证跨进程断言释放会被拒绝，
-`dump-windows.swift` 从进程外部查看 Deep Sleep 的窗口是否真的出现。
+`dump-windows.swift` 从进程外部查看 Deep Sleep 的窗口是否真的出现，
+`test-pmset-parse.swift` / `test-version-compare.swift` / `test-selfupdate.swift`
+是三个回归测试（都直接编译真实源码，而不是抄一份逻辑来测），
+`probe-unknown-command.py` 验证助手对不认识的命令的反应，
+`build-release.sh` 打包 GitHub Release 需要的 `DeepSleep.zip` 与摘要文件。
 
 ---
 
@@ -360,6 +448,15 @@ DeepSleep/
 - 外部改动检测端到端验证：运行中用助手 socket 把 `ttyskeepawake` 从 1 改成 0，
   6 秒内被识别并记为「外部改动」，`1 → 0` 与来源都正确
 - `--blockers` 正确列出微信、UU远程、coreaudiod、powerd 等进程，并标出 Deep Sleep 自己
+- 版本比较回归测试通过，含 `1.10.0 > 1.9.0`（字符串比较会判反）、
+  相等不更新、解析失败不更新这三类防循环用例
+- 助手自我更新的四条校验逐条验证：非法来源路径、bundle id 不匹配、
+  摘要不符、构建号不大于当前（不降级、不同版本重装）全部被拒
+- 旧版助手收到它不认识的 `updateSelf` 会返回解码错误，进程**继续存活**，
+  没有崩溃重启
+- 更新器脚本 dry-run 与替换演练：正常替换成功、备份与工作目录清理干净；
+  新版本放入失败时**完整回滚**，旧应用仍在
+- `--rivals` 正确识别出 AlDente（`com.apphousekitchen.aldente-pro`）
 
 未实测：
 
@@ -369,6 +466,10 @@ DeepSleep/
 - Touch ID 弹窗的实际交互（需要人工按指纹确认）
 - 用真实鼠标 / 触控板点击菜单栏图标。自检覆盖的是点击判定逻辑与菜单内容，
   系统级的鼠标事件合成需要「辅助功能」权限，未做
+- 走完一次**真实的**应用自动更新（需要先发一个 GitHub Release；
+  下载、校验、替换三段已分别验证，缺的是串起来的端到端）
+- 助手的**真实自我更新**（当前装着的是旧版助手，它不认识该命令，
+  需要先重装一次拿到支持自我更新的版本）
 
 ---
 

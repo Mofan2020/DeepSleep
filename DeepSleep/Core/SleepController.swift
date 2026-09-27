@@ -236,6 +236,13 @@ final class SleepController: ObservableObject {
         if !PowerWatcher.shared.isRegistered {
             appendLog("电源事件监听未注册，睡前拦截与唤醒对账不可用", isError: true)
         }
+
+        // 应用更新检查延后执行：启动那几秒要留给助手状态与初始断言，
+        // 不让一个网络请求跟它们抢时间。
+        Task {
+            try? await Task.sleep(nanoseconds: 15_000_000_000)
+            await UpdateManager.shared.autoCheckIfDue()
+        }
     }
 
     func shutdown() async {
@@ -285,10 +292,10 @@ final class SleepController: ObservableObject {
         let probe = await HelperClient.shared.probe()
         let next: HelperState
         if probe.reachable {
-            if let version = probe.version, version != HelperConstants.protocolVersion {
+            if let version = probe.protocolVersion, version != HelperConstants.protocolVersion {
                 next = .versionMismatch(helper: version, app: HelperConstants.protocolVersion)
             } else {
-                next = .ready(version: probe.version ?? HelperConstants.protocolVersion)
+                next = .ready(version: probe.protocolVersion ?? HelperConstants.protocolVersion)
             }
         } else {
             next = .installedNotRunning(probe.detail)
@@ -577,6 +584,12 @@ final class SleepController: ObservableObject {
         // 一个 pmset 进程，6 秒一次足够看清变化。
         if auditCount % 2 == 0 {
             PowerActivityMonitor.shared.scan()
+        }
+
+        // 助手版本检查不跟 3 秒节奏：自我更新会重启助手、翻动 socket。
+        // `% 20 == 1` 让首次检查落在启动后几秒内，之后约每分钟一次。
+        if auditCount % 20 == 1 {
+            await HelperVersionManager.shared.checkAndUpdateIfNeeded()
         }
     }
 

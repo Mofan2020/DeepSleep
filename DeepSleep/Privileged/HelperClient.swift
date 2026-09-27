@@ -66,14 +66,30 @@ final class HelperClient {
         return try UnixSocket.readFrame(fd, as: HelperResponse.self)
     }
 
+    /// 一次探测的结果。
+    /// 用结构体而不是元组：字段还会增加（加 build 时元组会把所有调用点的解构
+    /// 一起改掉），结构体加字段是兼容的。
+    struct Probe {
+        let reachable: Bool
+        let protocolVersion: Int?
+        /// 助手的构建序号。旧版助手不回报这个字段，因此为 nil。
+        let build: Int?
+        let detail: String
+    }
+
     /// 探测助手是否就绪。任何异常都被视为「未就绪」。
-    func probe() async -> (reachable: Bool, version: Int?, detail: String) {
+    func probe() async -> Probe {
         do {
             let response = try await send(.init(command: .ping), timeout: 3)
-            let version = response.payload["version"].flatMap { Int($0) }
-            return (true, version, response.message)
+            return Probe(
+                reachable: true,
+                protocolVersion: response.payload["version"].flatMap { Int($0) },
+                build: response.payload["build"].flatMap { Int($0) },
+                detail: response.message
+            )
         } catch {
-            return (false, nil, error.localizedDescription)
+            return Probe(reachable: false, protocolVersion: nil, build: nil,
+                         detail: error.localizedDescription)
         }
     }
 }

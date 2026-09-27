@@ -60,6 +60,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     ///   --window-self-test  自检窗口显示与 Dock 图标策略
     ///   --blockers       列出当前所有在阻止休眠的进程
     ///   --changes        列出检测到的电源设置改动
+    ///   --rivals         列出其他会改电源设置的程序
+    ///   --helper-version 显示助手的版本状态
+    ///   --update-check   立即检查应用更新并输出结果
+    ///   --update-script  打印将要执行的更新器脚本（只打印，不执行）
     /// 例如：`open -a "Deep Sleep" --args --hold idle-system,display`
     @MainActor
     private static func handleLaunchArguments() async {
@@ -147,6 +151,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             case "--changes":
                 Self.emitChanges()
+                index += 1
+
+            case "--rivals":
+                Self.emitRivals()
+                index += 1
+
+            case "--helper-version":
+                Self.emitHelperVersion()
+                index += 1
+
+            case "--update-script":
+                Self.emitUpdateScript()
+                index += 1
+
+            case "--update-check":
+                await UpdateManager.shared.checkForUpdates()
+                Self.emit("更新检查 —— \(UpdateManager.shared.phase.text)")
                 index += 1
 
             default:
@@ -264,6 +285,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// 打印更新器脚本供人工检查。只打印，不执行，不落盘。
+    @MainActor
+    private static func emitUpdateScript() {
+        let script = UpdateManager.updaterScript(
+            target: Bundle.main.bundleURL.path,
+            source: "/tmp/DeepSleepUpdate-示例/extracted/Deep Sleep.app",
+            workDirectory: "/tmp/DeepSleepUpdate-示例",
+            pid: getpid())
+        emit(script)
+    }
+
+    /// 列出其他会改电源设置的程序 —— 也就是「谁在跟 Deep Sleep 抢控制权」。
+    @MainActor
+    private static func emitRivals() {
+        PowerActivityMonitor.shared.scan()
+        let rivals = PowerActivityMonitor.shared.rivals
+        guard !rivals.isEmpty else {
+            emit("没有发现其他会修改电源设置的程序")
+            return
+        }
+        for rival in rivals {
+            emit("\(rival.name)（\(rival.bundleID)）—— \(rival.note)")
+        }
+    }
+
+    /// 助手的版本状态。命令行可查，不必为了看一眼版本去翻界面。
+    @MainActor
+    private static func emitHelperVersion() {
+        emit("应用内置助手构建 \(HelperConstants.helperBuild)")
+        emit("助手版本状态 —— \(HelperVersionManager.shared.state.text)")
+    }
+
     /// 列出检测到的电源设置改动。自身与外部改动都列出，只是分开标记 ——
     /// 用户需要的是完整时间线，而不是只留下「别人的」那部分。
     @MainActor
@@ -283,8 +336,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// 同时写到标准输出与系统日志，两条通路都能取到结果。
+    ///
+    /// 多行文本逐行加前缀：打印更新器脚本这类多行输出如果只有首行带前缀，
+    /// 解析方就只能靠猜来切分正文和日志噪音。
     private static func emit(_ text: String) {
-        FileHandle.standardOutput.write(Data(("deepsleep: " + text + "\n").utf8))
+        let payload = text
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { "deepsleep: \($0)\n" }
+            .joined()
+        FileHandle.standardOutput.write(Data(payload.utf8))
         NSLog("[DeepSleep] %@", text)
     }
 }

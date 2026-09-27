@@ -34,6 +34,9 @@ public enum HelperCommand: String, Codable, CaseIterable, Sendable {
     case sleepNow
     /// 卸载助手（停止并删除文件）。
     case uninstall
+    /// 用应用内置的新二进制替换助手自身并重启（助手的自我更新）。
+    /// 只接受构建序号严格递增、且来源为 Deep Sleep.app 内部的二进制。
+    case updateSelf
 }
 
 // MARK: - 请求
@@ -85,6 +88,19 @@ public enum HelperConstants {
     public static let logPath = "/var/log/com.skyc8266.deepsleep.helper.log"
     /// 协议版本，双方不一致时拒绝通信，避免升级后行为错乱。
     public static let protocolVersion = 1
+
+    /// 助手二进制的构建序号。
+    ///
+    /// **每次改动 DeepSleepHelper/ 下的代码都要把它 +1。** 这是「已安装的助手
+    /// 是否需要更新」的唯一判据，约定如下：
+    ///
+    ///   - 只增不减、不要跳号、不要复用它表示别的含义；
+    ///   - 判据是 `已安装 build < 本常量`，而不是「两者不相等」——
+    ///     用「不相等」的话，一旦应用比已安装的助手旧，就会反复把助手降级再
+    ///     升级，永远停不下来；
+    ///   - 应用侧读不到这个值（旧版助手不回报 build）时视为需要更新，
+    ///     但每次运行只尝试一次，避免更新失败时陷入循环。
+    public static let helperBuild = 1
 }
 
 // MARK: - 助手进程侧需 root 的断言类型

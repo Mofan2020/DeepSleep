@@ -16,6 +16,8 @@ enum SidebarItem: String, CaseIterable, Identifiable {
     /// 外部活动：谁在阻止休眠、谁在改电源设置。
     case external
     case log
+    /// 更新：应用自身与特权助手的版本维护。
+    case update
 
     var id: String { rawValue }
 
@@ -28,6 +30,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .schedule:   return "定时与唤醒"
         case .external:   return "外部活动"
         case .log:        return "运行日志"
+        case .update:     return "更新"
         }
     }
 
@@ -40,6 +43,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .schedule:   return "clock.arrow.circlepath"
         case .external:   return "binoculars"
         case .log:        return "text.alignleft"
+        case .update:     return "arrow.down.circle"
         }
     }
 }
@@ -70,6 +74,10 @@ struct ContentView: View {
                         .tag(SidebarItem.external)
                     Label(SidebarItem.log.title, systemImage: SidebarItem.log.symbol)
                         .tag(SidebarItem.log)
+                }
+                Section("维护") {
+                    Label(SidebarItem.update.title, systemImage: SidebarItem.update.symbol)
+                        .tag(SidebarItem.update)
                 }
             }
             .listStyle(.sidebar)
@@ -103,6 +111,7 @@ struct ContentView: View {
         case .schedule:   ScheduleView()
         case .external:   ExternalActivityView()
         case .log:        LogView()
+        case .update:     UpdateView()
         }
     }
 }

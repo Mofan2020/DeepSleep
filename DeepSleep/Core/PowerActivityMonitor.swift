@@ -68,6 +68,18 @@ struct SleepBlocker: Identifiable, Equatable {
     }
 }
 
+/// 一个可能与 Deep Sleep 争夺电源控制的程序。
+///
+/// 这类程序的特点是**不持有断言、只改设置** —— 所以它既不出现在
+/// 「谁在阻止休眠」里，也不会在系统日志里留名。发现它的唯一办法是
+/// 去看它的程序里有没有 pmset 相关代码。
+struct PowerRival: Identifiable, Equatable {
+    var id: String { bundleID }
+    let bundleID: String
+    let name: String
+    let note: String
+}
+
 /// 一次电源设置的改动。
 struct PowerSettingChange: Identifiable, Equatable {
     let id = UUID()
@@ -88,6 +100,8 @@ final class PowerActivityMonitor: ObservableObject {
     @Published private(set) var blockers: [SleepBlocker] = []
     /// 设置改动历史，最新的在前。
     @Published private(set) var changes: [PowerSettingChange] = []
+    /// 当前运行中、会动电源设置的其他程序。
+    @Published private(set) var rivals: [PowerRival] = []
     @Published private(set) var lastScanAt: Date?
 
     /// 上一轮看到的设置，用于 diff 出改动。
@@ -105,6 +119,10 @@ final class PowerActivityMonitor: ObservableObject {
     private var recentKeys: [String: Date] = [:]
     private let dedupeWindow: TimeInterval = 30
 
+    /// 竞争者检测结果的缓存，键是应用包路径。
+    /// 同一个二进制的内容不会变，每次扫描都重读一遍纯属浪费。
+    private var rivalCache: [String: Bool] = [:]
+
     /// 只关注与睡眠控制有关的键。全量 diff 会被无关键的噪声淹没。
     private static let watchedKeys: Set<String> = [
         "SleepDisabled", "sleep", "displaysleep", "disksleep",
@@ -121,6 +139,7 @@ final class PowerActivityMonitor: ObservableObject {
     /// - Parameter currentSettings: 调用方若刚读过设置可以传进来，省一次 `pmset` 调用。
     func scan(currentSettings: [String: String]? = nil) {
         blockers = Self.currentBlockers()
+        rivals = scanForRivals()
 
         let current = currentSettings ?? PMSetOutput.readCurrent()
         defer {
@@ -172,6 +191,63 @@ final class PowerActivityMonitor: ObservableObject {
     func clearChanges() {
         changes.removeAll()
         recentKeys.removeAll()
+    }
+
+    // MARK: - 竞争者检测
+
+    /// 扫描当前运行的应用，找出那些会改电源设置的。
+    ///
+    /// 判断依据不是猜的：直接看它的可执行文件里有没有 `pmset` / `disablesleep`
+    /// 这类字符串常量。这能抓住 AlDente 这种「不改断言、只改设置」的程序 ——
+    /// 它们不会出现在断言列表里，只有这一条路能发现。
+    ///
+    /// 只扫有界面的应用（跳过后台守护进程与 Apple 自带程序），
+    /// 避免把一堆系统组件当成嫌疑人。
+    private func scanForRivals() -> [PowerRival] {
+        var found: [PowerRival] = []
+
+        for app in NSWorkspace.shared.runningApplications {
+            guard app.activationPolicy != .prohibited,
+                  let url = app.bundleURL,
+                  let bundleID = app.bundleIdentifier,
+                  !bundleID.hasPrefix("com.apple.") else { continue }
+
+            let key = url.path
+            let suspect: Bool
+            if let cached = rivalCache[key] {
+                suspect = cached
+            } else {
+                suspect = Self.touchesPowerSettings(bundleURL: url)
+                rivalCache[key] = suspect
+            }
+            guard suspect else { continue }
+
+            found.append(PowerRival(
+                bundleID: bundleID,
+                name: app.localizedName ?? bundleID,
+                note: "程序里包含 pmset / 睡眠设置相关代码，可能自行修改系统电源设置，"
+                    + "与 Deep Sleep 互相覆盖"
+            ))
+        }
+
+        return found.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    /// 在应用的可执行文件里找 pmset 相关字符串。
+    ///
+    /// 只读文件、不执行任何东西。读不到一律当作「不是」—— 这个列表宁可漏报，
+    /// 也不要误报：一个总会冤枉别的程序的警示等于没有警示。
+    private static func touchesPowerSettings(bundleURL: URL) -> Bool {
+        guard let executable = Bundle(url: bundleURL)?.executableURL,
+              let handle = try? FileHandle(forReadingFrom: executable) else { return false }
+        defer { try? handle.close() }
+
+        // 字符串常量在 __TEXT 段，读前 8 MB 足够覆盖，也不必把整个
+        // 几百 MB 的包读进内存。
+        let data = handle.readData(ofLength: 8 * 1024 * 1024)
+        // 二进制按 Latin-1 解码不会失败，正好用来做子串搜索。
+        guard let text = String(data: data, encoding: .isoLatin1) else { return false }
+        return text.contains("disablesleep") || text.contains("SleepDisabled")
     }
 
     // MARK: - 断言枚举

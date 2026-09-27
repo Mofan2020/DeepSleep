@@ -297,12 +297,17 @@ private final class CommandHandler {
     func handle(_ request: HelperRequest) -> HelperResponse {
         switch request.command {
         case .ping:
-            return .ok("pong", payload: ["version": "\(HelperConstants.protocolVersion)"])
+            // 回报 build 号，应用据此判断是否需要更新助手。
+            return .ok("pong", payload: [
+                "version": "\(HelperConstants.protocolVersion)",
+                "build": "\(HelperConstants.helperBuild)"
+            ])
 
         case .status:
             let settings = PMSet.readSettings()
             return .ok("status", payload: [
                 "version": "\(HelperConstants.protocolVersion)",
+                "build": "\(HelperConstants.helperBuild)",
                 "assertions": assertions.heldKinds().joined(separator: ","),
                 "sleepDisabled": settings["SleepDisabled"] ?? "0",
                 "pid": "\(getpid())"
@@ -384,6 +389,19 @@ private final class CommandHandler {
             try? process.run()
             logLine("sleepnow scheduled")
             return .ok("即将进入睡眠")
+
+        case .updateSelf:
+            switch HelperSelfUpdate.perform(arguments: request.arguments) {
+            case .success:
+                logLine("self-update scheduled")
+                // 先回包再退出：立刻退出来不及把响应写回 socket，
+                // 应用会误判成「助手没响应」。
+                DispatchQueue.global().asyncAfter(deadline: .now() + 0.6) { exit(0) }
+                return .ok("助手更新已安排，即将重启")
+            case .failure(let error):
+                logLine("self-update rejected: \(error.message)")
+                return .failure(error.message)
+            }
 
         case .uninstall:
             logLine("uninstall requested")

@@ -24,8 +24,45 @@ struct ExternalActivityView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
+            rivalsCard
             blockersCard
             changesCard
+        }
+    }
+
+    // MARK: - 争夺电源控制的程序
+
+    private var rivalsCard: some View {
+        SectionCard(
+            title: "可能争夺电源控制的程序",
+            subtitle: "这些程序不持有阻止睡眠的断言，所以不会出现在下面的列表里，"
+                + "但它们会直接改系统电源设置 —— 和 Deep Sleep 互相覆盖。",
+            symbol: "exclamationmark.triangle",
+            accent: monitor.rivals.isEmpty ? .green : .red
+        ) {
+            if monitor.rivals.isEmpty {
+                Text("没有发现其他会修改电源设置的程序。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(monitor.rivals) { rival in
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 8) {
+                                Text(rival.name)
+                                    .font(.callout.weight(.medium))
+                                Text(rival.bundleID)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Text(rival.note)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
         }
     }
 
