@@ -8,8 +8,12 @@
 检查项：
   1. CLI 参数    AppDelegate 里接受的参数  ↔  README.md 的参数表
   2. 协议命令    HelperCommand 枚举        ↔  docs/architecture.md 的命令表
-  3. 版本号      project.yml               ↔  README.md
-  4. 文件引用    文档里提到的项目文件是否都存在
+  3. URL 命令    DeepSleepURL.commands     ↔  docs/architecture.md 的命令表
+  4. Siri 短语   编译期短语                 ↔  展示用目录（同一文件里两份）
+  5. 保护名单    ProcessGuard 硬名单        ↔  docs/architecture.md 的名单表
+  6. 版本号      project.yml               ↔  README.md
+  7. 文件引用    文档里提到的项目文件是否都存在
+  8. 转义插值    Swift 源码里写错的 `\\(`（用户可见文案会原样显示）
 
 用法：
     python3 scripts/check-docs.py
@@ -41,6 +45,23 @@ def section(title):
     print(f"\n[{title}]")
 
 
+def compare_sets(label, in_code, in_doc, missing_in_doc_hint, missing_in_code_hint):
+    """比较两组名字并登记差异。返回是否一致。"""
+    print(f"  代码中 {len(in_code)} 个，文档中 {len(in_doc)} 个")
+
+    missing_in_doc = sorted(in_code - in_doc)
+    missing_in_code = sorted(in_doc - in_code)
+
+    if missing_in_doc:
+        failures.append(missing_in_doc_hint + ", ".join(missing_in_doc))
+    if missing_in_code:
+        failures.append(missing_in_code_hint + ", ".join(missing_in_code))
+    if not missing_in_doc and not missing_in_code:
+        print("  ✓ 一致")
+        return True
+    return False
+
+
 # ---------------------------------------------------------------- CLI 参数
 
 def check_cli_arguments():
@@ -53,21 +74,10 @@ def check_cli_arguments():
     # 表格行形如：| `--hold <kinds>` | 说明 |
     in_doc = set(re.findall(r'^\|\s*`(--[a-z0-9-]+)', doc, re.MULTILINE))
 
-    print(f"  代码中 {len(in_code)} 个，README 中 {len(in_doc)} 个")
-
-    missing_in_doc = sorted(in_code - in_doc)
-    missing_in_code = sorted(in_doc - in_code)
-
-    if missing_in_doc:
-        failures.append(
-            "这些参数代码里有、README.md 的参数表里没有："
-            + ", ".join(missing_in_doc))
-    if missing_in_code:
-        failures.append(
-            "这些参数 README.md 里写了、代码里没有："
-            + ", ".join(missing_in_code))
-    if not missing_in_doc and not missing_in_code:
-        print("  ✓ 一致")
+    compare_sets(
+        "CLI 参数", in_code, in_doc,
+        "这些参数代码里有、README.md 的参数表里没有：",
+        "这些参数 README.md 里写了、代码里没有：")
 
 
 # ---------------------------------------------------------------- 协议命令
@@ -100,21 +110,163 @@ def check_protocol_commands():
         r"^\|\s*`([a-zA-Z][a-zA-Z0-9]*)`\s*\|", section_text.group(1),
         re.MULTILINE))
 
-    print(f"  代码中 {len(in_code)} 个，文档中 {len(in_doc)} 个")
+    compare_sets(
+        "协议命令", in_code, in_doc,
+        "这些命令代码里有、docs/architecture.md 的命令表里没有：",
+        "这些命令文档里写了、代码里没有：")
 
-    missing_in_doc = sorted(in_code - in_doc)
-    missing_in_code = sorted(in_doc - in_code)
 
-    if missing_in_doc:
+# ---------------------------------------------------------------- URL 命令
+
+def check_url_commands():
+    section("URL 命令")
+
+    source = read("DeepSleep/Core/URLCommands.swift")
+    block = re.search(
+        r"static let commands:\s*\[Command\]\s*=\s*\[(.*?)\n\s*\]",
+        source, re.DOTALL)
+    if not block:
         failures.append(
-            "这些命令代码里有、docs/architecture.md 的命令表里没有："
-            + ", ".join(missing_in_doc))
-    if missing_in_code:
+            "无法从 DeepSleep/Core/URLCommands.swift 里解析出 commands 表")
+        return
+
+    in_code = set(re.findall(r'Command\(name:\s*"([^"]+)"', block.group(1)))
+
+    doc = read("docs/architecture.md")
+    section_text = re.search(
+        r"### URL 命令一览\n(.*?)(?=\n## |\n### |\Z)", doc, re.DOTALL)
+    if not section_text:
         failures.append(
-            "这些命令文档里写了、代码里没有："
-            + ", ".join(missing_in_code))
-    if not missing_in_doc and not missing_in_code:
-        print("  ✓ 一致")
+            "docs/architecture.md 里找不到「### URL 命令一览」一节 —— "
+            "该节是 check-docs.py 的检查依据，不要删也不要改标题")
+        return
+    in_doc = set(re.findall(
+        r"^\|\s*`([a-z][a-z0-9-]*)`\s*\|", section_text.group(1),
+        re.MULTILINE))
+
+    compare_sets(
+        "URL 命令", in_code, in_doc,
+        "这些 URL 命令代码里有、docs/architecture.md 的命令表里没有：",
+        "这些 URL 命令文档里写了、代码里没有：")
+
+    # README 是用户可见文档：至少要提到这个 scheme，否则用户不知道有这条路。
+    readme = read("README.md")
+    if "deepsleep://" not in readme:
+        failures.append("README.md 里没有出现 `deepsleep://` —— 用户看不到 URL 这条通道")
+
+
+# ---------------------------------------------------------------- Siri 短语
+
+def check_shortcut_phrases():
+    section("Siri 短语")
+
+    source = read("DeepSleep/Intents/DeepSleepAppShortcuts.swift")
+
+    def canonical(phrase):
+        """两份短语的占位符写法不同，统一成同一个记号再比。"""
+        return (phrase.replace("{应用名}", "{APP}")
+                      .replace("\\(.applicationName)", "{APP}"))
+
+    # 编译期短语（给系统用）
+    typed = {}
+    for match in re.finditer(
+            r"AppShortcut\(\s*intent:\s*\w+\(\),\s*phrases:\s*\[(.*?)\],\s*"
+            r"shortTitle:\s*\"([^\"]+)\",\s*systemImageName:\s*\"([^\"]+)\"",
+            source, re.DOTALL):
+        phrases = {canonical(p) for p in re.findall(r'"([^"]+)"', match.group(1))}
+        typed[match.group(2)] = (match.group(3), phrases)
+
+    # 展示用目录（给界面、--automation 与文档用）
+    catalog = {}
+    for match in re.finditer(
+            r"Entry\(title:\s*\"([^\"]+)\",\s*symbol:\s*\"([^\"]+)\",\s*"
+            r"phrases:\s*\[(.*?)\]",
+            source, re.DOTALL):
+        phrases = {canonical(p) for p in re.findall(r'"([^"]+)"', match.group(3))}
+        catalog[match.group(1)] = (match.group(2), phrases)
+
+    if not typed or not catalog:
+        failures.append(
+            "无法从 DeepSleepAppShortcuts.swift 里解析出两份短语 "
+            f"（编译期 {len(typed)} 条 / 目录 {len(catalog)} 条）—— "
+            "解析假设可能已过期，请检查 AppShortcut(...) 与 Entry(...) 的写法")
+        return
+
+    print(f"  编译期 {len(typed)} 组，目录 {len(catalog)} 组")
+
+    only_typed = sorted(set(typed) - set(catalog))
+    only_catalog = sorted(set(catalog) - set(typed))
+    if only_typed:
+        failures.append("这些短语只有编译期那份、展示目录里没有：" + ", ".join(only_typed))
+    if only_catalog:
+        failures.append("这些短语只有展示目录那份、编译期没有（说出去不会生效）："
+                        + ", ".join(only_catalog))
+
+    for title in sorted(set(typed) & set(catalog)):
+        typed_symbol, typed_phrases = typed[title]
+        catalog_symbol, catalog_phrases = catalog[title]
+        if typed_symbol != catalog_symbol:
+            failures.append(
+                f"「{title}」的图标不一致：编译期 {typed_symbol} / 目录 {catalog_symbol}")
+        if typed_phrases != catalog_phrases:
+            failures.append(
+                f"「{title}」的短语不一致：编译期 {sorted(typed_phrases)} / "
+                f"目录 {sorted(catalog_phrases)}")
+
+    if not (only_typed or only_catalog):
+        print("  ✓ 两份一一对应")
+
+
+# ---------------------------------------------------------------- 保护名单
+
+def check_process_guard_lists():
+    section("保护名单")
+
+    source = read("Shared/ProcessGuard.swift")
+
+    def literal_set(name):
+        block = re.search(
+            rf"public static let {name}:\s*Set<String>\s*=\s*\[(.*?)\n\s*\]",
+            source, re.DOTALL)
+        if not block:
+            return None
+        return set(re.findall(r'"([^"]+)"', block.group(1)))
+
+    names = literal_set("protectedNames")
+    bundles = literal_set("protectedBundleIDs")
+    if names is None or bundles is None:
+        failures.append("无法从 Shared/ProcessGuard.swift 里解析出保护名单")
+        return
+
+    doc = read("docs/architecture.md")
+    section_text = re.search(
+        r"### 受保护的系统进程（快速退出的硬名单）\n(.*?)(?=\n## |\Z)",
+        doc, re.DOTALL)
+    if not section_text:
+        failures.append(
+            "docs/architecture.md 里找不到「### 受保护的系统进程（快速退出的硬名单）」一节 —— "
+            "该节是 check-docs.py 的检查依据，不要删也不要改标题")
+        return
+
+    doc_names, doc_bundles = set(), set()
+    for line in section_text.group(1).splitlines():
+        if not line.startswith("|"):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) < 2 or cells[0] in ("分组", "---") or set(cells[0]) == {"-"}:
+            continue
+        for token in re.findall(r"`([^`]+)`", cells[1]):
+            # 带点的是 bundle id，其余是进程名（都按代码里的写法小写）
+            (doc_bundles if "." in token else doc_names).add(token)
+
+    compare_sets(
+        "保护名单", names, doc_names,
+        "这些进程名代码里有、docs/architecture.md 的名单表里没有：",
+        "这些进程名文档里写了、代码里没有：")
+    compare_sets(
+        "保护 bundle id", bundles, doc_bundles,
+        "这些 bundle id 代码里有、docs/architecture.md 的名单表里没有：",
+        "这些 bundle id 文档里写了、代码里没有：")
 
 
 # ---------------------------------------------------------------- 版本号
@@ -197,6 +349,42 @@ def check_file_references():
         print("  ✓ 全部存在")
 
 
+# ---------------------------------------------------------------- 转义插值
+
+def check_literal_interpolation():
+    """扫「被转义掉的插值」：写成 `\\(` 时编译器不报错，但用户会看到原文。
+
+    只有同时带双引号的行才算 —— 注释里用反引号举例子
+    （`` `\\(.applicationName)` ``）是正常写法，不该误报。
+    """
+    section("转义插值")
+
+    hits = []
+    for folder, subfolders, files in os.walk(ROOT):
+        subfolders[:] = [name for name in subfolders
+                         if name not in (".git", "build", "release")]
+        if folder.endswith(".xcodeproj"):
+            continue
+        for name in files:
+            if not name.endswith(".swift"):
+                continue
+            path = os.path.join(folder, name)
+            with open(path, encoding="utf-8") as handle:
+                for number, line in enumerate(handle.read().splitlines(), 1):
+                    stripped = line.strip()
+                    if stripped.startswith(("//", "*", "/*")):
+                        continue
+                    if '"' in line and "\\\\(" in line:
+                        hits.append(f"{os.path.relpath(path, ROOT)}:{number}")
+
+    if hits:
+        failures.append(
+            "这些行里的 Swift 插值被转义成了普通文本（界面/日志会原样显示 `\\(...)`）："
+            + ", ".join(hits))
+    else:
+        print("  ✓ 没有发现被转义的插值")
+
+
 # ---------------------------------------------------------------- 文档存在性
 
 def check_documents_exist():
@@ -227,8 +415,12 @@ def main():
     check_documents_exist()
     check_cli_arguments()
     check_protocol_commands()
+    check_url_commands()
+    check_shortcut_phrases()
+    check_process_guard_lists()
     check_version()
     check_file_references()
+    check_literal_interpolation()
 
     print()
     print("=" * 46)

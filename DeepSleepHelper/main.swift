@@ -16,6 +16,9 @@
 //    - 每个连接都用 getpeereid() 校验对端 uid，非登录用户直接拒绝
 //    - 可写入的 pmset 键做白名单，值做数字校验，杜绝参数注入
 //    - 只暴露本文件列出的固定命令，不接受任意 shell 字符串
+//    - `terminateProcesses`（强制结束进程）不信任调用方给的任何判断：
+//      pid 只是「待考察对象」，保护名单与进程树全部用 Shared/ 里的
+//      同一份实现重新算一遍。名单在 ProcessGuard.swift，改动前先读那里的注释。
 //
 
 import Foundation
@@ -403,11 +406,66 @@ private final class CommandHandler {
                 return .failure(error.message)
             }
 
+        case .terminateProcesses:
+            return terminateProcesses(request)
+
         case .uninstall:
             logLine("uninstall requested")
             uninstallSelf()
             return .ok("助手已开始卸载")
         }
+    }
+
+    // MARK: - 强制结束进程
+
+    /// 强制结束一批进程及其全部子进程。
+    ///
+    /// 这是助手暴露的行为最重的命令，所以校验全部发生在助手这一侧：
+    /// 应用传来的只有一个 pid 列表，其余判断（谁是受保护进程、哪些子进程
+    /// 要一起处理）全部用共享实现重新算一遍。调用方就算被替换成一个
+    /// 乱发 pid 的程序，能造成的结果也只限于这份名单允许的范围。
+    private func terminateProcesses(_ request: HelperRequest) -> HelperResponse {
+        guard let raw = request.arguments["pids"] else {
+            return .failure("缺少 pids 参数")
+        }
+        let roots = raw
+            .split(separator: ",")
+            .compactMap { pid_t($0.trimmingCharacters(in: .whitespaces)) }
+
+        guard !roots.isEmpty else {
+            return .failure("pids 为空或无法解析")
+        }
+        guard roots.count <= ProcessGuard.maximumRootCount else {
+            return .failure("一次最多接受 \(ProcessGuard.maximumRootCount) 个目标进程，收到 \(roots.count) 个")
+        }
+
+        let snapshot = ProcessInventory.snapshot()
+        let plan = ProcessGuard.plan(roots: roots, in: snapshot)
+
+        guard plan.targets.count <= ProcessGuard.maximumTargetCount else {
+            // 整体拒绝而不是「杀一部分」：半个进程树比一棵完整的树更难收拾。
+            logLine("terminate 拒绝：目标数 \(plan.targets.count) 超过上限")
+            return .failure("待结束的进程数 \(plan.targets.count) 超过上限 \(ProcessGuard.maximumTargetCount)，已整体取消")
+        }
+
+        let outcome = ProcessTerminator.terminate(plan.targets, in: snapshot)
+
+        var report = TerminationReport()
+        report.killed = outcome.killed.map { .init(pid: $0.pid, name: $0.name) }
+        report.failed = outcome.failed.map { .init(pid: $0.pid, name: $0.name, reason: $0.reason) }
+        report.refused = plan.refusals.map { .init(pid: $0.pid, name: $0.name, reason: $0.reason) }
+        report.skippedDescendants = plan.skippedDescendantCount
+
+        logLine("terminate 根进程=\(roots.count) 目标=\(plan.targets.count) "
+                + "已退出=\(report.killed.count) 受保护=\(report.refused.count) 失败=\(report.failed.count)")
+        for refusal in report.refused {
+            logLine("  refused pid=\(refusal.pid) \(refusal.name)：\(refusal.reason)")
+        }
+
+        guard !plan.targets.isEmpty || !report.refused.isEmpty else {
+            return .failure("没有可结束的进程（目标可能已经退出）")
+        }
+        return .ok(report.summary, payload: report.encode())
     }
 
     /// 卸载：写入一个延迟脚本，让本进程退出后再删除文件与 launchd 任务。

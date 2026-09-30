@@ -65,10 +65,24 @@ python3 scripts/check-docs.py
 | --- | --- |
 | 文档里的 CLI 参数表 ↔ 代码里实际接受的参数 | `DeepSleep/AppDelegate.swift` |
 | 文档里的协议命令表 ↔ 协议枚举 | `Shared/HelperProtocol.swift` |
+| 文档里的 URL 命令表 ↔ `DeepSleepURL.commands` | `DeepSleep/Core/URLCommands.swift` |
+| 文档里的保护名单表 ↔ 硬编码名单 | `Shared/ProcessGuard.swift` |
+| Siri 短语的两份写法 ↔ 彼此（编译期 / 展示目录） | `DeepSleep/Intents/DeepSleepAppShortcuts.swift` |
 | 文档里的版本号 ↔ 工程配置 | `project.yml` |
 | 文档里引用的文件路径是否都存在 | 文件系统 |
+| 用户可见文案里有没有被转义的插值 `\\(`（会原样显示） | 全部 Swift 源码 |
 
 不一致会打印出具体差异并以非 0 退出。
+
+### 机制一之补：校验器自己也要能被否定
+
+```sh
+python3 scripts/test-check-docs.py
+```
+
+它把仓库复制到临时目录，**逐条把文档/代码改坏**，要求上面的检查每次都拦下来；
+最后再跑一次未改动的副本，要求退出码为 0（证明没有假阳性）。
+一个永远打印「✓ 一致」的检查脚本比没有检查更危险 —— 它会让人以为文档同步了。
 
 ### 机制二：机器查不了的，定好触发条件
 
@@ -76,9 +90,13 @@ python3 scripts/check-docs.py
 | --- | --- |
 | 新增 / 删除 CLI 参数 | `README.md` 的参数表 + `docs/architecture.md` |
 | 新增 / 删除协议命令 | `docs/architecture.md` + `HelperProtocol.swift` 里的注释 |
+| 新增 / 删除 URL 命令 | `docs/architecture.md` 的 URL 命令表 + `README.md` 的 URL 一节 |
+| 新增 / 删除 Siri 短语或快捷指令动作 | `DeepSleepAppShortcuts.swift` 里的**两处**（编译期短语 + 展示目录） |
+| 改快速退出的保护名单 | `docs/architecture.md` 第六节的名单表 + `scripts/test-process-guard.swift` |
 | 改了断言语义或对账范围 | `docs/architecture.md` |
 | 改了发布流程 | `docs/release.md` |
 | 改了安装 / 卸载脚本的行为 | `docs/architecture.md` 的权限模型一节 |
+| 用户可见的文案 | 不要写 `\\(`（会被原样显示）；写完跑一次 `check-docs.py` |
 | 踩到新坑 | `docs/gotchas.md`（**当场记**，别攒着 —— 攒着就忘了） |
 
 ### 一条贯穿全项目的原则：少写会变的数字

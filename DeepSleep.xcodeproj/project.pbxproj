@@ -7,11 +7,15 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		00E377CE865874C8D5E95A43 /* ProcessInventory.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7D2FBFD81DFC7D2B76F709D /* ProcessInventory.swift */; };
 		02FA7C7E50BA9D94C198223D /* HelperVersionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E1D45DC75AB25D3BC5214F5 /* HelperVersionManager.swift */; };
+		04AADB1A90517C6AFA89E030 /* URLCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DFE7EA8FCC931540BB46584 /* URLCommands.swift */; };
 		04E9E649615877F270D223AA /* PMSetOutput.swift in Sources */ = {isa = PBXBuildFile; fileRef = 575A45B0E6499C686C4827CF /* PMSetOutput.swift */; };
 		1918D7D77EC9140F31DE6718 /* AutomationRule.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4120515887C376197CCE7F9 /* AutomationRule.swift */; };
 		1C970D88D66C4F43D8AD1DAC /* PowerWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2DD20BF1CBB3194597701CA /* PowerWatcher.swift */; };
+		2CF3383D939893655F3DD14A /* QuickQuitView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69AD70CC1E39560226333763 /* QuickQuitView.swift */; };
 		313486F9C714E8AC1436BE78 /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = 178D52B0BEF95859AB8B6D88 /* Components.swift */; };
+		355B12850D9D59EF6A64EDD2 /* TerminationReport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4977ACA618E906FAE14B97C0 /* TerminationReport.swift */; };
 		373014038B076AA90C1FA300 /* HelperProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE3295E35F8D28B69A629A8F /* HelperProtocol.swift */; };
 		3A1481D80852929319D7370D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 7C643740D2392EB1F876E8BA /* Assets.xcassets */; };
 		3E5B62161B19BF1CCE6E1B22 /* ControlView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DEE905EAF64EFC038DFC418 /* ControlView.swift */; };
@@ -20,13 +24,16 @@
 		48A8411A91BC1725A62EAE46 /* HelperInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64A44533D85F54CB2BC70D48 /* HelperInstaller.swift */; };
 		49BA4D1FF2BB3180D79AA7D5 /* uninstall-helper.sh in Resources */ = {isa = PBXBuildFile; fileRef = 5C4F13990352AAC1FC42479A /* uninstall-helper.sh */; };
 		4CC529F69FC171A6A59CD5E3 /* AssertionKind.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0322343BBDEB6A664F907E5 /* AssertionKind.swift */; };
+		4FCF72BA3A4B673DEBC24AD5 /* GlobalHotkey.swift in Sources */ = {isa = PBXBuildFile; fileRef = 566F4ACAAB91680B697CC74D /* GlobalHotkey.swift */; };
 		51B6C48355C4201E39EE0FD3 /* DeepSleepApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0343C5752D94A72187E5078B /* DeepSleepApp.swift */; };
 		51B9E0C05CAD5F9A566B8C72 /* LogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E329CAE64699407C2EF03425 /* LogView.swift */; };
 		54E4BE87EB3245B63EACF75B /* AutomationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAB733FD825537CF3DA93F8A /* AutomationView.swift */; };
+		5CBBFE252FA1FF06D00A3222 /* TerminationReport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4977ACA618E906FAE14B97C0 /* TerminationReport.swift */; };
 		5CF047FA11D64F6D5A7CF6FB /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68F588C53CC45F52D04A434B /* AppDelegate.swift */; };
 		5E8C2C5C7356AE760C7CBF15 /* MenuBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13BD008C8B73D8005C11EFAC /* MenuBarController.swift */; };
 		62404108B725BBFBFE76C583 /* UpdateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BBF3FF9C3B4A0AA3E5A2493 /* UpdateView.swift */; };
 		683EF363E4F084BEF59CD0EB /* BiometricAuth.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BE799E3FF01373354EC7D76 /* BiometricAuth.swift */; };
+		6AFBA0A1C3939B8A8162754B /* ProcessGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09942C2FCA248432F203B05D /* ProcessGuard.swift */; };
 		6F47FDDC8B8A8BCEF68E6621 /* HelperClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CAA06BD31D3CA20982FDE4C /* HelperClient.swift */; };
 		708B71B465D2605742446DBD /* PowerActivityMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C993F30605CB3C3BB8F0EC18 /* PowerActivityMonitor.swift */; };
 		73ACAA59B7A7FB882CB55A50 /* AutomationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65EE86101EAC650FBB5F0CBB /* AutomationEngine.swift */; };
@@ -35,16 +42,21 @@
 		8BD0DC602D72415D81D2B19D /* PMSetOutput.swift in Sources */ = {isa = PBXBuildFile; fileRef = 575A45B0E6499C686C4827CF /* PMSetOutput.swift */; };
 		92410274FE9694B7FA8A76D8 /* install-helper.sh in Resources */ = {isa = PBXBuildFile; fileRef = 960F8920CB0412CB44C5FB31 /* install-helper.sh */; };
 		9429A1EB6266F9702E9D9158 /* ScheduleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43F312DABC0A8AAF435E103B /* ScheduleView.swift */; };
+		9551EFBCD9BC4F0B0C324544 /* DeepSleepIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09E4540A7ED2046DEB126599 /* DeepSleepIntents.swift */; };
 		A6FDF63D0FF8D8386787E0F5 /* SelfUpdate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D53595CDD09B7293B6CF8F1 /* SelfUpdate.swift */; };
 		B49E2B674BE4C8DBA32A22F6 /* HelperProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE3295E35F8D28B69A629A8F /* HelperProtocol.swift */; };
+		BB3A3C58E54678870163A762 /* DeepSleepAppShortcuts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52354ED18755C8CF314F230E /* DeepSleepAppShortcuts.swift */; };
 		C58D488668AB8F3B538FC28C /* PowerSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0E2DA26DEFB4FB3396D7063 /* PowerSettingsView.swift */; };
+		C5C82FA1DED31F6CAD42F13E /* QuickQuit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DAFF6F4654DCF7056F1BA67 /* QuickQuit.swift */; };
 		C7CAF9096B3F0A12F35B8126 /* WindowCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2955F2519DCC800EC189D9EA /* WindowCoordinator.swift */; };
 		E2B0737ADBFCBC9D4C33F3A6 /* UnixSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58014010D89130A9A194BE3F /* UnixSocket.swift */; };
 		E3CD86EC4A9AF02878100043 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2650D41E2F701CBC6738B29 /* ContentView.swift */; };
+		E648F9B8460CA4DC6467A511 /* ProcessGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09942C2FCA248432F203B05D /* ProcessGuard.swift */; };
 		EDD6AC5A315B659622797185 /* UpdateManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03B58135C030FD6D97DD7D84 /* UpdateManager.swift */; };
 		EE8F090E23622184B5D04D17 /* UnixSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58014010D89130A9A194BE3F /* UnixSocket.swift */; };
 		F46459160672CE1350637D97 /* Version.swift in Sources */ = {isa = PBXBuildFile; fileRef = F67CFF72B57B6842BFE84727 /* Version.swift */; };
 		F9C83EB7C255F958694CAE61 /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 571B5897312541D688A35CB1 /* DashboardView.swift */; };
+		FBE1B06A9F086A979060AEAD /* ProcessInventory.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7D2FBFD81DFC7D2B76F709D /* ProcessInventory.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -60,14 +72,21 @@
 /* Begin PBXFileReference section */
 		0343C5752D94A72187E5078B /* DeepSleepApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepSleepApp.swift; sourceTree = "<group>"; };
 		03B58135C030FD6D97DD7D84 /* UpdateManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateManager.swift; sourceTree = "<group>"; };
+		09942C2FCA248432F203B05D /* ProcessGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessGuard.swift; sourceTree = "<group>"; };
+		09E4540A7ED2046DEB126599 /* DeepSleepIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepSleepIntents.swift; sourceTree = "<group>"; };
 		0DEE905EAF64EFC038DFC418 /* ControlView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlView.swift; sourceTree = "<group>"; };
 		13BD008C8B73D8005C11EFAC /* MenuBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarController.swift; sourceTree = "<group>"; };
 		17210D6CB4894B79813780AD /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		178D52B0BEF95859AB8B6D88 /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
+		1DAFF6F4654DCF7056F1BA67 /* QuickQuit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickQuit.swift; sourceTree = "<group>"; };
+		1DFE7EA8FCC931540BB46584 /* URLCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = URLCommands.swift; sourceTree = "<group>"; };
 		2955F2519DCC800EC189D9EA /* WindowCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowCoordinator.swift; sourceTree = "<group>"; };
 		3E1D45DC75AB25D3BC5214F5 /* HelperVersionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelperVersionManager.swift; sourceTree = "<group>"; };
 		43F312DABC0A8AAF435E103B /* ScheduleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleView.swift; sourceTree = "<group>"; };
+		4977ACA618E906FAE14B97C0 /* TerminationReport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminationReport.swift; sourceTree = "<group>"; };
 		4D53595CDD09B7293B6CF8F1 /* SelfUpdate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelfUpdate.swift; sourceTree = "<group>"; };
+		52354ED18755C8CF314F230E /* DeepSleepAppShortcuts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepSleepAppShortcuts.swift; sourceTree = "<group>"; };
+		566F4ACAAB91680B697CC74D /* GlobalHotkey.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalHotkey.swift; sourceTree = "<group>"; };
 		571B5897312541D688A35CB1 /* DashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardView.swift; sourceTree = "<group>"; };
 		575A45B0E6499C686C4827CF /* PMSetOutput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PMSetOutput.swift; sourceTree = "<group>"; };
 		58014010D89130A9A194BE3F /* UnixSocket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnixSocket.swift; sourceTree = "<group>"; };
@@ -79,6 +98,7 @@
 		64A44533D85F54CB2BC70D48 /* HelperInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelperInstaller.swift; sourceTree = "<group>"; };
 		65EE86101EAC650FBB5F0CBB /* AutomationEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationEngine.swift; sourceTree = "<group>"; };
 		68F588C53CC45F52D04A434B /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		69AD70CC1E39560226333763 /* QuickQuitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickQuitView.swift; sourceTree = "<group>"; };
 		7C643740D2392EB1F876E8BA /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		93C5E4B4358BF400FACC53DC /* SleepController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepController.swift; sourceTree = "<group>"; };
 		960F8920CB0412CB44C5FB31 /* install-helper.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = "install-helper.sh"; sourceTree = "<group>"; };
@@ -95,6 +115,7 @@
 		E329CAE64699407C2EF03425 /* LogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogView.swift; sourceTree = "<group>"; };
 		F2650D41E2F701CBC6738B29 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		F67CFF72B57B6842BFE84727 /* Version.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Version.swift; sourceTree = "<group>"; };
+		F7D2FBFD81DFC7D2B76F709D /* ProcessInventory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessInventory.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -141,13 +162,25 @@
 				C0322343BBDEB6A664F907E5 /* AssertionKind.swift */,
 				65EE86101EAC650FBB5F0CBB /* AutomationEngine.swift */,
 				A4120515887C376197CCE7F9 /* AutomationRule.swift */,
+				566F4ACAAB91680B697CC74D /* GlobalHotkey.swift */,
 				3E1D45DC75AB25D3BC5214F5 /* HelperVersionManager.swift */,
 				C993F30605CB3C3BB8F0EC18 /* PowerActivityMonitor.swift */,
 				A2DD20BF1CBB3194597701CA /* PowerWatcher.swift */,
+				1DAFF6F4654DCF7056F1BA67 /* QuickQuit.swift */,
 				93C5E4B4358BF400FACC53DC /* SleepController.swift */,
 				03B58135C030FD6D97DD7D84 /* UpdateManager.swift */,
+				1DFE7EA8FCC931540BB46584 /* URLCommands.swift */,
 			);
 			path = Core;
+			sourceTree = "<group>";
+		};
+		9DDC46D7513272EAF61242C3 /* Intents */ = {
+			isa = PBXGroup;
+			children = (
+				52354ED18755C8CF314F230E /* DeepSleepAppShortcuts.swift */,
+				09E4540A7ED2046DEB126599 /* DeepSleepIntents.swift */,
+			);
+			path = Intents;
 			sourceTree = "<group>";
 		};
 		A54D53C12E646CA216412D4B /* Privileged */ = {
@@ -164,6 +197,9 @@
 			children = (
 				DE3295E35F8D28B69A629A8F /* HelperProtocol.swift */,
 				575A45B0E6499C686C4827CF /* PMSetOutput.swift */,
+				09942C2FCA248432F203B05D /* ProcessGuard.swift */,
+				F7D2FBFD81DFC7D2B76F709D /* ProcessInventory.swift */,
+				4977ACA618E906FAE14B97C0 /* TerminationReport.swift */,
 				58014010D89130A9A194BE3F /* UnixSocket.swift */,
 				F67CFF72B57B6842BFE84727 /* Version.swift */,
 			);
@@ -194,6 +230,7 @@
 			children = (
 				B673396F005C8755E110A8B1 /* Auth */,
 				87CE46D332B4F3AF2889D27E /* Core */,
+				9DDC46D7513272EAF61242C3 /* Intents */,
 				A54D53C12E646CA216412D4B /* Privileged */,
 				D5EBEFBEB0B48688AB35EA1C /* Resources */,
 				FC4B385FCF1AA271879C9157 /* Views */,
@@ -215,6 +252,7 @@
 				596F4304321F89BFF2BEC9DB /* ExternalActivityView.swift */,
 				E329CAE64699407C2EF03425 /* LogView.swift */,
 				E0E2DA26DEFB4FB3396D7063 /* PowerSettingsView.swift */,
+				69AD70CC1E39560226333763 /* QuickQuitView.swift */,
 				43F312DABC0A8AAF435E103B /* ScheduleView.swift */,
 				5BBF3FF9C3B4A0AA3E5A2493 /* UpdateView.swift */,
 			);
@@ -351,7 +389,10 @@
 				3E5B62161B19BF1CCE6E1B22 /* ControlView.swift in Sources */,
 				F9C83EB7C255F958694CAE61 /* DashboardView.swift in Sources */,
 				51B6C48355C4201E39EE0FD3 /* DeepSleepApp.swift in Sources */,
+				BB3A3C58E54678870163A762 /* DeepSleepAppShortcuts.swift in Sources */,
+				9551EFBCD9BC4F0B0C324544 /* DeepSleepIntents.swift in Sources */,
 				7E9BB0ED0884AB7842D45981 /* ExternalActivityView.swift in Sources */,
+				4FCF72BA3A4B673DEBC24AD5 /* GlobalHotkey.swift in Sources */,
 				6F47FDDC8B8A8BCEF68E6621 /* HelperClient.swift in Sources */,
 				48A8411A91BC1725A62EAE46 /* HelperInstaller.swift in Sources */,
 				B49E2B674BE4C8DBA32A22F6 /* HelperProtocol.swift in Sources */,
@@ -362,8 +403,14 @@
 				708B71B465D2605742446DBD /* PowerActivityMonitor.swift in Sources */,
 				C58D488668AB8F3B538FC28C /* PowerSettingsView.swift in Sources */,
 				1C970D88D66C4F43D8AD1DAC /* PowerWatcher.swift in Sources */,
+				6AFBA0A1C3939B8A8162754B /* ProcessGuard.swift in Sources */,
+				00E377CE865874C8D5E95A43 /* ProcessInventory.swift in Sources */,
+				C5C82FA1DED31F6CAD42F13E /* QuickQuit.swift in Sources */,
+				2CF3383D939893655F3DD14A /* QuickQuitView.swift in Sources */,
 				9429A1EB6266F9702E9D9158 /* ScheduleView.swift in Sources */,
 				43965B2CAF6676C308E55526 /* SleepController.swift in Sources */,
+				355B12850D9D59EF6A64EDD2 /* TerminationReport.swift in Sources */,
+				04AADB1A90517C6AFA89E030 /* URLCommands.swift in Sources */,
 				E2B0737ADBFCBC9D4C33F3A6 /* UnixSocket.swift in Sources */,
 				EDD6AC5A315B659622797185 /* UpdateManager.swift in Sources */,
 				62404108B725BBFBFE76C583 /* UpdateView.swift in Sources */,
@@ -378,7 +425,10 @@
 			files = (
 				373014038B076AA90C1FA300 /* HelperProtocol.swift in Sources */,
 				04E9E649615877F270D223AA /* PMSetOutput.swift in Sources */,
+				E648F9B8460CA4DC6467A511 /* ProcessGuard.swift in Sources */,
+				FBE1B06A9F086A979060AEAD /* ProcessInventory.swift in Sources */,
 				A6FDF63D0FF8D8386787E0F5 /* SelfUpdate.swift in Sources */,
+				5CBBFE252FA1FF06D00A3222 /* TerminationReport.swift in Sources */,
 				EE8F090E23622184B5D04D17 /* UnixSocket.swift in Sources */,
 				46F0FD7486AF2AD5E745E69A /* Version.swift in Sources */,
 				89D6B9C0B4DFC68071831BD1 /* main.swift in Sources */,
@@ -575,7 +625,7 @@
 				INFOPLIST_FILE = DeepSleep/Resources/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
-				MARKETING_VERSION = 1.2.1;
+				MARKETING_VERSION = 1.3.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.skyc8266.deepsleep;
 				PRODUCT_NAME = "Deep Sleep";
 				SDKROOT = macosx;
@@ -592,7 +642,7 @@
 				INFOPLIST_FILE = DeepSleep/Resources/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
-				MARKETING_VERSION = 1.2.1;
+				MARKETING_VERSION = 1.3.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.skyc8266.deepsleep;
 				PRODUCT_NAME = "Deep Sleep";
 				SDKROOT = macosx;

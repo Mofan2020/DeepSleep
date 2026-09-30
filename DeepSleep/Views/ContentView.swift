@@ -13,6 +13,8 @@ enum SidebarItem: String, CaseIterable, Identifiable {
     case power
     case automation
     case schedule
+    /// 快速退出：一键结束选定应用及其子进程。
+    case quickQuit
     /// 外部活动：谁在阻止休眠、谁在改电源设置。
     case external
     case log
@@ -28,6 +30,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .power:      return "电源设置"
         case .automation: return "自动化"
         case .schedule:   return "定时与唤醒"
+        case .quickQuit:  return "快速退出"
         case .external:   return "外部活动"
         case .log:        return "运行日志"
         case .update:     return "更新"
@@ -41,6 +44,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .power:      return "slider.horizontal.3"
         case .automation: return "wand.and.stars"
         case .schedule:   return "clock.arrow.circlepath"
+        case .quickQuit:  return "bolt.horizontal.circle"
         case .external:   return "binoculars"
         case .log:        return "text.alignleft"
         case .update:     return "arrow.down.circle"
@@ -65,9 +69,11 @@ struct ContentView: View {
                         Label(item.title, systemImage: item.symbol).tag(item)
                     }
                 }
-                Section("智能行为") {
+                Section("自动化") {
                     Label(SidebarItem.automation.title, systemImage: SidebarItem.automation.symbol)
                         .tag(SidebarItem.automation)
+                    Label(SidebarItem.quickQuit.title, systemImage: SidebarItem.quickQuit.symbol)
+                        .tag(SidebarItem.quickQuit)
                 }
                 Section("诊断") {
                     Label(SidebarItem.external.title, systemImage: SidebarItem.external.symbol)
@@ -109,6 +115,7 @@ struct ContentView: View {
         case .power:      PowerSettingsView()
         case .automation: AutomationView()
         case .schedule:   ScheduleView()
+        case .quickQuit:  QuickQuitView()
         case .external:   ExternalActivityView()
         case .log:        LogView()
         case .update:     UpdateView()

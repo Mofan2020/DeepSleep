@@ -120,6 +120,41 @@ struct AutomationView: View {
                 }
             }
         }
+        SectionCard(
+            title: "Siri 与快捷指令",
+            subtitle: "下面这些句子可以直接对 Siri 说；「快捷指令」App 的 Deep Sleep 分区里有同样的动作，可以编进更长的流程。",
+            symbol: "mic",
+            accent: .pink
+        ) {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(DeepSleepShortcutCatalog.entries) { entry in
+                    VStack(alignment: .leading, spacing: 3) {
+                        Label(entry.title, systemImage: entry.symbol)
+                            .font(.body.weight(.medium))
+                        Text(entry.phrases
+                                .map { DeepSleepShortcutCatalog.spoken($0) }
+                                .joined(separator: "　·　"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
+                Divider()
+
+                Text("自动操作、AppleScript 与 shell 脚本走 deepsleep:// 命令；`--automation` 能打印完整清单。")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+
+                // 用 Link 打开「快捷指令」而不是 AppIntents 的 ShortcutsLink：
+                // 后者在 macOS 的 AppIntents 模块里并不存在（只在 iOS 侧提供），
+                // 系统自带的 URL scheme 两边都能用。
+                Link(destination: URL(string: "shortcuts://")!) {
+                    Label("打开「快捷指令」", systemImage: "arrow.up.forward.app")
+                }
+                .buttonStyle(.bordered)
+            }
+        }
         .sheet(isPresented: $showEditor) {
             RuleEditorView(rule: editingRule) { rule in
                 if editingRule == nil {

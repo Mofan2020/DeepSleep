@@ -7,7 +7,7 @@
 - **应用名**：Deep Sleep
 - **最低系统**：macOS 26.0
 - **语言 / 框架**：Swift 5、SwiftUI + AppKit、IOKit、LocalAuthentication
-- **当前版本**：1.2.1
+- **当前版本**：1.3.0
 
 ---
 
@@ -38,6 +38,28 @@
 - **应用运行中**：指定的某个应用在前台运行时
 
 规则只表达意图，实际申请与释放由控制器统一收敛，因此手动开关和规则不会互相打架。
+
+### 交给系统自动化（Siri / 快捷指令 / 自动操作）
+
+| 通道 | 怎么用 |
+| --- | --- |
+| **Siri** | 说「用 Deep Sleep 保持清醒」「用 Deep Sleep 查询睡眠状态」这类句子（完整短语见 `--automation`） |
+| **快捷指令** | 「快捷指令」App 里直接有 Deep Sleep 的动作，可以拼进任何自动化流程 |
+| **自动操作 / AppleScript / shell** | 调用 `deepsleep://` URL（命令表见下文） |
+| **聚焦 / 控制中心** | 上面这些动作同样会出现在这里 |
+
+### 快速退出：一个快捷键强杀选定的应用
+
+指定一个全局快捷键（默认 **⌥⇧⌘H**，可在界面里录制修改），按下就把**名单里选定的应用
+连同它们的全部子进程**一起强制结束。
+
+- 这是**强制结束**，不是优雅退出：不等待保存、不给应用留收尾机会
+- **受保护的系统进程永远不会被碰** —— 名单硬编码在代码里（Finder、Dock、WindowServer、
+  powerd、tccd 等），完整清单见 [docs/architecture.md](docs/architecture.md) 第六节；
+  命中的进程**连同它的整棵子树**一起跳过，没有开关能绕过
+- 需要 root 才能结束的进程走特权助手；助手不可达时退回本进程权限，并在结果里说明降级
+- 名单里的应用如果不在运行，结果会如实写「未在运行」，不会假装成功
+- 「演练一次」只列出会结束哪些进程，不动手
 
 ### 其他
 
@@ -137,9 +159,26 @@ open -a "Deep Sleep" --args --status
 | `--helper-version` | 显示特权助手的版本状态（与内置那份的摘要比对结果） |
 | `--update-check` | 立即检查应用更新并输出结果 |
 | `--update-script` | 打印将要执行的更新器脚本（只打印，不执行；用于人工审查） |
+| `--quick-quit` | 立刻执行一次快速退出（结束选定的应用及其全部子进程） |
+| `--dry-run` | 与 `--quick-quit` 配合：只列出会结束哪些进程，不动手 |
+| `--automation` | 打印 Siri 短语与 `deepsleep://` 的命令清单 |
+| `--hotkey-status` | 打印快速退出快捷键的注册状态（排查「按了没反应」） |
 
 > 注意：`--hold` / `--release` 作用于启动它的那个实例。macOS 单实例机制下，
-> 对已运行的实例再次传参不会生效 —— 需要脚本化持续控制时，请用自动化规则。
+> 对已运行的实例再次传参不会生效 —— 需要脚本化持续控制时请用下面的 URL，
+> 或者自动化规则。
+
+### `deepsleep://` URL 接口
+
+```sh
+open "deepsleep://hold?kind=idle-system,display&minutes=60"
+open "deepsleep://release"
+open "deepsleep://quick-quit?dry-run=1"
+```
+
+命令表与参数说明见 [docs/architecture.md](docs/architecture.md) 的「URL 命令一览」。
+URL 每次都能送到正在运行的那个实例，这是它比命令行参数更适合「重复调用」的原因。
+AppleScript 用 `open location "deepsleep://release"`，自动操作用「打开 URL」动作。
 
 ---
 
@@ -388,10 +427,13 @@ DeepSleep/
 │   ├── HelperProtocol.swift        命令 / 响应 / 常量定义
 │   ├── UnixSocket.swift            UNIX socket 封装（长度前缀分帧）
 │   ├── PMSetOutput.swift           `pmset -g` 解析（app 与助手共用一份）
-│   └── Version.swift               版本号解析与比较（自动更新的判断依据）
+│   ├── Version.swift               版本号解析与比较（自动更新的判断依据）
+│   ├── ProcessInventory.swift      进程枚举与进程树（快速退出用）
+│   ├── ProcessGuard.swift          强杀保护名单与「该杀谁」的裁决
+│   └── TerminationReport.swift     强杀结果的结构与编解码
 ├── DeepSleep/                      主应用
 │   ├── DeepSleepApp.swift          App 入口（主窗口场景）
-│   ├── AppDelegate.swift           生命周期 + 命令行接口 + 窗口自检
+│   ├── AppDelegate.swift           生命周期 + 命令行接口 + URL 入口
 │   ├── Windows/
 │   │   ├── MenuBarController.swift 菜单栏图标：左键打开 / 右键设置
 │   │   └── WindowCoordinator.swift 主窗口显示与 Dock 图标策略
@@ -403,14 +445,20 @@ DeepSleep/
 │   │   ├── UpdateManager.swift     应用自更新：检查、校验、替换
 │   │   ├── HelperVersionManager.swift  助手版本检测与自我更新
 │   │   ├── AutomationRule.swift    自动化规则模型
-│   │   └── AutomationEngine.swift  规则求值引擎
+│   │   ├── AutomationEngine.swift  规则求值引擎
+│   │   ├── QuickQuit.swift         快速退出引擎（目标名单 → 进程树 → 强杀）
+│   │   ├── GlobalHotkey.swift      全局快捷键（Carbon，不需要辅助功能权限）
+│   │   └── URLCommands.swift       `deepsleep://` 命令表与解析
+│   ├── Intents/
+│   │   ├── DeepSleepIntents.swift      App Intents（Siri / 快捷指令 / 聚焦）
+│   │   └── DeepSleepAppShortcuts.swift App Shortcuts：说出口的短语
 │   ├── Privileged/
 │   │   ├── HelperClient.swift      socket 客户端
 │   │   └── HelperInstaller.swift   一次性安装 / 卸载
 │   ├── Auth/BiometricAuth.swift    Touch ID 授权封装
-│   ├── Views/                      SwiftUI 界面
+│   ├── Views/                      SwiftUI 界面（含快速退出页 QuickQuitView.swift）
 │   └── Resources/
-│       ├── Info.plist
+│       ├── Info.plist              （含 `deepsleep://` 的 CFBundleURLTypes）
 │       ├── install-helper.sh       以 root 运行的安装脚本
 │       └── uninstall-helper.sh     以 root 运行的卸载脚本
 └── DeepSleepHelper/
@@ -425,8 +473,9 @@ DeepSleep/
 `helper-probe.py` 直接与特权助手对话（排查与端到端测试），
 `try-release-assertion.swift` 验证跨进程断言释放会被拒绝，
 `dump-windows.swift` 从进程外部查看 Deep Sleep 的窗口是否真的出现，
-`test-pmset-parse.swift` / `test-version-compare.swift` / `test-selfupdate.swift`
-是三个回归测试（都直接编译真实源码，而不是抄一份逻辑来测），
+`test-pmset-parse.swift` / `test-version-compare.swift` / `test-selfupdate.swift` /
+`test-process-guard.swift` 是四个回归测试（都直接编译真实源码，而不是抄一份逻辑来测），
+`check-docs.py` 负责文档不漂移、`test-check-docs.py` 负责证明前者真的会拦，
 `probe-unknown-command.py` 验证助手对不认识的命令的反应，
 `build-release.sh` 打包 GitHub Release 需要的 `DeepSleep.zip` 与摘要文件。
 
@@ -482,6 +531,14 @@ DeepSleep/
 - 更新器脚本 dry-run 与替换演练：正常替换成功、备份与工作目录清理干净；
   新版本放入失败时**完整回滚**，旧应用仍在
 - `--rivals` 正确识别出 AlDente（`com.apphousekitchen.aldente-pro`）
+- **快速退出**：进程树 + 保护裁决的 60 余条断言全部通过（其中「受保护进程的子树要整段跳过」
+  「读不到的进程要如实上报」这两个 bug 正是被测试抓出来并修掉的）
+- 快速退出端到端（经特权助手，root）：探针应用 + 3 个子进程全部结束，内核确认目标已消失；
+  同一轮里把伪装成 `Finder` 的进程一起交给助手，助手独立重算后**拒绝**（助手日志 `受保护=1`），该进程存活
+- `--dry-run` 演练只列计划、不动手
+- `deepsleep://` 通道实测：`release` / `status` 生效，无法识别的命令被拒绝并提示可用清单
+- App Intents 元数据构建产物包含 8 个 intent 与 8 组短语（`Metadata.appintents`）
+- 全局快捷键注册成功（Carbon `RegisterEventHotKey`，**不需要**辅助功能 / 输入监控权限）
 
 未实测：
 

@@ -91,6 +91,9 @@ final class SleepController: ObservableObject {
 
     /// 倒计时（到点进入睡眠）。
     @Published private(set) var countdownDeadline: Date?
+    /// 「保持 N 分钟后自动释放」的到期时间。与倒计时相反：到点释放而不是睡眠。
+    /// Siri 说「保持清醒 1 小时」走的就是这条路径。
+    @Published private(set) var holdDeadline: Date?
     /// 已排定的唤醒时间。
     @Published private(set) var scheduledWake: Date?
 
@@ -164,6 +167,30 @@ final class SleepController: ObservableObject {
         return "audits=\(auditCount) lastRestore=\(restore)"
     }
 
+    /// 一行式状态摘要。
+    ///
+    /// CLI 的 `--status`、URL 的 `status` 命令、界面横幅三处共用这一份措辞 ——
+    /// 之前这段拼装写在 AppDelegate 里，加一个字段就要在三处同步。
+    /// AppKit 相关的字段（Dock 图标）由调用方自行追加，这里不引入 AppKit。
+    var statusSummary: String {
+        let active = activeAssertions
+            .sorted { $0.rawValue < $1.rawValue }
+            .map(\.cliName)
+            .joined(separator: ",")
+        let hold = holdDeadline.map { ISO8601DateFormatter().string(from: $0) } ?? "none"
+        return """
+        hold=\(active.isEmpty ? "none" : active) \
+        count=\(activeAssertions.count) \
+        fullControl=\(helperState.isReady ? "on" : "off") \
+        sleepDisabled=\(sleepDisabled ? "1" : "0") \
+        desiredSleepDisabled=\(desiredSleepDisabled ? "1" : "0") \
+        backingAssertion=\(sleepDisabledBacking ? "1" : "0") \
+        powerWatcher=\(PowerWatcher.shared.isRegistered ? "on" : "off") \
+        holdUntil=\(hold) \
+        \(auditSummary)
+        """
+    }
+
     /// 当前所有意图的并集。
     private var desiredAssertions: Set<AssertionKind> {
         var desired = manualAssertions.union(ruleAssertions)
@@ -183,6 +210,7 @@ final class SleepController: ObservableObject {
     private var remoteHeld: Set<AssertionKind> = []
     private var refreshTimer: Timer?
     private var countdownTimer: Timer?
+    private var holdTimer: Timer?
     private var isReconciling = false
 
     private static let confirmationKey = "com.skyc8266.deepsleep.confirmEachAction"
@@ -225,7 +253,32 @@ final class SleepController: ObservableObject {
 
     // MARK: - 生命周期
 
+    /// 启动流程的句柄。
+    ///
+    /// 存在的理由：Siri / 快捷指令 / `deepsleep://` 都可能在应用刚被系统拉起、
+    /// `bootstrap()` 还没跑完时就到达。没有这道闸门，那些请求会读到「助手尚未
+    /// 就绪、断言为空」的中间状态，然后据此做出错误的决定。
+    private var bootstrapTask: Task<Void, Never>?
+    private var didBootstrap = false
+
+    /// 由 AppDelegate 在 `applicationDidFinishLaunching` 里调用。
+    func beginBootstrap() {
+        guard bootstrapTask == nil else { return }
+        bootstrapTask = Task { @MainActor [weak self] in
+            await self?.bootstrap()
+        }
+    }
+
+    /// 等启动流程跑完。重复调用是安全的；没人启动过就自己启动。
+    func ensureReady() async {
+        if bootstrapTask == nil { beginBootstrap() }
+        await bootstrapTask?.value
+    }
+
     func bootstrap() async {
+        guard !didBootstrap else { return }
+        didBootstrap = true
+
         appendLog("Deep Sleep 启动，协议 v\(HelperConstants.protocolVersion)")
         await refreshHelperState()
         await refreshPowerSettings()
@@ -250,6 +303,8 @@ final class SleepController: ObservableObject {
         refreshTimer = nil
         countdownTimer?.invalidate()
         countdownTimer = nil
+        holdTimer?.invalidate()
+        holdTimer = nil
         automation.stop()
         PowerWatcher.shared.stop()
 
@@ -378,10 +433,59 @@ final class SleepController: ObservableObject {
     }
 
     /// 一次性释放所有 assertion。
+    /// 用户主动释放时连「保持 N 分钟」的约定一起取消 —— 手动意图优先。
     func releaseAllAssertions() async {
+        cancelHoldDeadline()
         manualAssertions.removeAll()
         ruleAssertions.removeAll()
         await reconcile()
+    }
+
+    // MARK: - 定时保持（Siri / 快捷指令 / URL 用）
+
+    /// 打开一组保持，可选「N 分钟后自动释放」。
+    ///
+    /// 与 `setAssertion` 的关系：这里不绕过任何检查，逐个调用它，
+    /// 因此「需要完全控制」「提权要确认」等既有规则原样适用。
+    /// 返回实际生效与被拒绝的类型，供调用方如实回报（Siri 的回复就是这么来的）。
+    func hold(assertions: Set<AssertionKind>,
+              minutes: Int?) async -> (applied: [AssertionKind], rejected: [AssertionKind]) {
+        for kind in assertions.sorted(by: { $0.rawValue < $1.rawValue }) {
+            await setAssertion(kind, enabled: true)
+        }
+
+        let applied = assertions.filter { activeAssertions.contains($0) }
+        let rejected = assertions.subtracting(applied)
+        scheduleHoldDeadline(minutes: minutes)
+        return (applied.sorted { $0.rawValue < $1.rawValue },
+                rejected.sorted { $0.rawValue < $1.rawValue })
+    }
+
+    /// 安排自动释放。`minutes` 为 nil 或 ≤0 表示不限时。
+    private func scheduleHoldDeadline(minutes: Int?) {
+        cancelHoldDeadline()
+        guard let minutes, minutes > 0 else { return }
+
+        holdDeadline = Date().addingTimeInterval(TimeInterval(minutes * 60))
+        appendLog("已设定 \(minutes) 分钟后自动释放保持")
+
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, let deadline = self.holdDeadline else { return }
+                guard Date() >= deadline else { return }
+                self.appendLog("保持时间到，自动释放全部保持")
+                await self.releaseAllAssertions()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        holdTimer = timer
+    }
+
+    /// 取消「N 分钟后自动释放」的约定，但不释放现有保持。
+    func cancelHoldDeadline() {
+        holdTimer?.invalidate()
+        holdTimer = nil
+        holdDeadline = nil
     }
 
     /// 合并意图并落实差异。

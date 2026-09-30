@@ -96,6 +96,9 @@ final class MenuBarController: NSObject {
         menu.addItem(countdownItem())
 
         menu.addItem(.separator())
+        menu.addItem(quickQuitItem())
+
+        menu.addItem(.separator())
         menu.addItem(makeItem(title: "打开 Deep Sleep…", action: #selector(openMainWindow)))
         menu.addItem(makeItem(title: "退出 Deep Sleep", action: #selector(quit), keyEquivalent: "q"))
 
@@ -131,6 +134,24 @@ final class MenuBarController: NSObject {
         return makeItem(title: "30 分钟后睡眠", action: #selector(startCountdown))
     }
 
+    /// 快速退出的菜单入口。
+    ///
+    /// 标题里带上快捷键与名单数量：菜单每次弹出都重建，读到的永远是当下状态，
+    /// 用户也就不会对着一个「按了没反应」的快捷键发懵。
+    private func quickQuitItem() -> NSMenuItem {
+        let engine = QuickQuitEngine.shared
+        var title = "强制退出选定的应用"
+        if engine.targets.isEmpty {
+            title += "（名单为空）"
+        } else {
+            title += "（\(engine.targets.count) 个）"
+        }
+        if engine.isHotkeyLive {
+            title += "　\(engine.hotkey.displayText)"
+        }
+        return makeItem(title: title, action: #selector(quickQuit))
+    }
+
     private func makeItem(title: String,
                           action: Selector,
                           keyEquivalent: String = "") -> NSMenuItem {
@@ -156,6 +177,10 @@ final class MenuBarController: NSObject {
 
     @objc private func cancelCountdown() {
         controller.cancelCountdown()
+    }
+
+    @objc private func quickQuit() {
+        Task { await QuickQuitEngine.shared.run(dryRun: false, trigger: "菜单栏") }
     }
 
     @objc private func openMainWindow() {

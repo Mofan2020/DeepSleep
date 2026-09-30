@@ -37,6 +37,12 @@ public enum HelperCommand: String, Codable, CaseIterable, Sendable {
     /// 用应用内置的新二进制替换助手自身并重启（助手的自我更新）。
     /// 只接受来源为 Deep Sleep.app 内部、且内容摘要与调用方给出一致的二进制。
     case updateSelf
+    /// 强制结束一批进程及其全部子进程（快速退出功能）。
+    ///
+    /// 参数只有 `pids`（逗号分隔的根进程）。助手**不信任**调用方给出的
+    /// 任何判断，会自己重新抓进程快照、重新套用 `ProcessGuard` 保护名单 ——
+    /// 调用方给的 pid 只是「待考察对象」，不是「要杀的东西」。
+    case terminateProcesses
 }
 
 // MARK: - 请求

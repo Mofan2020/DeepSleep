@@ -45,6 +45,9 @@ swiftc Shared/Version.swift scripts/test-version-compare.swift -o /tmp/t1 && /tm
 swiftc Shared/PMSetOutput.swift scripts/test-pmset-parse.swift -o /tmp/t2 && /tmp/t2
 swiftc Shared/HelperProtocol.swift DeepSleepHelper/SelfUpdate.swift \
        scripts/test-selfupdate.swift -o /tmp/t3 && /tmp/t3
+swiftc Shared/ProcessInventory.swift Shared/ProcessGuard.swift \
+       Shared/TerminationReport.swift scripts/test-process-guard.swift \
+       -o /tmp/t4 && /tmp/t4
 
 # 文档一致性
 python3 scripts/check-docs.py
@@ -162,6 +165,53 @@ swiftc <被依赖的真实源文件...> scripts/test-xxx.swift -o /tmp/t && /tmp
 **为什么不复制逻辑**：项目里曾出现「同一段解析 app 和助手各写一份、
 同一个 bug 存在两处」。复制到测试里等于再存一份可能过期的副本。
 
+### 3.9 加一条 URL 命令 / 一个 Siri 短语
+
+**URL 命令**：在 `DeepSleep/Core/URLCommands.swift` 的 `commands` 表里加一条，
+再在 `handle(_:)` 的 switch 里加分支。那张表是界面说明、`--automation` 输出、
+`docs/architecture.md` 的「URL 命令一览」三处的**单一来源** ——
+加完同步文档，`check-docs.py` 会把两边对一遍。
+
+**Siri 短语 / 快捷指令动作**（App Intents）：
+
+1. `DeepSleep/Intents/DeepSleepIntents.swift` 加 `AppIntent`：先
+   `await SleepController.shared.ensureReady()`，再**复用应用内的方法** ——
+   不要在 intent 里自己调 `HelperClient`，那会绕过「完全控制」与确认逻辑
+2. `DeepSleep/Intents/DeepSleepAppShortcuts.swift` **两处都要加**：
+   编译期的 `AppShortcut(...)`（短语**必须**含 `\(.applicationName)`，否则编译不过）
+   与展示用的 `DeepSleepShortcutCatalog.entries`（短语里用 `{应用名}` 占位）
+3. `Views/AutomationView.swift` 的说明区块会自动列出，不用手改
+4. `xcodegen generate` 后构建，确认 `Metadata.appintents` 产物里出现了新 intent
+5. `check-docs.py` 会逐条比对两份短语 —— 漏一处就失败
+
+**验证**：`--automation` 打印的清单就是「系统里实际能说的话」。
+真的对 Siri 说话、在快捷指令里点击动作，只能人工确认。
+
+### 3.10 改快速退出的保护名单
+
+名单在 `Shared/ProcessGuard.swift`（`protectedNames` / `protectedBundleIDs`），
+**app 与助手编译同一份**。
+
+1. 改代码
+2. 同步 `docs/architecture.md` 第六节的名单表（`check-docs.py` 会逐条比对）
+3. 在 `scripts/test-process-guard.swift` 里给新增项补一条断言
+4. 跑 `python3 scripts/check-docs.py` 与第四个回归测试
+
+红线：
+
+- **不要**给名单加「开关」或「从外部传入」的入口 —— 它是安全边界，不是配置项
+- **不要**只挡根进程而放行它的子树（`plan()` 里命中即 `blockSubtree()`）
+- 名单之外不该被顺带拦住：「不能杀系统进程」不等于「什么都不敢杀」
+
+### 3.11 改快速退出的执行路径
+
+- 目标解析、双路执行、演练：`DeepSleep/Core/QuickQuit.swift`
+- 助手侧：`DeepSleepHelper/main.swift` 的 `terminateProcesses` 分支
+- **助手只接受 pid**，裁决必须自己算 —— 不要为了「省一次枚举」把应用算好的列表接过来
+- 进程数上限 `ProcessGuard.maximumTargetCount` 是两侧共用常量，改它要同时想清两边行为
+- 验证顺序：`--dry-run`（不动手）→ 单测 → 真实杀探针（探针怎么造见 gotchas 17）→
+  看助手日志的 `terminate 根进程=N 目标=M 已退出=X 受保护=Y 失败=Z`
+
 ---
 
 ## 四、怎么验证
@@ -209,13 +259,34 @@ tail -50 /var/log/com.skyc8266.deepsleep.helper.log
 
 ### 4.4 回归测试
 
-只覆盖纯逻辑（解析、比较、校验）。适合在改动后立刻跑一遍。
+纯逻辑部分（解析、比较、校验、进程裁决）都有回归测试，改动后立刻跑一遍：
+
+```sh
+swiftc Shared/Version.swift scripts/test-version-compare.swift -o /tmp/t1 && /tmp/t1
+swiftc Shared/PMSetOutput.swift scripts/test-pmset-parse.swift -o /tmp/t2 && /tmp/t2
+swiftc Shared/HelperProtocol.swift DeepSleepHelper/SelfUpdate.swift \
+       scripts/test-selfupdate.swift -o /tmp/t3 && /tmp/t3
+swiftc Shared/ProcessInventory.swift Shared/ProcessGuard.swift \
+       Shared/TerminationReport.swift scripts/test-process-guard.swift \
+       -o /tmp/t4 && /tmp/t4
+```
+
+第四个（`test-process-guard.swift`）是快速退出的裁决层：保护名单、进程树、
+结果编解码，外加**真实结束一棵进程树**并由内核确认目标已消失。
+它第一次跑就抓出两个真 bug（见 [notes.md](notes.md)），所以别跳过它。
 
 ### 4.5 静态检查
 
 危险动作（以 root 运行的脚本、替换自己的更新器）尽量做 dry-run 或打印出来审。
 项目里 `install-helper.sh` / `uninstall-helper.sh` 单独成文件、
 `--update-script` 这个出口，都是为此存在的。
+
+`check-docs.py` 还兼职扫一类「编译器不会报错但用户看得见」的错误：
+Swift 源码里被转义掉的插值 `\\(`（会在界面上原样显示）。
+
+改过文档之后，除了跑 `check-docs.py`，也值得跑一次它的负向测试
+`python3 scripts/test-check-docs.py` —— 确认校验器本身还能拦住不一致，
+而不是变成一个永远打印「✓」的摆设。
 
 ### 4.6 人工确认（无法自动化）
 
@@ -224,6 +295,8 @@ tail -50 /var/log/com.skyc8266.deepsleep.helper.log
 - 管理员的安装授权对话框（`sudo` 无法在无交互环境完成）
 - Touch ID 指纹确认
 - 真实鼠标点击菜单栏（系统级事件合成需要「辅助功能」权限）
+- 真的按一次快速退出快捷键（`--hotkey-status` 只证明注册成功）
+- 真的对 Siri 说话、在「快捷指令」App 里点击 Deep Sleep 动作
 - UI 截图（`screencapture` 需要「屏幕录制」、`System Events` 需要「辅助功能」）
 
 ---
@@ -241,15 +314,18 @@ tail -50 /var/log/com.skyc8266.deepsleep.helper.log
 | `test-pmset-parse.swift` | `pmset -g` 解析回归（喂真实输出） |
 | `test-version-compare.swift` | 版本比较回归（含防循环用例） |
 | `test-selfupdate.swift` | 助手自我更新四条校验 |
+| `test-process-guard.swift` | 快速退出裁决回归（保护名单 / 进程树 / 结果编解码 / 真杀一棵树） |
 | `build-release.sh` | 构建 Release 并打包 `DeepSleep.zip` + sha256 |
-| `check-docs.py` | 文档与代码一致性检查 |
+| `check-docs.py` | 文档与代码一致性检查（兼扫转义插值） |
+| `test-check-docs.py` | 前者的负向测试：逐条把文档改坏，确认它真的会拦 |
 
 ---
 
 ## 六、提交约定
 
 - **commit message 用中文**，说清「改了什么」和「为什么」
-- **改动即提交**，但**不 push** —— push 由项目所有者决定
+- **改动即提交**，但**默认不 push** —— push 与发版由项目所有者决定
+  （发版时按 [release.md](release.md) 走，那一步才 push）
 - 文档与代码在同一个 commit 里更新，不要分开
 - 提交身份用全局配置（`Panmofan <panmofan@icloud.com>`），
   不要手动 `-c user.name=...` 指定别的身份 —— 那样不会关联到 GitHub 账号
@@ -262,6 +338,7 @@ tail -50 /var/log/com.skyc8266.deepsleep.helper.log
 
 - [ ] 读 [architecture.md](architecture.md) 里对应的机制那节
 - [ ] 如果要动断言/对账/睡前拦截 —— 确认理解了「三层防护」为什么是三层
+- [ ] 如果要动快速退出或保护名单 —— 先读 architecture.md 第六节与 gotchas 19
 - [ ] 如果要动更新机制 —— 读 [gotchas.md](gotchas.md) 的两条相关记录
 - [ ] 如果要加协议命令 —— 想清楚要不要升 `protocolVersion`
 - [ ] 想好**怎么验证**：能不能端到端跑出来？系统层面看得到什么？
@@ -269,7 +346,7 @@ tail -50 /var/log/com.skyc8266.deepsleep.helper.log
 改完之后：
 
 - [ ] 端到端跑一遍（不是只看编译通过）
-- [ ] 三个回归测试全过
+- [ ] 四个回归测试全过
 - [ ] `python3 scripts/check-docs.py` 通过
 - [ ] 同步了文档（[README.md](README.md) 的两张表）
 - [ ] 如果踩到新坑 → 记进 [gotchas.md](gotchas.md)

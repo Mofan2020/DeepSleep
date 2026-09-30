@@ -59,6 +59,7 @@
 | `scheduleWake` | 排定一次定时唤醒 |
 | `cancelScheduledWake` | 取消已排定的唤醒 |
 | `sleepNow` | 立即进入睡眠（会先释放本助手持有的全部断言） |
+| `terminateProcesses` | 强制结束给定的根 pid 及其全部子进程。**助手独立重算保护名单**，不信任调用方给的结论（见第六节） |
 | `uninstall` | 卸载助手：停止任务并删除文件 |
 | `updateSelf` | 用应用内置的新二进制替换助手自身（四条校验，见下文 3.6） |
 
@@ -290,10 +291,18 @@ Deep Sleep 自己的断言也会列出并标记「本应用」，方便对照。
 | `Shared/UnixSocket.swift` | socket 读写、长度前缀分帧、超时、对端 uid 校验 | 分帧格式两边共用，改格式必须同时改两端 |
 | `Shared/PMSetOutput.swift` | `pmset -g` 解析 | **app 与助手共用一份**，不要再各写一份 |
 | `Shared/Version.swift` | 版本号解析与逐段比较 | 解析失败返回 nil，调用方必须当作「无法判断」 |
+| `Shared/ProcessInventory.swift` | 进程枚举与进程树 | **app 与助手共用一份**；普通权限读不到别的用户（含 root）的进程，见第六节 |
+| `Shared/ProcessGuard.swift` | 强杀保护名单与「该杀谁」的裁决 | 全项目第二危险的代码；名单只许硬编码，不接受任何参数覆盖 |
+| `Shared/TerminationReport.swift` | 强杀结果的结构与编解码 | 协议 payload 是 `[String:String]`，中文与分隔符都要能往返 |
 | `DeepSleep/Core/SleepController.swift` | 核心状态机：意图合并、对账、日志、CLI 状态输出 | 全项目最核心的文件，改动前先读本节 3.1–3.3 |
 | `DeepSleep/Core/PowerWatcher.swift` | 电源事件监听（睡前拦截 + 唤醒后对账） | 拦截窗口里有兜底超时，别去掉 |
 | `DeepSleep/Core/PowerActivityMonitor.swift` | 外部活动：断言持有者、设置改动、抢控制权程序 | 抢控制权检测宁可漏报不误报 |
 | `DeepSleep/Core/AutomationRule.swift` / `AutomationEngine.swift` | 自动化规则模型与求值 | 规则只表达意图，不直接操作断言 |
+| `DeepSleep/Core/QuickQuit.swift` | 快速退出引擎：目标名单、解析、双路执行、演练 | app 侧与助手侧**各自独立算一遍**，不合并两边的猜测 |
+| `DeepSleep/Core/GlobalHotkey.swift` | 全局快捷键（Carbon `RegisterEventHotKey`） | 不要换成 `NSEvent` 全局监听，那需要「输入监控」权限 |
+| `DeepSleep/Core/URLCommands.swift` | `deepsleep://` 命令表与解析 | 命令表是界面说明、`--automation` 与文档的单一来源 |
+| `DeepSleep/Intents/DeepSleepIntents.swift` | App Intents（Siri / 快捷指令 / 聚焦） | 每个 intent 先 `ensureReady()`；复用应用内方法，不绕过授权 |
+| `DeepSleep/Intents/DeepSleepAppShortcuts.swift` | App Shortcuts 短语与展示目录 | 短语是编译期常量、必须含 `\(.applicationName)`；两份短语由 check-docs 逐条比对 |
 | `DeepSleep/Core/UpdateManager.swift` | 应用自更新：检查、校验、替换 | 回滚分支不要删目标路径 |
 | `DeepSleep/Core/HelperVersionManager.swift` | 助手版本状态与触发自我更新 | 判据是内容摘要 |
 | `DeepSleep/Privileged/HelperClient.swift` | socket 客户端、`probe()` | `Probe` 是结构体，加字段比改元组便宜 |
@@ -301,7 +310,8 @@ Deep Sleep 自己的断言也会列出并标记「本应用」，方便对照。
 | `DeepSleep/Auth/BiometricAuth.swift` | Touch ID 授权封装 | — |
 | `DeepSleep/Windows/` | 菜单栏图标、窗口与 Dock 图标策略 | 菜单栏用 AppKit 手搭，原因见下 |
 | `DeepSleep/Views/` | SwiftUI 界面 | 不在用户可见 UI 里写开发笔记 |
-| `DeepSleep/AppDelegate.swift` | 生命周期 + 命令行接口 | 加 CLI 参数要同步 `README.md` 与本文档 |
+| `DeepSleep/Views/QuickQuitView.swift` | 快速退出页：快捷键录制、名单管理、演练与结果 | 受保护的应用不出现在候选列表里 |
+| `DeepSleep/AppDelegate.swift` | 生命周期 + 命令行接口 + URL 入口 | 加 CLI 参数要同步 `README.md` 与本文档 |
 | `DeepSleep/Resources/install-helper.sh` / `uninstall-helper.sh` | 以 root 运行的脚本 | 单独成文件以便 `sh -n` 检查；路径全靠环境变量传入 |
 | `DeepSleepHelper/main.swift` | 助手主循环与命令分发 | 只接受固定命令枚举 |
 | `DeepSleepHelper/SelfUpdate.swift` | 助手替换自己 | 四条校验，去掉任何一条都是提权漏洞 |
@@ -325,6 +335,10 @@ Deep Sleep 自己的断言也会列出并标记「本应用」，方便对照。
 | `launchDaemonPath` | LaunchDaemon plist 路径 |
 | `logPath` | 助手日志路径 |
 | `protocolVersion` | 协议版本，双方不一致时拒绝通信 |
+| `ProcessGuard.maximumTargetCount` | 一次快速退出能结束的进程数上限。**两侧共用同一个常量**，见第六节 |
+| `HotkeyCombo.default` | 快速退出的默认快捷键（可在界面里录制修改） |
+| `DeepSleepURL.scheme` | URL scheme |
+| `DeepSleepShortcutCatalog.appNamePlaceholder` | 展示用短语里的应用名占位符（对应类型化短语里的 `\(.applicationName)`） |
 
 进程名是 `com.skyc8266.deepsleep.helper`（**点号分隔**，`pgrep` 时别写成
 `deepsleep-helper`，那是文件名的形式）。
@@ -333,29 +347,146 @@ Bundle ID：`com.skyc8266.deepsleep`。
 
 ---
 
-## 六、启动与退出时序
+## 六、自动化接入与快速退出
+
+三件事：**Siri / 快捷指令**（App Intents）、**`deepsleep://` URL**
+（自动操作 / AppleScript / shell）、**快速退出**（一个快捷键强杀选定的应用及其全部子进程）。
+
+### 两条自动化通道，各自解决什么
+
+| 通道 | 谁在用 | 为什么需要它 |
+| --- | --- | --- |
+| App Intents（`DeepSleep/Intents/`） | Siri、快捷指令、聚焦、控制中心 | macOS 上让 Siri 认得一个应用**只有这一条**原生路径 |
+| `deepsleep://` URL（`DeepSleep/Core/URLCommands.swift`） | 自动操作（Automator）、AppleScript 的 `open location`、任何能跑 shell 的地方 | 覆盖面最广，而且是**唯一可靠的重复调用通道** |
+
+为什么不能只靠 `open -a "Deep Sleep" --args ...`：那条路只在**首次启动**时生效
+（macOS 单实例行为，见 [gotchas.md](gotchas.md) 第 9 条）。URL 每次都能送到正在运行的那个实例，
+这也是 URL 通道存在的主要理由。
+
+### Intent 的三条实现约定
+
+1. 每个 intent 先 `await SleepController.shared.ensureReady()`。系统可能先把应用拉起来、
+   紧接着执行 intent，不等待就会读到中间状态（表现是「说了但没生效」）。
+2. intent 里**复用应用内已有的方法**（`hold` / `releaseAllAssertions` / `setSleepDisabled` …），
+   所以「完全控制」与逐次确认这些规则在 Siri 通道上同样成立，绕不过去。
+3. `perform()` 用 `onMain { }` 桥到 MainActor，**不要**给 intent 加 `@MainActor`
+   （会引发协议一致性的隔离告警）。`supportedModes = .background`，
+   `openAppWhenRun` 在 macOS 26 已废弃。
+
+### URL 命令一览
+
+命令表只有一份：`DeepSleepURL.commands`。界面里的说明区块、`--automation` 的自检输出、
+以及 `scripts/check-docs.py` 的比对都读它。**加命令要同步这张表**
+（连同这一节的标题一起，标题也是检查依据，别改）。
+
+| 命令 | 用途 |
+| --- | --- |
+| `hold` | 保持清醒。`kind` 逗号分隔（`idle-system` / `display` / `system` / `lid` / `all`），`minutes` 可选时长 |
+| `release` | 释放全部保持 |
+| `status` | 把当前状态显示在界面上，并写进日志 |
+| `sleep-now` | 立即进入睡眠 |
+| `wake` | 排定定时唤醒。`in` 为分钟数，或 `at=HH:mm` |
+| `cancel-wake` | 取消已排定的唤醒 |
+| `disable-sleep` | 完全禁止（`value=1`）或恢复（`value=0`）系统睡眠，需要完全控制 |
+| `quick-quit` | 强制退出选定的应用。加 `dry-run=1` 只演练不执行 |
+| `show` | 打开主界面 |
+
+无法识别的命令会被拒绝并提示「可用命令见 `--automation`」，不会静默忽略。
+
+### 快速退出：两层裁决，两个执行通道
+
+一次快速退出的完整流程：
+
+```
+按快捷键 ⌥⇧⌘H（或菜单 / 界面按钮 / URL / 快捷指令）
+  ├─ 需要身份确认时先要 Touch ID（默认关，可在界面打开）
+  ├─ 按 bundle id 找出每个目标的全部实例 → 得到「根 pid」
+  ├─ ProcessGuard.plan(roots:in:) 用一份进程快照算出：
+  │     ├─ targets：该结束的进程，**子进程排在父进程之前**
+  │     └─ refusals：受保护而跳过的进程（含理由原文）
+  ├─ 有特权助手 → 把**根 pid 列表**交给助手；助手自己再抓快照、再算一遍
+  └─ 助手不可达 → 退回本进程权限执行，并在结果里说明降级
+```
+
+**助手为什么要自己重算一遍**：「应用算错了」和「有人伪造了一个应用」是同一类风险。
+两条路径共用 `Shared/ProcessGuard.swift` 的同一份实现，但各自独立调用 ——
+助手只接受 pid 作为「待考察对象」，不接受任何裁决结论。
+
+保护名单的三条性质：
+
+- 名单硬编码，**不接受任何参数覆盖**；命中即拒绝，没有开关能绕过。
+- 命中的进程**连同它的整棵子树**一起跳过（保护名单里的都是会话/系统关键进程，
+  「杀掉系统关键进程的子进程」不是任何人想要的语义）。
+- `pid <= 1` 与调用方自己无条件拒绝 —— 这一条不依赖名单是否正确。
+
+杀死方式是直接 `SIGKILL`，**不假装优雅**：macOS 上的 Cocoa 应用收到 `SIGTERM`
+并不会走保存流程（系统自己「退出应用程序」时用的是 AppleEvent `quit`），
+所以「先 TERM 再 KILL」在这里买不到任何东西，只是多等几秒。
+
+超过 `ProcessGuard.maximumTargetCount` 时**整体取消**，而不是「杀一部分」。
+这个上限是两侧共用的常量 —— 否则会出现「助手因为超限整体拒绝、应用却退回本地照样执行」
+的分裂行为。
+
+### 受保护的系统进程（快速退出的硬名单）
+
+`Shared/ProcessGuard.swift` 里的硬名单。**这张表与代码由 `scripts/check-docs.py` 逐条比对**，
+只改一处会被检查拦下。匹配规则：进程名取 `p_comm` 并转小写后比对；
+bundle id 从可执行文件路径反查（结果带缓存）。
+
+| 分组 | 值 |
+| --- | --- |
+| 内核与启动 | `launchd`、`kernel_task`、`watchdogd` |
+| 会话与界面 | `windowserver`、`loginwindow`、`dock`、`finder`、`systemuiserver`、`controlcenter`、`notificationcenter`、`notificationcenterui`、`spotlight`、`universalcontrol` |
+| 电源与散热 | `powerd`、`thermald`、`thermalmonitord` |
+| 安全与权限 | `securityd`、`tccd`、`authd`、`syspolicyd`、`amfid` |
+| 注册、通知与偏好 | `launchservicesd`、`runningboardd`、`distnoted`、`coreservicesd`、`sharedfilelistd`、`cfprefsd`、`usernoted`、`notifyd`、`pboard` |
+| 目录服务与配置 | `opendirectoryd`、`configd` |
+| 磁盘与元数据 | `diskarbitrationd`、`fseventsd`、`mds`、`mds_stores`、`mdworker`、`mdworker_shared` |
+| 网络 | `mdnsresponder`、`nehelper`、`nesessionmanager` |
+| 音频与蓝牙 | `coreaudiod`、`bluetoothd` |
+| 日志与诊断 | `logd`、`syslogd` |
+| 本应用自己 | `deep sleep`、`deepsleep-helper` |
+| bundle id | `com.apple.finder`、`com.apple.dock`、`com.apple.WindowServer`、`com.apple.loginwindow`、`com.apple.SystemUIServer`、`com.apple.controlcenter`、`com.apple.notificationcenterui`、`com.apple.Spotlight`、`com.apple.systempreferences`、`com.apple.SecurityAgent`、`com.apple.CoreServicesUIAgent`、`com.skyc8266.deepsleep`、`com.skyc8266.deepsleep.helper` |
+
+名单之外的一切都可以结束，包括 `bash`、`python3`、终端里跑的东西 ——
+「不能杀系统进程」不等于「什么都不敢杀」，否则这个功能就没有意义了。
+
+---
+
+## 七、启动与退出时序
 
 **启动：**
 
 ```
 应用启动
   ├─ 读 UserDefaults 恢复用户设置
-  ├─ 创建菜单栏图标、决定 Dock 图标策略
-  ├─ SleepController.bootstrap()
-  │     ├─ 连接 socket，probe() 助手
-  │     ├─ 启动 3 秒对账循环
-  │     └─ 接入 HelperVersionManager（此后每约 1 分钟检查一次助手）
+  ├─ SleepController.beginBootstrap()      ← 登记「正在启动」，不等它
+  └─ Task：
+        await SleepController.ensureReady()  ← 闸门，等启动流程跑完
+        ├─ 创建菜单栏图标并接线菜单
+        ├─ QuickQuitEngine.activate()      ← 注册全局快捷键
+        └─ 处理命令行参数（--quick-quit / --automation / --hotkey-status …）
+
+SleepController.bootstrap()
+  ├─ 连接 socket，probe() 助手
+  ├─ 启动 3 秒对账循环
+  ├─ 接入 HelperVersionManager（此后每约 1 分钟检查一次助手）
   ├─ PowerWatcher 注册电源事件
   └─ 15 秒后触发一次应用更新检查
 ```
+
+`beginBootstrap()` / `ensureReady()` 是给**外部入口**准备的闸门：Siri 的 intent、
+`deepsleep://`、命令行参数都可能在启动流程跑完之前到达（系统会先把应用拉起来再送事件），
+没有闸门就会读到中间状态 —— 表现为「说了、点了却什么都没发生」。
+`ensureReady()` 自己会兜底启动，重复调用是安全的，因此每个外部入口都可以直接 `await` 它。
 
 **退出：**
 
 ```
 退出
-  ├─ 释放本进程持有的全部断言
+  ├─ 释放本进程持有的全部断言（含取消「N 分钟后自动释放」的定时器）
+  ├─ 停掉对账 / 倒计时定时器、PowerWatcher、自动化引擎
   ├─ 若本应用开过 disablesleep → 恢复系统默认
-  ├─ 保存（助手侧）最后进度
   └─ 走正常 AppKit 退出路径
 ```
 
@@ -365,9 +496,10 @@ Bundle ID：`com.skyc8266.deepsleep`。
 
 ---
 
-## 七、相关文档
+## 八、相关文档
 
 - 改动时要同步什么 → [README.md](README.md) 的两张表
 - 具体怎么改 → [maintenance.md](maintenance.md)
 - 怎么发版 → [release.md](release.md)
 - 为什么某段代码不能写简单些 → [gotchas.md](gotchas.md)
+- 哪些是实测、哪些不是 → [notes.md](notes.md)

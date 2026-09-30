@@ -17,12 +17,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         WindowCoordinator.shared.observeWindowLifecycle()
 
+        // 启动流程先开闸再等：Siri / 快捷指令 / deepsleep:// 可能在
+        // bootstrap 跑完之前就把请求送到，`ensureReady()` 是它们的安全阀。
+        SleepController.shared.beginBootstrap()
+
         Task { @MainActor in
-            await SleepController.shared.bootstrap()
+            await SleepController.shared.ensureReady()
             // 菜单栏手动搭：需要区分左键（打开主界面）与右键（快速设置），
             // SwiftUI 的 MenuBarExtra 做不到这件事。
             menuBar = MenuBarController(controller: .shared)
+            // 全局快捷键要在状态机就绪之后注册：注册成功的记录会写进日志。
+            QuickQuitEngine.shared.activate()
             await Self.handleLaunchArguments()
+        }
+    }
+
+    /// 处理 `deepsleep://…`。
+    ///
+    /// 由 LaunchServices 送达：应用没在跑时系统会先把它拉起来再送，
+    /// 已经在跑时直接送给那个实例。这也是「重复调用」唯一可靠的通道 ——
+    /// `open -a … --args …` 只在首次启动时生效（见 docs/gotchas.md 第 9 条）。
+    func application(_ application: NSApplication, open urls: [URL]) {
+        Task { @MainActor in
+            for url in urls {
+                guard let message = await DeepSleepURL.handle(url) else { continue }
+                SleepController.shared.appendLog("URL \(url.absoluteString) → \(message)")
+                if SleepController.shared.banner == nil {
+                    SleepController.shared.banner = Banner(level: .info, text: message)
+                }
+            }
         }
     }
 
@@ -64,6 +87,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     ///   --helper-version 显示助手的版本状态
     ///   --update-check   立即检查应用更新并输出结果
     ///   --update-script  打印将要执行的更新器脚本（只打印，不执行）
+    ///   --quick-quit     执行一次快速退出（结束选定应用及其子进程）
+    ///   --dry-run        配合 --quick-quit：只列出会结束哪些进程，不动手
+    ///   --automation     打印 Siri 短语与 deepsleep:// 命令清单
+    ///   --hotkey-status  打印快速退出快捷键的注册状态
     /// 例如：`open -a "Deep Sleep" --args --hold idle-system,display`
     @MainActor
     private static func handleLaunchArguments() async {
@@ -72,6 +99,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let controller = SleepController.shared
         var index = 0
+        var quickQuitDryRun = false
 
         while index < arguments.count {
             switch arguments[index] {
@@ -170,6 +198,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Self.emit("更新检查 —— \(UpdateManager.shared.phase.text)")
                 index += 1
 
+            case "--dry-run":
+                // 与 --quick-quit 的顺序无关：先记下来，执行时再读。
+                quickQuitDryRun = true
+                index += 1
+
+            case "--quick-quit":
+                let outcome = await QuickQuitEngine.shared.run(
+                    dryRun: quickQuitDryRun, trigger: "命令行")
+                Self.emit("\(outcome.dryRun ? "快速退出演练" : "快速退出") —— \(outcome.summary)")
+                for line in outcome.details {
+                    Self.emit("    \(line)")
+                }
+                index += 1
+
+            case "--automation":
+                Self.emitAutomation()
+                index += 1
+
+            case "--hotkey-status":
+                Self.emitHotkeyStatus()
+                index += 1
+
             default:
                 index += 1
             }
@@ -178,21 +228,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @MainActor
     private static func summary(from controller: SleepController) -> String {
-        let active = controller.activeAssertions
-            .sorted { $0.rawValue < $1.rawValue }
-            .map(\.cliName)
-            .joined(separator: ",")
-        let base = """
-        hold=\(active.isEmpty ? "none" : active) \
-        count=\(controller.activeAssertions.count) \
-        fullControl=\(controller.helperState.isReady ? "on" : "off") \
-        sleepDisabled=\(controller.sleepDisabled ? "1" : "0") \
-        desiredSleepDisabled=\(controller.desiredSleepDisabled ? "1" : "0") \
-        backingAssertion=\(controller.sleepDisabledBacking ? "1" : "0") \
-        powerWatcher=\(PowerWatcher.shared.isRegistered ? "on" : "off") \
-        dockIcon=\(NSApp.activationPolicy() == .accessory ? "hidden" : "visible")
-        """
-        return base + " " + controller.auditSummary
+        // 状态正文由 SleepController 提供（URL 的 status 命令与界面横幅共用同一份），
+        // 这里只补上只有 AppKit 才知道的 Dock 图标策略。
+        controller.statusSummary
+            + " dockIcon=\(NSApp.activationPolicy() == .accessory ? "hidden" : "visible")"
+    }
+
+    /// 打印自动化接入清单：Siri 短语 + `deepsleep://` 命令。
+    ///
+    /// 存在的意义有两个：一是用户不必翻文档就知道能说什么、能开什么 URL；
+    /// 二是文档与代码的一致性检查有了可对照的机器输出
+    /// （见 `scripts/check-docs.py` 的「Siri 短语」与「URL 命令」两节）。
+    @MainActor
+    private static func emitAutomation() {
+        emit("Siri 与快捷指令 —— 说「\(DeepSleepShortcutCatalog.spoken(DeepSleepShortcutCatalog.entries[0].phrases[0]))」这样的句子，或在「快捷指令」App 的 Deep Sleep 分区里选动作：")
+        for entry in DeepSleepShortcutCatalog.entries {
+            let phrases = entry.phrases
+                .map { DeepSleepShortcutCatalog.spoken($0) }
+                .joined(separator: " / ")
+            emit("    \(entry.title)：\(phrases)")
+        }
+        emit("")
+        emit("deepsleep:// 命令 —— 供自动操作、AppleScript 的 open location、以及 shell 使用：")
+        for command in DeepSleepURL.commands {
+            emit("    \(command.example)")
+            emit("        \(command.summary)")
+        }
+    }
+
+    /// 快速退出快捷键的注册状态。快捷键冲突是「按了没反应」最常见的原因，
+    /// 命令行能查就不必靠猜。
+    @MainActor
+    private static func emitHotkeyStatus() {
+        let engine = QuickQuitEngine.shared
+        emit("快捷键 \(engine.hotkey.displayText)"
+             + "（启用=\(engine.isTriggerEnabled ? "on" : "off")"
+             + " 注册=\(GlobalHotkey.shared.isRegistered ? "ok" : "failed")）")
+        if let problem = engine.hotkeyProblem {
+            emit("问题：\(problem)")
+        }
+        emit("选定应用 \(engine.targets.count) 个："
+             + (engine.targets.isEmpty
+                ? "（空，按下快捷键不会结束任何东西）"
+                : engine.targets.map(\.name).joined(separator: "、")))
+        emit("触发前确认=\(engine.requiresConfirmation ? "开" : "关")")
     }
 
     /// 窗口显示与 Dock 图标策略的自检。

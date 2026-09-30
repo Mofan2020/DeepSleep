@@ -389,6 +389,116 @@ open -a "…/Deep Sleep.app" --stdout /tmp/out.log --stderr /tmp/err.log --args 
 
 ---
 
+## 16. 两个实例同时跑，助手侧断言会被来回抢
+
+开发期最容易撞上的一条：机器上装着 `/Applications/Deep Sleep.app`（旧版），
+你又从 `build/Build/Products/Debug/` 跑一份新的 —— 两个进程 bundle id 相同，
+macOS 允许它们并存，而助手侧的断言是**按类型单槽存储**的（`identifiers[kind]`）。
+
+于是两边的 3 秒对账各自认为「助手持有的和我的期望对不上」：一边申请、另一边释放，
+助手日志里就会出现每 3 秒一次的 `acquireAssertion` / `releaseAssertion` 来回抖动，
+看起来像助手坏了。
+
+**排除法**：杀掉构建产物那份实例，抖动立刻停止 —— 说明是两边打架，不是对账逻辑坏了。
+**做法**：测新版之前先退出已安装的那份
+（`osascript -e 'tell application "Deep Sleep" to quit'`）。
+
+顺带解释另一件容易误判的事：新版应用启动时会按内容摘要把助手**自我更新**成自己包内那份，
+而旧版应用启动时又会把它推回旧摘要 —— 两边同时跑，助手会被反复替换重启。
+一次只跑一份就没有这个问题（发布后用户机器上只会出现一种组合）。
+
+---
+
+## 17. 造测试用的进程探针：`cp /bin/sleep` 与 shell 脚本都不行
+
+快速退出需要「一个能被杀、又带子进程」的探针应用。三种写法只有一种可用：
+
+| 写法 | 结果 |
+| --- | --- |
+| `cp /bin/sleep` 到 `Xxx.app/Contents/MacOS/Probe` | 复制出来的二进制签名与路径不匹配：`open` 报 `RBSRequestErrorDomain Code=5 … Launchd job spawn failed`，直接跑会被内核 `SIGKILL` |
+| 可执行文件写 shell 脚本 | 能跑，但进程名（`p_comm`）是 `bash`，测不出任何「按进程名」的规则 |
+| 现场 `clang` 编一个小 sleeper | ✅ 带 ad-hoc 签名能跑，且 `p_comm` 就是文件名 |
+
+```c
+#include <unistd.h>
+int main(void) { for (;;) { pause(); } return 0; }
+```
+
+要看树形结构就让 sleeper 自己 fork/exec 几个子进程。
+「进程名到底是什么」只能靠 `ps -o pid,comm,args` 确认，不要推断。
+
+**另一条**：伪装用的探针要么用无关的 bundle id，要么指向**当前没有在运行**的系统组件 ——
+否则名单判定一旦出错，被杀的会是真正的系统进程。
+
+---
+
+## 18. App Shortcuts 的两条编译期硬规则（以及 macOS 上不存在的 API）
+
+1. 每条短语**必须**包含 `\(.applicationName)`，否则编译期报错 —— 系统靠它做语音消歧。
+2. 短语是**编译期常量**，不能用运行时字符串拼出来。
+
+于是短语不可避免地要写两遍：给编译器的类型化短语、和给人看的纯文本
+（界面区块、`--automation` 输出、文档都读后者）。两份由 `check-docs.py` 逐条比对。
+
+迁移时踩到的编译错误：
+
+- `cannot find 'ShortcutsLink' in scope` —— `ShortcutsLink` 只存在于 iOS。
+  macOS 上跳到「快捷指令」App 用 `Link(destination: URL(string: "shortcuts://")!)`。
+- `type 'ShortcutTileColor' has no member 'indigo'` —— 合法值是
+  `red/orange/tangerine/yellow/lime/teal/lightBlue/blue/navy/grape/purple/pink/grayBlue/grayGreen/grayBrown`。
+
+还有一条**不是错误但会让人误会**的日志：从 `build/` 里直接跑的应用会打印
+`Unable to re-register with Process Instance Registry … com.apple.linkd.autoShortcut`。
+那是 Spotlight / 快捷指令的索引服务不认这个位置的应用，属正常现象；
+把应用放到 `/Applications` 之后就没有了。
+
+---
+
+## 19. 普通权限读不到 root 的进程 —— 「读不到」不等于「不存在」
+
+`proc_listpids` 能列出所有 pid，但 `proc_pidinfo` 对**别的用户（尤其 root）拥有的进程会失败**，
+于是快照里根本没有它们。实测：非 root 跑一遍，351 个进程里 uid=0 的有 **0** 个。
+
+这个事实直接引出两个坑：
+
+1. 应用侧算出的计划天然覆盖不到 root 进程 ——
+   所以「结束由 root 拥有的进程」这件事**必须**走助手。
+2. 更隐蔽的一个：最初把「快照里找不到这个 pid」当成「进程已经退出，忽略」，
+   于是用户按下快捷键后看到的是「什么都没发生，也没有原因」。
+   现在这种情况会记为一条**拒绝记录**，理由写明「无法读取该进程
+   （可能刚刚退出，或由其他用户运行而需要完全控制）」。
+
+**教训**：在权限受限的查询里，「查不到」是一个需要上报的结果，不是「不存在」。
+这与项目里「归因要诚实」是同一条原则。
+
+---
+
+## 20. 全局快捷键用 Carbon `RegisterEventHotKey`，别用 NSEvent 监听
+
+`NSEvent.addGlobalMonitorForEvents` 需要「输入监控」权限 —— 一个睡眠管理工具不该为了
+一个快捷键去要这种权限，而且用户拒绝授权后功能会**静默失效**。
+
+Carbon 的 `RegisterEventHotKey` **不需要任何权限**，实测注册成功。
+代价是写法老派（`EventHotKeyID` + `InstallEventHandler`），换来的是「装完就能用」。
+
+另外：注册失败（组合被别的程序占了）**必须把原因告诉用户** ——
+`--hotkey-status` 与界面上的状态标签就是为此存在的。
+「按了没反应」不解释，用户只会认为功能坏了。
+
+---
+
+## 21. 用户可见文案里不要出现 `\\(` —— 它会原样显示
+
+Swift 的插值是 `\(...)`。一旦写成 `\\(...)`（多一个反斜杠），编译器**不会报错**：
+它把 `\\` 当作转义后的反斜杠，于是界面/日志里原样显示 `\(engine.targets.count)`。
+
+发布前被用户当场看到过一次（「名单数量那里一直写的是 `\(engine.`」）。
+
+**防呆**：`scripts/check-docs.py` 会扫全部 Swift 源码里的 `\\(`，命中即失败。
+这属于「机器能查的别靠人记」—— 肉眼审 UI 文案很容易漏掉一个反斜杠。
+
+---
+
 ## 附：排查问题的通用姿势
 
 从这个项目的经历里提炼出来的：

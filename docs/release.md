@@ -72,6 +72,7 @@ CURRENT_PROJECT_VERSION: "4"      # 构建号 —— 仅展示用，不参与任
 cd ~/Documents/MyProjects/DeepSleep
 git status --short          # 应该没有未提交的改动
 python3 scripts/check-docs.py
+python3 scripts/test-check-docs.py     # 确认校验器本身还能拦
 ```
 
 ### 第 2 步：改版本号
@@ -90,12 +91,15 @@ xcodebuild -project DeepSleep.xcodeproj -scheme DeepSleep \
            -configuration Release -derivedDataPath build build -quiet
 # 期望：零 error、零 warning
 
-# 三个回归测试
+# 四个回归测试
 swiftc Shared/Version.swift scripts/test-version-compare.swift -o /tmp/t1 && /tmp/t1
 swiftc Shared/PMSetOutput.swift scripts/test-pmset-parse.swift -o /tmp/t2 && /tmp/t2
 swiftc Shared/HelperProtocol.swift DeepSleepHelper/SelfUpdate.swift \
        scripts/test-selfupdate.swift -o /tmp/t3 && /tmp/t3
-# 期望：三个都「测试结论: 全部通过」
+swiftc Shared/ProcessInventory.swift Shared/ProcessGuard.swift \
+       Shared/TerminationReport.swift scripts/test-process-guard.swift \
+       -o /tmp/t4 && /tmp/t4
+# 期望：四个都「测试结论: 全部通过」
 
 # 端到端自检
 open -a "build/Build/Products/Release/Deep Sleep.app" \
@@ -182,9 +186,10 @@ cat /tmp/ghdl/DeepSleep.zip.sha256
 ## 四、发布检查清单
 
 - [ ] `git status` 干净、`check-docs.py` 通过
+- [ ] `test-check-docs.py` 通过（校验器本身还能拦）
 - [ ] `MARKETING_VERSION` 比上一个 Release **更高**，且是纯数字三段式
 - [ ] Debug 与 Release 构建**零 warning**
-- [ ] 三个回归测试全过
+- [ ] 四个回归测试全过
 - [ ] 端到端自检跑过（不是只看编译通过）
 - [ ] commit + tag（tag 名与版本号一致）
 - [ ] `git push origin main && git push origin v1.2.2`
@@ -324,6 +329,7 @@ git tag -d v1.2.2                       # 删本地 tag
 | 1.1.0 | 修复 `disablesleep` 读取误判（TAB 分帧）；外部活动观测；日志自动清除 |
 | 1.2.0 | 应用自动更新；助手版本检测与自我更新；电源控制竞争者检测 |
 | 1.2.1 | 助手判据改为内容摘要（去掉人工维护的构建号）；Release 拉列表以识别预发布；冲突只呈现不解决 |
+| 1.3.0 | Siri / 快捷指令（App Intents）；`deepsleep://` URL 接口；快速退出（全局快捷键强杀选定应用及其子进程，含硬名单保护与助手侧独立重算） |
 
 > 这个表**每次发版都要加一行**。它是给未来的人判断「哪个版本引入了什么」用的，
 > 不维护的话，排查老版本问题时就没有参照。
