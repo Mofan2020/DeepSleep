@@ -71,6 +71,7 @@ python3 scripts/check-docs.py
 | 文档里的版本号 ↔ 工程配置 | `project.yml` |
 | 文档里引用的文件路径是否都存在 | 文件系统 |
 | 用户可见文案里有没有被转义的插值 `\\(`（会原样显示） | 全部 Swift 源码 |
+| `README.md` 里有没有 AI 味的句式（套话、对偶句、破折号堆叠） | `README.md` |
 
 不一致会打印出具体差异并以非 0 退出。
 
@@ -96,7 +97,7 @@ python3 scripts/test-check-docs.py
 | 改了断言语义或对账范围 | `docs/architecture.md` |
 | 改了发布流程 | `docs/release.md` |
 | 改了安装 / 卸载脚本的行为 | `docs/architecture.md` 的权限模型一节 |
-| 用户可见的文案 | 不要写 `\\(`（会被原样显示）；写完跑一次 `check-docs.py` |
+| 用户可见的文案 | 不要写 `\\(`（会被原样显示）；不要写 AI 味的句式；写完跑一次 `check-docs.py` |
 | 踩到新坑 | `docs/gotchas.md`（**当场记**，别攒着 —— 攒着就忘了） |
 
 ### 一条贯穿全项目的原则：少写会变的数字

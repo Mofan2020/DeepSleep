@@ -14,6 +14,7 @@
   6. 版本号      project.yml               ↔  README.md
   7. 文件引用    文档里提到的项目文件是否都存在
   8. 转义插值    Swift 源码里写错的 `\\(`（用户可见文案会原样显示）
+  9. 文案        README.md 有没有 AI 味的句式（用户第一眼看到的就是它）
 
 用法：
     python3 scripts/check-docs.py
@@ -385,6 +386,56 @@ def check_literal_interpolation():
         print("  ✓ 没有发现被转义的插值")
 
 
+# ---------------------------------------------------------------- 文案
+
+# 用户打开这个项目，第一眼看到的就是 README 与发布说明。那种「AI 写的」
+# 腔调会让人失去耐心直接走人，所以它值得被机器拦一道。
+#
+# 只查 README：docs/ 下面几份是给改代码的人看的，写详细一点没关系。
+#
+# 词表刻意短。这些是最容易识别的套话，误伤正常中文的可能性低 ——
+# 一条总在冤枉正常句子的检查，最后一定会被人关掉。
+AI_PHRASES = [
+    "不仅仅是", "不仅是", "此外，", "值得一提的是", "值得注意的是",
+    "至关重要", "综上所述", "显而易见", "众所周知", "彰显", "奠定了",
+    "见证了", "总而言之", "不可否认", "归根结底",
+]
+
+# 「不是 X，而是 Y」：AI 爱用的对偶句，中文写作里偶有正当用法，
+# 但成段出现就是腔调问题。
+AI_PATTERNS = [
+    (r"不是[^，。！？\n]{1,24}，而是", "「不是……而是……」对偶句"),
+]
+
+# 长破折号允许少量（正常中文会用它补充说明），靠它撑句子就会成排出现。
+MAX_EM_DASHES = 2
+
+
+def check_prose():
+    section("文案")
+
+    text = read("README.md")
+    if not text:
+        return False
+
+    problems = [f"AI 味短语「{phrase}」" for phrase in AI_PHRASES if phrase in text]
+
+    for pattern, label in AI_PATTERNS:
+        if re.search(pattern, text):
+            problems.append(label)
+
+    dashes = text.count("——")
+    if dashes > MAX_EM_DASHES:
+        problems.append(f"长破折号 {dashes} 处（上限 {MAX_EM_DASHES}）")
+
+    if problems:
+        failures.append("README 的文字读起来像 AI 写的，改成人话：" + "；".join(problems))
+        return False
+
+    print("  ✓ README 没有发现 AI 味句式")
+    return True
+
+
 # ---------------------------------------------------------------- 文档存在性
 
 def check_documents_exist():
@@ -421,6 +472,7 @@ def main():
     check_version()
     check_file_references()
     check_literal_interpolation()
+    check_prose()
 
     print()
     print("=" * 46)

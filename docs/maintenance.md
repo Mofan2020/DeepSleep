@@ -302,6 +302,9 @@ bash scripts/test-helper-update.sh
 
 `check-docs.py` 还兼职扫一类「编译器不会报错但用户看得见」的错误：
 Swift 源码里被转义掉的插值 `\\(`（会在界面上原样显示）。
+另外它还查 `README.md` 的文案有没有 AI 味 —— 套话词表、「不是……而是……」对偶句、
+长破折号数量（上限 2）。用户打开项目第一眼看到的就是 README 与发布说明，
+那种腔调会把人劝走。只查 README，`docs/` 是给开发者看的，不受这条约束。
 
 改过文档之后，除了跑 `check-docs.py`，也值得跑一次它的负向测试
 `python3 scripts/test-check-docs.py` —— 确认校验器本身还能拦住不一致，
