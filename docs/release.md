@@ -189,10 +189,10 @@ cat /tmp/ghdl/DeepSleep.zip.sha256
 - [ ] `test-check-docs.py` 通过（校验器本身还能拦）
 - [ ] `MARKETING_VERSION` 比上一个 Release **更高**，且是纯数字三段式
 - [ ] Debug 与 Release 构建**零 warning**
-- [ ] 四个回归测试全过
+- [ ] 四个回归测试全过；**改过助手更新路径**时再跑 `bash scripts/test-helper-update.sh`
 - [ ] 端到端自检跑过（不是只看编译通过）
 - [ ] commit + tag（tag 名与版本号一致）
-- [ ] `git push origin main && git push origin v1.2.2`
+- [ ] `git push origin main && git push origin "$TAG"`
 - [ ] `build-release.sh` 打包
 - [ ] zip 解压验证：顶层是 `.app`、版本正确、内嵌助手在、codesign 通过
 - [ ] `gh release create` 带 zip 与 sha256
@@ -330,6 +330,7 @@ git tag -d v1.2.2                       # 删本地 tag
 | 1.2.0 | 应用自动更新；助手版本检测与自我更新；电源控制竞争者检测 |
 | 1.2.1 | 助手判据改为内容摘要（去掉人工维护的构建号）；Release 拉列表以识别预发布；冲突只呈现不解决 |
 | 1.3.0 | Siri / 快捷指令（App Intents）；`deepsleep://` URL 接口；快速退出（全局快捷键强杀选定应用及其子进程，含硬名单保护与助手侧独立重算） |
+| 1.3.1 | 助手更新路径补上反馈：手动点击先弹框确认再更新，不再被「本次运行只自动试一次」的闸门静默吞掉；`--helper-version` 先探测再显示；新增 `--helper-update` 与助手更新端到端验证脚本 |
 
 > 这个表**每次发版都要加一行**。它是给未来的人判断「哪个版本引入了什么」用的，
 > 不维护的话，排查老版本问题时就没有参照。

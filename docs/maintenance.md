@@ -150,6 +150,14 @@ python3 scripts/check-docs.py
 验证方法：`--update-script` 打印脚本、`--update-check` 检查更新、
 `scripts/test-selfupdate.swift` 跑校验用例。
 
+**助手的手动更新路径**（`refresh()` / `updateNow()`）与自动路径共用一个探测实现，
+但**不共用次数限制** —— 给自动重试用的闸门不能套在用户明确发起的手动动作上，
+否则就是「点了没反应、也不解释」（曾经真的这样，见 gotchas 22）。
+改这块时把每个分支的话补齐：界面用对话框、命令行用 `emit`。
+
+端到端验证：`bash scripts/test-helper-update.sh`
+（用 Debug 与 Release 两个产物互为「不同的一份」，真的替换系统里的助手，再换回来）。
+
 ### 3.8 加一个回归测试
 
 `scripts/` 下的测试都是 **`swiftc` 直接编译真实源码 + 一个 `@main` 测试文件**，
@@ -275,6 +283,17 @@ swiftc Shared/ProcessInventory.swift Shared/ProcessGuard.swift \
 结果编解码，外加**真实结束一棵进程树**并由内核确认目标已消失。
 它第一次跑就抓出两个真 bug（见 [notes.md](notes.md)），所以别跳过它。
 
+助手更新这条路要真实 socket 与 `/Library` 里那个 root 助手，塞不进单测，
+所以单独固化成端到端脚本（**它会真的替换已安装的助手，结束时换回 Release 那份**）：
+
+```sh
+bash scripts/test-helper-update.sh
+```
+
+它用 Debug 与 Release 两个产物内置的助手互为「不同的一份」，
+要求每次都报出差异、报出成功，并且用 `shasum` 确认 `/Library` 那份**真的**变了 ——
+不信自述，只信文件系统。改过助手更新路径后务必跑一遍。
+
 ### 4.5 静态检查
 
 危险动作（以 root 运行的脚本、替换自己的更新器）尽量做 dry-run 或打印出来审。
@@ -318,6 +337,7 @@ Swift 源码里被转义掉的插值 `\\(`（会在界面上原样显示）。
 | `build-release.sh` | 构建 Release 并打包 `DeepSleep.zip` + sha256 |
 | `check-docs.py` | 文档与代码一致性检查（兼扫转义插值） |
 | `test-check-docs.py` | 前者的负向测试：逐条把文档改坏，确认它真的会拦 |
+| `test-helper-update.sh` | 助手更新端到端：真的替换已安装的助手，再换回来 |
 
 ---
 

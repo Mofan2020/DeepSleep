@@ -85,6 +85,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     ///   --changes        列出检测到的电源设置改动
     ///   --rivals         列出其他会改电源设置的程序
     ///   --helper-version 显示助手的版本状态
+    ///   --helper-update  手动检查并更新助手（与界面「立即检查并更新」同一条路径）
     ///   --update-check   立即检查应用更新并输出结果
     ///   --update-script  打印将要执行的更新器脚本（只打印，不执行）
     ///   --quick-quit     执行一次快速退出（结束选定应用及其子进程）
@@ -186,7 +187,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 index += 1
 
             case "--helper-version":
-                Self.emitHelperVersion()
+                await Self.emitHelperVersion()
+                index += 1
+
+            case "--helper-update":
+                await Self.runHelperUpdate()
                 index += 1
 
             case "--update-script":
@@ -389,12 +394,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// 助手的版本状态。命令行可查，不必为了看一眼版本去翻界面。
+    /// 打印助手版本状态。
+    ///
+    /// **必须先探测再打印**：状态是上一次探测留下的快照，
+    /// 直接读它会得到「明明装了却显示未安装」这种自相矛盾的输出
+    /// —— 启动后紧接着跑这条命令时最容易撞上。
     @MainActor
-    private static func emitHelperVersion() {
+    private static func emitHelperVersion() async {
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
         emit("应用版本 \(version)")
+        _ = await HelperVersionManager.shared.refresh()
         emit("助手版本状态 —— \(HelperVersionManager.shared.state.text)")
+    }
+
+    /// 手动触发一次「检查 + 更新」，把结果如实说出来。
+    ///
+    /// 走的是界面上「立即检查并更新」的同一个方法（`refresh()` + `updateNow()`），
+    /// 所以命令行能验证界面那套逻辑 —— 不必靠点按钮才能测。
+    /// 每个分支都要有话说：静默无输出正是这次要修掉的问题。
+    @MainActor
+    private static func runHelperUpdate() async {
+        let manager = HelperVersionManager.shared
+
+        // 这条命令意味着「由我接管」：避免自动路径在同一时间也去替换助手。
+        manager.suspendAutomaticUpdates()
+
+        _ = await manager.refresh()
+        emit("检查结果 —— \(manager.state.text)")
+
+        switch await manager.updateNow() {
+        case .updated(let digest):
+            emit("助手已更新（摘要 \(HelperVersionManager.State.short(digest))）")
+        case .noChange(let digest):
+            emit("无需更新：助手与内置的那一份一致"
+                 + "（摘要 \(HelperVersionManager.State.short(digest))）")
+        case .notInstalled:
+            emit("尚未启用完全控制，没有已安装的助手")
+        case .unreachable:
+            emit("助手已安装但没有响应 —— 属于 launchd 层面的问题，"
+                 + "更新它不会有结果；可在「完全控制」里停用再启用一次")
+        case .needsReinstall:
+            emit("助手是旧版本，不认识自动更新命令 —— "
+                 + "需要在界面「完全控制」里停用并卸载，再重新启用（一次管理员授权）")
+        case .failed(let reason):
+            emit("助手更新失败：\(reason)")
+        }
     }
 
     /// 列出检测到的电源设置改动。自身与外部改动都列出，只是分开标记 ——
