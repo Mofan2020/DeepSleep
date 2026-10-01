@@ -528,6 +528,33 @@ Swift 的插值是 `\(...)`。一旦写成 `\\(...)`（多一个反斜杠），�
 
 ---
 
+## 23. 验证 zip 要用 `ditto` 解压，不要用 `unzip`
+
+发布前验证「解压出来的 .app 签名还有效」时，用 `unzip` 会得到假失败：
+
+```
+$ codesign --verify --deep --strict "/tmp/提取目录/Deep Sleep.app"
+…: a sealed resource is missing or invalid
+```
+
+而同一个 zip 用 `ditto -x -k` 解压后校验是通过的。原因是
+**`unzip` 不保留 zip 里的扩展属性 / 附加记录**，而代码签名的封条覆盖它们 ——
+文件本身一个都没少，但封条对不上。
+
+正确姿势：
+
+```sh
+mkdir -p /tmp/zt && ditto -x -k build/release/DeepSleep.zip /tmp/zt
+codesign --verify --deep --strict "/tmp/zt/Deep Sleep.app"
+```
+
+`ditto` 也是 Finder 解压 zip 用的那个工具，所以它更接近用户真实的解压结果。
+**教训**：验证工具本身也要挑 —— 用一个「会丢信息」的工具去验证完整性，
+失败的原因可能在工具身上而不在产物身上。判断方法：换个工具再验一次，
+两次结论不一致时，先怀疑工具，再怀疑产物。
+
+---
+
 ## 附：排查问题的通用姿势
 
 从这个项目的经历里提炼出来的：

@@ -195,6 +195,7 @@ cat /tmp/ghdl/DeepSleep.zip.sha256
 - [ ] `git push origin main && git push origin "$TAG"`
 - [ ] `build-release.sh` 打包
 - [ ] zip 解压验证：顶层是 `.app`、版本正确、内嵌助手在、codesign 通过
+      （**用 `ditto -x -k` 解压**；`unzip` 会丢扩展属性，让 codesign 假报「封条无效」，见 gotchas 23）
 - [ ] `gh release create` 带 zip 与 sha256
 - [ ] 远端验证：`releases/latest` 指向新 tag、下载回来的摘要一致
 
