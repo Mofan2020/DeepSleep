@@ -6,7 +6,7 @@
 - **应用名**：Deep Sleep
 - **最低系统**：macOS 26.0
 - **语言 / 框架**：Swift 5、SwiftUI + AppKit、IOKit、LocalAuthentication
-- **当前版本**：1.4.0
+- **当前版本**：1.4.1
 
 ## 安装
 
@@ -84,10 +84,8 @@
   「完全控制」页可关。用户主动退出后不会被强行唤起。
 - **CPU / RAM 过载告警**：连续 N 秒超过阈值时提示前三大占用的进程，
   用户可冻结（SIGSTOP）或结束（SIGKILL），也可忽略。
-- **内存泄漏检测**：窗口内 RSS 单调增长且累计 ≥ 50MB 时弹红字置顶框并发送系统通知。
-  进程命中白名单时只警告，不提供快速处理按钮。
-- **完全卸载**：撤销所有断言，恢复 disablesleep，卸载助手，删除自启 plist，
-  删除 .app 包。侧栏「卸载 Deep Sleep」项入口。
+- **单进程 RAM 超阈告警**：任一进程 RSS 超过设定值立刻提示（不等持续）。
+- **完全卸载**：撤销所有断言，恢复 disablesleep，清理配置（Preferences / Caches / Application Support / Saved State / Logs），卸载助手，删除自启 plist，删除 .app 包。侧栏「卸载 Deep Sleep」项入口。
 
 ## 命令行接口
 
@@ -266,9 +264,9 @@ DeepSleep/
 │   ├── GlobalHotkey.swift      全局快捷键（Carbon，不需要辅助功能权限）
 │   ├── URLCommands.swift       `deepsleep://` 命令表与解析
 │   ├── AutoStartManager.swift  LaunchAgent plist 读写（开机自启）
-│   ├── SystemMonitor.swift     CPU/RAM 过载 + 内存泄漏采样循环
+│   ├── SystemMonitor.swift     CPU/RAM 过载 + 单进程 RAM 阈值采样循环
 │   ├── ProcessStatsProvider.swift  应用侧的进程统计 / 挂起 / 杀进程入口
-│   ├── LeakDetector.swift      内存泄漏纯函数判定
+│   ├── MonitorConfig.swift     配置持久化（UserDefaults JSON）
 │   ├── AlertWindowController.swift 红字置顶对话框
 │   ├── SystemNotifier.swift    UserNotifications 封装（含可点 action）
 │   ├── MonitoringCoordinator.swift  SystemMonitor → Alert/Notifier 接线
@@ -294,7 +292,7 @@ DeepSleep/
 `check-docs.py` 检查文档与代码是否一致，`test-check-docs.py` 验证前者真的会拦，
 `test-pmset-parse.swift` / `test-version-compare.swift` / `test-selfupdate.swift` /
 `test-process-guard.swift` / `test-process-stats.swift` / `test-process-snapshot.swift` /
-`test-leak-detector.swift` / `test-auto-start-manager.swift` / `test-helper-update.sh`
+`test-auto-start-manager.swift` / `test-helper-update.sh`
 是回归与端到端测试，
 `helper-probe.py` 直接与特权助手对话，`probe-unknown-command.py` 验证助手对未知命令的反应，
 `make-icon.py` 生成应用图标。

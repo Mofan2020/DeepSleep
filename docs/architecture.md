@@ -470,22 +470,22 @@ bundle id 从可执行文件路径反查（结果带缓存）。
 名单之外的一切都可以结束，包括 `bash`、`python3`、终端里跑的东西 ——
 「不能杀系统进程」不等于「什么都不敢杀」，否则这个功能就没有意义了。
 
-### 系统监控：CPU/RAM 过载 + 内存泄漏 + 开机自启
+### 系统监控：CPU/RAM 过载 + 单进程 RAM 超阈 + 开机自启
 
-v1.4.0 新增的被动观测能力。
+v1.4.0 / 1.4.1 的被动观测能力。
 
 - **判定在主应用，执行走特权助手**。抓进程数据不需要权限；需要权限的是 `SIGSTOP` / `SIGKILL`。
 - **新增的三条助手命令仍走保护名单**。`suspendProcesses` / `killProcesses` 用 `ProcessGuard.refusalReason(for:)` 验传入的 pid，命中记 `refused`。
-- **内存泄漏命中白名单时只警告，不给快速处理按钮**。对话框必须有关闭按钮。
+- **CPU% 用 whole-CPU 口径**：100% = 全机所有核都跑满；50% = 一半在用。`hw.ncpu` 拿核心数。不按核心数叠加。
+- **单进程 RAM 超阈**：某个进程 RSS ≥ 用户设定字节数（默认 4 GB）立刻报警，不等持续。
 
 数据流：
 
 ```
 Timer.scheduledTimer(every: sampleIntervalSeconds)
   └─ ProcessStatsProvider.fetchStats()
-       ├─ 更新 RSS 环形缓冲
-       ├─ LeakDetector.evaluateAll → 命中 → AlertWindow + Notifier
-       └─ 累计 RAM/CPU% 持续超阈 → AlertWindow + Notifier
+       ├─ 累计 RAM/CPU% 持续超阈 → AlertWindow + Notifier（过载）
+       └─ 任一进程 RSS ≥ 阈值 → AlertWindow + Notifier（单进程 RAM）
 ```
 
 开机自启（与监控一起发布，逻辑独立）：
@@ -497,9 +497,10 @@ Timer.scheduledTimer(every: sampleIntervalSeconds)
 
 完全卸载：
 
-- 撤销断言 → 恢复 `disablesleep` → 卸载助手 → 删自启 plist → 删 .app → 退出应用。
+- 撤销断言 → 恢复 `disablesleep` → 清理应用配置（Prefs / Caches / Application Support / Saved State / Logs）→ 卸载助手 → 删自启 plist → 删 .app → 退出应用。
 - 助手不可达不算失败。
 - `.app` 路径白名单：不能是 `/`、`/Applications`、或任何含 `LaunchAgents` 的路径。
+- 配置清理也走路径白名单（不能越出 `~/Library`）。
 
 ---
 

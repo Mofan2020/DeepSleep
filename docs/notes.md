@@ -731,3 +731,28 @@ Debug 与 Release 两个产物内置的助手摘要不同，正好互为「不�
 - **没用 SMAppService**：任务决策时选了 LaunchAgent plist，写 plist 不需要 fork。
 - **没默认自动冻结**：监控发现过载后必须用户显式打开「过载时自动冻结 Top 3」。
 - **没引入 pressure API**：只看 RAM% 与累计 CPU%。
+
+---
+
+## v1.4.1：删内存泄漏 + CPU% 归一化 + 配置持久化（2026-10-07）
+
+### 用户反馈
+
+- 内存泄漏"绝对阈值 +50MB"在普通应用启动涨 200MB、游戏加载涨 5GB 时疯狂误报。判定没有「相对进程自身基准」的判定，砍掉。
+- "启用系统监控"切页回来没保留、"保存设置"按钮没用 → 之前是 `@State + 内存里 struct`，没 UserDefaults。
+- "最近事件"一直显示"无" → 通知发了但 UI 没订阅。
+- 卸载页面没列清应用配置（prefs/caches/应用支持/日志）。
+
+### 做了什么
+
+- 删 LeakDetector.swift + 测试；SystemMonitor / MonitoringCoordinator / AlertWindowController / SystemNotifier 全部削掉 `.leak` 分支。
+- `ProcessSnapshot.cpuPercent` 改成 whole-CPU：`perCore / coreCount`，锁 0–100。`hw.ncpu` 一次性缓存。
+- 新增 `SingleProcessRAMEvent`：任一进程 RSS ≥ 用户阈值（默认 4 GB）立刻报警。
+- `MonitorConfig` Codable + UserDefaults JSON 桥；`MonitoringView` `onChange(of: config)` 立即写盘，"保存设置"按钮取消。
+- `SystemMonitor.lastEventDescription()` 暴露最近事件 + 时间戳，`MonitoringView` 用 `Timer.publish(every: 1)` 每秒拉一次。
+- `Uninstaller.clearAppData()` 清 prefs / caches / application support / saved state / logs；`UninstallView` 操作列表 + Report 各加一行。
+
+### 没动的与原因
+
+- **没引入相对基准的内存泄漏判定**：用户说先不做了，等有更好的检测方法再说。
+- **没改监控整体架构**：还是「判定主应用 + 执行走助手」，新增事件类型仍走同一套 AlertWindow + Notifier 流程。

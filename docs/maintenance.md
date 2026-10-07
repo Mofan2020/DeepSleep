@@ -352,7 +352,6 @@ Swift 源码里被转义掉的插值 `\\(`（会在界面上原样显示）。
 | `test-process-guard.swift` | 快速退出裁决回归（保护名单 / 进程树 / 结果编解码 / 真杀一棵树） |
 | `test-process-stats.swift` | 进程快照编解码 round-trip + 特殊字符处理 |
 | `test-process-snapshot.swift` | 真实进程快照（验证 RSS / 启动时间 / CPU% 范围） |
-| `test-leak-detector.swift` | 内存泄漏启发式（稳定 / 锯齿 / 短尖峰 / 单调增长 / 阈值下限） |
 | `test-auto-start-manager.swift` | LaunchAgent plist 内容生成（无 KeepAlive=true） |
 | `build-release.sh` | 构建 Release 并打包 `DeepSleep.zip` + sha256 |
 | `check-docs.py` | 文档与代码一致性检查（兼扫转义插值） |
