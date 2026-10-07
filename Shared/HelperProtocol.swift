@@ -43,6 +43,17 @@ public enum HelperCommand: String, Codable, CaseIterable, Sendable {
     /// 任何判断，会自己重新抓进程快照、重新套用 `ProcessGuard` 保护名单 ——
     /// 调用方给的 pid 只是「待考察对象」，不是「要杀的东西」。
     case terminateProcesses
+    /// 返回当前所有进程的 RSS / CPU% / 启动时间快照（系统过载监控 + 内存泄漏检测）。
+    /// v2 协议才支持；旧版助手会回 `unknown command` 失败。
+    case getProcessStats
+    /// 用 SIGSTOP 挂起（冻结）一组进程。用于「过载时冻结前三大占用者」。
+    /// 参数 `pids` 为逗号分隔的 pid 列表。
+    /// 助手仍然走 `ProcessGuard.plan`，命中白名单或子树返回 `refused`。
+    /// 同样不连带子树 —— 监控场景下调用方已明确是叶子节点。
+    case suspendProcesses
+    /// 用 SIGKILL 杀掉一组进程。用于「通知/对话框点了处理（建议）」路径。
+    /// 不连带子树、不走保护名单豁免 —— 必须经过 `ProcessGuard.plan` 全套裁决。
+    case killProcesses
 }
 
 // MARK: - 请求
@@ -93,7 +104,16 @@ public enum HelperConstants {
     /// 助手日志路径。
     public static let logPath = "/var/log/com.skyc8266.deepsleep.helper.log"
     /// 协议版本，双方不一致时拒绝通信，避免升级后行为错乱。
-    public static let protocolVersion = 1
+    ///
+    /// 版本历史：
+    ///   - v1：所有现有命令（assertion、pmset、计划唤醒、终止）
+    ///   - v2：新增 `getProcessStats` / `suspendProcesses` / `killProcesses`，
+    ///         用于系统过载监控与内存泄漏检测
+    ///
+    /// 升级路径：用户启动新版 app 后，app 探测到旧助手（v=1），
+    /// 主动触发 `updateSelf` —— docs/release.md 已说明助手能自我更新。
+    /// 旧助手对 v2 命令会回 `unknown command`；应用侧必须探测协议版本并提示。
+    public static let protocolVersion = 2
 }
 
 // MARK: - 助手进程侧需 root 的断言类型
