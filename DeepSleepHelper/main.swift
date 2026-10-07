@@ -539,7 +539,7 @@ private final class CommandHandler {
             }
         }
 
-        logLine("suspend 请求=\\(targets.count) 已挂起=\(report.killed.count) 拒绝=\(report.refused.count) 失败=\(report.failed.count)")
+        logLine("suspend 请求=\(targets.count) 已挂起=\(report.killed.count) 拒绝=\(report.refused.count) 失败=\(report.failed.count)")
         return .ok(report.summary, payload: report.encode())
     }
 

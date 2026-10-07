@@ -6,7 +6,7 @@
 - **应用名**：Deep Sleep
 - **最低系统**：macOS 26.0
 - **语言 / 框架**：Swift 5、SwiftUI + AppKit、IOKit、LocalAuthentication
-- **当前版本**：1.3.1
+- **当前版本**：1.4.0
 
 ## 安装
 
@@ -75,8 +75,19 @@
 - 菜单栏常驻：左键打开主界面，右键弹出快速设置，Control + 左键等同右键
 - 关掉所有窗口后隐藏 Dock 图标，应用继续在菜单栏后台运行
 - 运行日志页，按条数与天数自动裁剪
-- 外部活动：谁在阻止休眠、谁改了电源设置
+- 外部活动：谁在阻止休眠，谁改了电源设置
 - 应用与特权助手都能自我更新
+
+### 系统监控
+
+- **开机自启**：默认开，写入 `~/Library/LaunchAgents/com.skyc8266.deepsleep.plist`；
+  「完全控制」页可关。用户主动退出后不会被强行唤起。
+- **CPU / RAM 过载告警**：连续 N 秒超过阈值时提示前三大占用的进程，
+  用户可冻结（SIGSTOP）或结束（SIGKILL），也可忽略。
+- **内存泄漏检测**：窗口内 RSS 单调增长且累计 ≥ 50MB 时弹红字置顶框并发送系统通知。
+  进程命中白名单时只警告，不提供快速处理按钮。
+- **完全卸载**：撤销所有断言，恢复 disablesleep，卸载助手，删除自启 plist，
+  删除 .app 包。侧栏「卸载 Deep Sleep」项入口。
 
 ## 命令行接口
 
@@ -108,6 +119,7 @@ open -a "Deep Sleep" --args --status
 | `--dry-run` | 与 `--quick-quit` 配合：只列出会结束哪些进程，不动手 |
 | `--automation` | 打印 Siri 短语与 `deepsleep://` 的命令清单 |
 | `--hotkey-status` | 打印快速退出快捷键的注册状态（排查「按了没反应」） |
+| `--autostart` | 由 LaunchAgent 自启动时传的参数：不抢主窗口焦点，仅跑菜单栏与监控 |
 
 > `--hold` 与 `--release` 作用于启动它的那个实例。macOS 是单实例机制，
 > 对已经在运行的实例再传参不会生效。需要脚本持续控制时，请用下面的 URL 或自动化规则。
@@ -231,6 +243,8 @@ DeepSleep/
 │   ├── PMSetOutput.swift           `pmset -g` 解析（app 与助手共用一份）
 │   ├── Version.swift               版本号解析与比较（自动更新的判断依据）
 │   ├── ProcessInventory.swift      进程枚举与进程树（快速退出用）
+│   ├── ProcessSnapshot.swift       进程统计快照（RSS / CPU% / 启动时间）
+│   ├── ProcessStats.swift          进程快照的共享编解码
 │   ├── ProcessGuard.swift          强杀保护名单与「该杀谁」的裁决
 │   └── TerminationReport.swift     强杀结果的结构与编解码
 ├── DeepSleep/                      主应用
@@ -248,9 +262,17 @@ DeepSleep/
 │   │   ├── HelperVersionManager.swift  助手版本检测与自我更新
 │   │   ├── AutomationRule.swift    自动化规则模型
 │   │   ├── AutomationEngine.swift  规则求值引擎
-│   │   ├── QuickQuit.swift         快速退出引擎（目标名单 → 进程树 → 强杀）
-│   │   ├── GlobalHotkey.swift      全局快捷键（Carbon，不需要辅助功能权限）
-│   │   └── URLCommands.swift       `deepsleep://` 命令表与解析
+│   ├── QuickQuit.swift         快速退出引擎（目标名单 → 进程树 → 强杀）
+│   ├── GlobalHotkey.swift      全局快捷键（Carbon，不需要辅助功能权限）
+│   ├── URLCommands.swift       `deepsleep://` 命令表与解析
+│   ├── AutoStartManager.swift  LaunchAgent plist 读写（开机自启）
+│   ├── SystemMonitor.swift     CPU/RAM 过载 + 内存泄漏采样循环
+│   ├── ProcessStatsProvider.swift  应用侧的进程统计 / 挂起 / 杀进程入口
+│   ├── LeakDetector.swift      内存泄漏纯函数判定
+│   ├── AlertWindowController.swift 红字置顶对话框
+│   ├── SystemNotifier.swift    UserNotifications 封装（含可点 action）
+│   ├── MonitoringCoordinator.swift  SystemMonitor → Alert/Notifier 接线
+│   └── Uninstaller.swift       完全卸载编排
 │   ├── Intents/
 │   │   ├── DeepSleepIntents.swift      App Intents（Siri / 快捷指令 / 聚焦）
 │   │   └── DeepSleepAppShortcuts.swift App Shortcuts：说出口的短语
@@ -258,7 +280,7 @@ DeepSleep/
 │   │   ├── HelperClient.swift      socket 客户端
 │   │   └── HelperInstaller.swift   一次性安装 / 卸载
 │   ├── Auth/BiometricAuth.swift    Touch ID 授权封装
-│   ├── Views/                      SwiftUI 界面（含快速退出页 QuickQuitView.swift）
+│   ├── Views/                      SwiftUI 界面（MonitoringView / UninstallView / AutoStartSettings / 快速退出页 QuickQuitView.swift）
 │   └── Resources/
 │       ├── Info.plist              （含 `deepsleep://` 的 CFBundleURLTypes）
 │       ├── install-helper.sh       以 root 运行的安装脚本
@@ -271,7 +293,9 @@ DeepSleep/
 `scripts/` 下是配套工具：`build-release.sh` 打包发布用的 zip 与摘要，
 `check-docs.py` 检查文档与代码是否一致，`test-check-docs.py` 验证前者真的会拦，
 `test-pmset-parse.swift` / `test-version-compare.swift` / `test-selfupdate.swift` /
-`test-process-guard.swift` / `test-helper-update.sh` 是回归与端到端测试，
+`test-process-guard.swift` / `test-process-stats.swift` / `test-process-snapshot.swift` /
+`test-leak-detector.swift` / `test-auto-start-manager.swift` / `test-helper-update.sh`
+是回归与端到端测试，
 `helper-probe.py` 直接与特权助手对话，`probe-unknown-command.py` 验证助手对未知命令的反应，
 `make-icon.py` 生成应用图标。
 
