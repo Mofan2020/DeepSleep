@@ -409,6 +409,15 @@ private final class CommandHandler {
         case .terminateProcesses:
             return terminateProcesses(request)
 
+        case .getProcessStats:
+            return getProcessStats()
+
+        case .suspendProcesses:
+            return suspendProcesses(request)
+
+        case .killProcesses:
+            return killProcesses(request)
+
         case .uninstall:
             logLine("uninstall requested")
             uninstallSelf()
@@ -466,6 +475,117 @@ private final class CommandHandler {
             return .failure("没有可结束的进程（目标可能已经退出）")
         }
         return .ok(report.summary, payload: report.encode())
+    }
+
+    // MARK: - 进程监控相关（v2 协议）
+
+    /// 返回一份进程快照。CPU% 基于 ProcessSnapshotCache 内部的差值缓存。
+    /// 第一次调用所有 cpuPercent=0（这是显式约定，不是计算失败）。
+    private func getProcessStats() -> HelperResponse {
+        let snapshot = self.collectSnapshotSync()
+        let payload = ProcessStats(records: snapshot).encode()
+        return .ok("已抓取 \(snapshot.count) 个进程", payload: payload)
+    }
+
+    /// 抓快照。`ProcessSnapshotCache` 是 actor，这里同步取结果再立刻返回；
+    /// actor 内部把状态锁在自己身上，没有共享问题。
+    private func collectSnapshotSync() -> [ProcessStats.Record] {
+        // snapshot() 是 async，这里用 semaphore 把 actor 拉同步。
+        let sem = DispatchSemaphore(value: 0)
+        var result: [ProcessStats.Record] = []
+        Task.detached {
+            let records = await ProcessSnapshotCache.shared.snapshot()
+            result = records
+            sem.signal()
+        }
+        sem.wait()
+        return result
+    }
+
+    /// 挂起一组进程。SIGSTOP。
+    /// 监控场景调用方已是叶子节点，不连带子树，但**仍然走保护名单**：
+    /// 命中白名单的 pid 记到 refused，不挂起。
+    private func suspendProcesses(_ request: HelperRequest) -> HelperResponse {
+        guard let raw = request.arguments["pids"] else {
+            return .failure("缺少 pids 参数")
+        }
+        let targets = parsePids(raw)
+        guard !targets.isEmpty else { return .failure("pids 为空或无法解析") }
+        guard targets.count <= ProcessGuard.maximumRootCount else {
+            return .failure("一次最多接受 \(ProcessGuard.maximumRootCount) 个目标")
+        }
+
+        let snapshot = ProcessInventory.snapshot()
+        let byPid = Dictionary(snapshot.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
+
+        var report = TerminationReport()
+        for pid in targets {
+            guard let process = byPid[pid] else {
+                // 进程在快照期间已经退出 —— 当作「不在」，不是失败
+                report.killed.append(.init(pid: pid, name: "pid \(pid)"))
+                continue
+            }
+            if let reason = ProcessGuard.refusalReason(for: process) {
+                report.refused.append(.init(pid: pid, name: process.name, reason: reason))
+                continue
+            }
+            if Darwin.kill(pid, SIGSTOP) == 0 {
+                report.killed.append(.init(pid: pid, name: process.name))
+            } else {
+                let err = errno
+                report.failed.append(.init(
+                    pid: pid, name: process.name,
+                    reason: String(cString: strerror(err))))
+            }
+        }
+
+        logLine("suspend 请求=\\(targets.count) 已挂起=\(report.killed.count) 拒绝=\(report.refused.count) 失败=\(report.failed.count)")
+        return .ok(report.summary, payload: report.encode())
+    }
+
+    /// 杀掉一组进程。SIGKILL。同 suspend 一样不连带子树但走保护名单。
+    /// 注意：监控场景是叶子节点；快速退出场景用 `terminateProcesses`
+    /// （那条路径带子树计算）。
+    private func killProcesses(_ request: HelperRequest) -> HelperResponse {
+        guard let raw = request.arguments["pids"] else {
+            return .failure("缺少 pids 参数")
+        }
+        let targets = parsePids(raw)
+        guard !targets.isEmpty else { return .failure("pids 为空或无法解析") }
+        guard targets.count <= ProcessGuard.maximumRootCount else {
+            return .failure("一次最多接受 \(ProcessGuard.maximumRootCount) 个目标")
+        }
+
+        let snapshot = ProcessInventory.snapshot()
+        let byPid = Dictionary(snapshot.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
+
+        var report = TerminationReport()
+        for pid in targets {
+            guard let process = byPid[pid] else {
+                report.killed.append(.init(pid: pid, name: "pid \(pid)"))
+                continue
+            }
+            if let reason = ProcessGuard.refusalReason(for: process) {
+                report.refused.append(.init(pid: pid, name: process.name, reason: reason))
+                continue
+            }
+            if Darwin.kill(pid, SIGKILL) == 0 {
+                report.killed.append(.init(pid: pid, name: process.name))
+            } else {
+                let err = errno
+                report.failed.append(.init(
+                    pid: pid, name: process.name,
+                    reason: String(cString: strerror(err))))
+            }
+        }
+
+        logLine("kill 请求=\(targets.count) 已杀=\(report.killed.count) 拒绝=\(report.refused.count) 失败=\(report.failed.count)")
+        return .ok(report.summary, payload: report.encode())
+    }
+
+    private func parsePids(_ raw: String) -> [pid_t] {
+        raw.split(separator: ",")
+            .compactMap { pid_t($0.trimmingCharacters(in: .whitespaces)) }
     }
 
     /// 卸载：写入一个延迟脚本，让本进程退出后再删除文件与 launchd 任务。
