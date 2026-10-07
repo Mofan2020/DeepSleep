@@ -55,28 +55,6 @@ public final class AlertWindowController {
         present(host: host)
     }
 
-    /// 内存泄漏对话框。
-    /// - Parameter canHandle: 进程是否受 ProcessGuard 保护。受保护时为 false，
-    ///   对话框只显示「关闭」按钮，不提供快速处理入口（任务边界）。
-    public func presentLeak(
-        report: LeakReport,
-        canHandle: Bool,
-        onHandle: @escaping () -> Void
-    ) {
-        let host = NSHostingController(rootView: LeakAlertView(
-            report: report,
-            canHandle: canHandle,
-            onHandle: { [weak self] in
-                self?.dismiss()
-                onHandle()
-            },
-            onClose: { [weak self] in
-                self?.dismiss()
-            }
-        ))
-        present(host: host)
-    }
-
     // MARK: - 实现
 
     private func present(host: NSHostingController<some View>) {
@@ -179,53 +157,6 @@ private struct OverloadAlertView: View {
                 Button("冻结进程", action: onSuspend)
                 Button("结束") { onEnd() }
                     .foregroundColor(.red)
-            }
-        }
-        .padding(20)
-        .frame(width: 480)
-    }
-}
-
-private struct LeakAlertView: View {
-    let report: LeakReport
-    let canHandle: Bool
-    let onHandle: () -> Void
-    let onClose: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                Image(systemName: "exclamationmark.octagon.fill")
-                    .foregroundColor(.red)
-                Text("疑似内存泄漏")
-                    .font(.title2.weight(.semibold))
-                    .foregroundColor(.red)
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("进程：\(report.name)").font(.headline)
-                Text("当前占用：\(report.rssMB) MB").font(.body)
-                Text("窗口内累计增长：\(report.cumulativeMB) MB")
-                    .font(.body)
-                    .foregroundColor(.red)
-                Text("已监测：\(report.sampleCount) 次采样")
-                    .font(.caption).foregroundColor(.secondary)
-            }
-
-            if !canHandle {
-                Text("该进程命中系统保护名单，无法在应用内直接处理。请通过系统活动监视器手动查看。")
-                    .font(.caption)
-                    .foregroundColor(.red)
-            }
-
-            HStack {
-                Button("关闭", action: onClose)
-                    .keyboardShortcut(.cancelAction)
-                Spacer()
-                if canHandle {
-                    Button("处理（建议）", action: onHandle)
-                        .foregroundColor(.red)
-                }
             }
         }
         .padding(20)

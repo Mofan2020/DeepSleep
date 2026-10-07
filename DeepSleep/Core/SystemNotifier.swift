@@ -2,14 +2,16 @@
 //  SystemNotifier.swift
 //  Deep Sleep
 //
-//  系统过载监控 + 内存泄漏检测用的 UserNotifications 封装。
+//  系统过载监控用的 UserNotifications 封装。
 //
 //  通知分类与 action：
-//    - LEAK_ALERT：处理（建议）/ 忽略
-//    - OVERLOAD_ALERT：处理 / 冻结进程 / 忽略
+//    - OVERLOAD_ALERT：处理 / 冻结进程 / 结束
 //
-//  通知里的 PID 通过 userInfo[\"pids\"] 传回（逗号分隔），
+//  通知里的 pid 通过 userInfo["pids"] 传回（逗号分隔），
 //  UNUserNotificationCenterDelegate 收到 action 时再走 ProcessStatsProvider。
+//
+//  v1.4.0 早期还有 LEAK_ALERT category；v1.4.1 起内存泄漏检测整个砍掉，
+//  category 一并删除，避免误以为仍支持。
 //
 
 import Foundation
@@ -20,7 +22,6 @@ public final class SystemNotifier: NSObject, UNUserNotificationCenterDelegate {
 
     public static let shared = SystemNotifier()
 
-    public static let leakCategoryID = "DEEPSLEEP_LEAK_ALERT"
     public static let overloadCategoryID = "DEEPSLEEP_OVERLOAD_ALERT"
 
     public static let actionHandle = "HANDLE"
@@ -29,19 +30,6 @@ public final class SystemNotifier: NSObject, UNUserNotificationCenterDelegate {
 
     /// 注册分类（应用启动时调一次）。
     public func registerCategories() {
-        let leak = UNNotificationCategory(
-            identifier: Self.leakCategoryID,
-            actions: [
-                UNNotificationAction(identifier: Self.actionHandle,
-                                     title: "处理（建议）",
-                                     options: [.foreground]),
-                UNNotificationAction(identifier: Self.actionSuspend,
-                                     title: "忽略",
-                                     options: [])
-            ],
-            intentIdentifiers: [],
-            options: [])
-
         let overload = UNNotificationCategory(
             identifier: Self.overloadCategoryID,
             actions: [
@@ -58,7 +46,7 @@ public final class SystemNotifier: NSObject, UNUserNotificationCenterDelegate {
             intentIdentifiers: [],
             options: [])
 
-        UNUserNotificationCenter.current().setNotificationCategories([leak, overload])
+        UNUserNotificationCenter.current().setNotificationCategories([overload])
         UNUserNotificationCenter.current().delegate = self
     }
 
@@ -74,26 +62,6 @@ public final class SystemNotifier: NSObject, UNUserNotificationCenterDelegate {
 
     public func authorizationStatus() async -> UNAuthorizationStatus {
         await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
-    }
-
-    /// 发内存泄漏通知。
-    public func notifyLeak(_ report: LeakReport) {
-        let content = UNMutableNotificationContent()
-        content.title = "⚠️ 疑似内存泄漏：\(report.name)"
-        content.body = "占用 \(report.rssMB) MB，窗口内累计增长 \(report.cumulativeMB) MB。建议立即处理"
-        content.sound = .defaultCritical
-        content.categoryIdentifier = Self.leakCategoryID
-        content.userInfo = [
-            "pids": String(report.pid),
-            "kind": "leak"
-        ]
-
-        let request = UNNotificationRequest(
-            identifier: "leak-\(report.pid)-\(Int(report.cumulativeMB))",
-            content: content,
-            trigger: nil
-        )
-        UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
     }
 
     /// 发过载通知。

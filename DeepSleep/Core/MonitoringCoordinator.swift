@@ -8,6 +8,8 @@
 //   - onEvent: 弹对话框（保证用户能看到）+ 发通知（不抢焦点时也能看到）
 //   - onAction: 通知按钮被点了 → 调用 ProcessStatsProvider 走助手
 //
+//  v1.4.0 早期还有泄漏分支；v1.4.1 起只做过载监控。
+//
 
 import Foundation
 
@@ -46,25 +48,12 @@ final class MonitoringCoordinator {
                     Task { _ = try? await ProcessStatsProvider.shared.kill(pids) }
                 }
             )
-        case .leak(let report):
-            // 命中 ProcessGuard 保护名单 → 只警告，不给操作按钮
-            let canHandle = !isProcessProtected(report)
-            SystemNotifier.shared.notifyLeak(report)
-            AlertWindowController.shared.presentLeak(
-                report: report,
-                canHandle: canHandle,
-                onHandle: {
-                    Task { _ = try? await ProcessStatsProvider.shared.kill([report.pid]) }
-                }
-            )
         }
     }
 
     private func handleAction(kind: String, action: String, pids: [pid_t]) async {
         guard !pids.isEmpty else { return }
         switch (kind, action) {
-        case ("leak", SystemNotifier.actionHandle):
-            _ = try? await ProcessStatsProvider.shared.kill(pids)
         case ("overload", SystemNotifier.actionHandle),
              ("overload", SystemNotifier.actionEnd):
             _ = try? await ProcessStatsProvider.shared.kill(pids)
@@ -74,17 +63,5 @@ final class MonitoringCoordinator {
             // 忽略 / 未知：什么都不做
             break
         }
-    }
-
-    /// 复制 ProcessGuard 保护名单的判断逻辑 —— 应用侧没装 Helper 时仍可判断。
-    /// 完整名单见 Shared/ProcessGuard.swift。这里只查常用的几个，
-    /// 兜底走 ProcessInventory.snapshot 的实际名单。
-    private func isProcessProtected(_ report: LeakReport) -> Bool {
-        let snapshot = ProcessInventory.snapshot()
-        guard let process = snapshot.first(where: { $0.pid == report.pid }) else {
-            // 进程在两次采样之间已经退出：当作「不在白名单」
-            return false
-        }
-        return ProcessGuard.refusalReason(for: process) != nil
     }
 }

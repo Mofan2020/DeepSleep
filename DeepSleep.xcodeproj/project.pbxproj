@@ -66,7 +66,6 @@
 		E3CD86EC4A9AF02878100043 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2650D41E2F701CBC6738B29 /* ContentView.swift */; };
 		E648F9B8460CA4DC6467A511 /* ProcessGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09942C2FCA248432F203B05D /* ProcessGuard.swift */; };
 		EDD6AC5A315B659622797185 /* UpdateManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03B58135C030FD6D97DD7D84 /* UpdateManager.swift */; };
-		EE8800D2705CD5331AA8F1E8 /* LeakDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = C51C05A5A8A551B93CDA4597 /* LeakDetector.swift */; };
 		EE8F090E23622184B5D04D17 /* UnixSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58014010D89130A9A194BE3F /* UnixSocket.swift */; };
 		F46459160672CE1350637D97 /* Version.swift in Sources */ = {isa = PBXBuildFile; fileRef = F67CFF72B57B6842BFE84727 /* Version.swift */; };
 		F9C83EB7C255F958694CAE61 /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 571B5897312541D688A35CB1 /* DashboardView.swift */; };
@@ -128,7 +127,6 @@
 		B4F0B4163E1F57C80031517F /* UninstallView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UninstallView.swift; sourceTree = "<group>"; };
 		B527587ED1D0F7A77206BE2C /* AlertWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertWindowController.swift; sourceTree = "<group>"; };
 		C0322343BBDEB6A664F907E5 /* AssertionKind.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssertionKind.swift; sourceTree = "<group>"; };
-		C51C05A5A8A551B93CDA4597 /* LeakDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LeakDetector.swift; sourceTree = "<group>"; };
 		C621046B4A0FEBDD66540895 /* DeepSleep.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DeepSleep.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C993F30605CB3C3BB8F0EC18 /* PowerActivityMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerActivityMonitor.swift; sourceTree = "<group>"; };
 		CAB733FD825537CF3DA93F8A /* AutomationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationView.swift; sourceTree = "<group>"; };
@@ -194,7 +192,6 @@
 				432740AF96D744E5DAB258F4 /* AutoStartManager.swift */,
 				566F4ACAAB91680B697CC74D /* GlobalHotkey.swift */,
 				3E1D45DC75AB25D3BC5214F5 /* HelperVersionManager.swift */,
-				C51C05A5A8A551B93CDA4597 /* LeakDetector.swift */,
 				E75BB13FF2F018F746DC727B /* MonitoringCoordinator.swift */,
 				C993F30605CB3C3BB8F0EC18 /* PowerActivityMonitor.swift */,
 				A2DD20BF1CBB3194597701CA /* PowerWatcher.swift */,
@@ -441,7 +438,6 @@
 				48A8411A91BC1725A62EAE46 /* HelperInstaller.swift in Sources */,
 				B49E2B674BE4C8DBA32A22F6 /* HelperProtocol.swift in Sources */,
 				02FA7C7E50BA9D94C198223D /* HelperVersionManager.swift in Sources */,
-				EE8800D2705CD5331AA8F1E8 /* LeakDetector.swift in Sources */,
 				51B9E0C05CAD5F9A566B8C72 /* LogView.swift in Sources */,
 				5E8C2C5C7356AE760C7CBF15 /* MenuBarController.swift in Sources */,
 				2E04E5FA5A3F0EE1C6D77B07 /* MonitoringCoordinator.swift in Sources */,

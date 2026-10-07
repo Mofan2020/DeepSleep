@@ -2,16 +2,17 @@
 //  SystemMonitor.swift
 //  Deep Sleep
 //
-//  系统过载监控 + 内存泄漏检测的采样循环与阈值判定。
+//  系统过载监控的采样循环与阈值判定（CPU / RAM 持续超阈 → Top 3 占用者）。
 //
 //  跑法：
-//    - 每 sampleIntervalSeconds 秒从 ProcessStatsProvider.fetchStats() 拿一次快照
-//    - 更新内部 RSS 环形缓冲，喂给 LeakDetector
-//    - 检查 RAM 总使用率（用 host info）/ 累计 CPU% 是否持续超过阈值
-//    - 触发时通过回调 onOverload / onLeak 把事件吐给 UI 与 Notifier
+//    - 每 sampleIntervalSeconds 从 ProcessStatsProvider.fetchStats() 拿一次快照
+//    - 计算总 RAM 使用率与累计 CPU%
+//    - 持续超过阈值 N 秒 → 触发过载事件
 //
-//  这个文件不出现在单个已知的 UI 路径，UI 与 Notifier 各自挂回调，
-// 避免它去 import SwiftUI / UserNotifications。
+//  v1.4.0 早期版本里还有「内存泄漏检测」分支；v1.4.1 起砍掉，
+//  只保留过载监控。原因：内存泄漏没有靠「绝对阈值」能用的好判定，
+//  应用启动涨几百 MB、游戏加载涨几 GB 都正常；继续做误报远多于真报。
+//  算法注释与剩余字段都只服务过载判定。
 //
 
 import Foundation
@@ -56,13 +57,9 @@ public struct OverloadEvent: Sendable {
     public let timestamp: Date
 }
 
-/// 内存泄漏事件。
-public typealias LeakEvent = LeakReport
-
 /// SystemMonitor 把这些事件推给上层。
 public enum MonitorEvent: Sendable {
     case overload(OverloadEvent)
-    case leak(LeakEvent)
 }
 
 public final class SystemMonitor {
@@ -74,17 +71,10 @@ public final class SystemMonitor {
     private let queue = DispatchQueue(label: "com.skyc8266.deepsleep.monitor")
     private var timer: DispatchSourceTimer?
     private var config: MonitorConfig
-    private let bufferLimit = 64   // 64 个样本 × 3 秒 = 192 秒窗口
-    /// PID → 历史 RSS 样本（环形缓冲）。
-    private var ringBuffers: [pid_t: [RSSSample]] = [:]
-    /// PID → 最近一次采样时的进程名（用于在 LeakReport 里展示）。
-    private var names: [pid_t: String] = [:]
     /// 当前 RAM% 持续超过阈值的开始时间；为 nil 表示当前未在超阈。
     private var overloadStartedAt: Date?
     /// 已发出的过载事件 cooldown 起点；防止 4/24s 内连发两条同样的过载。
     private var lastOverloadReportAt: Date?
-    /// 已发出的泄漏事件；同一 PID 上轮后 cooldown。
-    private var leakCooldown: [pid_t: Date] = [:]
 
     public var onEvent: ((MonitorEvent) -> Void)?
 
@@ -147,35 +137,6 @@ public final class SystemMonitor {
         }
 
         let now = Date()
-        let nowInterval = now.timeIntervalSince1970
-
-        // 更新环形缓冲 & 进程名
-        var newBuffer: [pid_t: [RSSSample]] = [:]
-        var newNames: [pid_t: String] = [:]
-        for record in records {
-            newNames[record.pid] = record.name
-            var ring = ringBuffers[record.pid] ?? []
-            ring.append(RSSSample(pid: record.pid,
-                                  rssBytes: record.rssBytes,
-                                  timestamp: nowInterval))
-            if ring.count > bufferLimit { ring.removeFirst(ring.count - bufferLimit) }
-            newBuffer[record.pid] = ring
-        }
-        ringBuffers = newBuffer
-        names = newNames
-
-        // 判定泄漏
-        let allHistory = Array(ringBuffers.values).flatMap { $0 }
-        let leaks = LeakDetector.evaluateAll(history: allHistory, nameForPID: { [weak self] pid in
-            self?.names[pid] ?? "pid \(pid)"
-        })
-        for leak in leaks {
-            // 同一 PID 5 分钟内最多报一次。
-            if let last = self.leakCooldown[leak.pid],
-               now.timeIntervalSince(last) < 300 { continue }
-            leakCooldown[leak.pid] = now
-            onEvent?(.leak(leak))
-        }
 
         // 判定过载
         let totalRSS: UInt64 = records.reduce(0) { $0 + $1.rssBytes }
