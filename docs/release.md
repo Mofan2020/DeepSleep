@@ -126,6 +126,18 @@ git push origin main
 git push origin v1.2.2
 ```
 
+**从 v1.4.0 开始，第 6–8 步由 GitHub Actions 完成。** `.github/workflows/release.yml`
+监听 push tag（`v*`），在 macos-14 runner 上跑 `scripts/build-release.sh`，
+用 ditto 解压 + codesign 校验后用 `softprops/action-gh-release` 创建正式版
+（非 prerelease）。手动 `gh release create` 仍可用作兜底（例如 Actions 失败时）。
+
+跑完后用 `gh release list` / `gh api repos/:owner/:repo/releases` 验证资产：
+
+```sh
+gh release view v1.4.0
+shasum -a 256 build/release/DeepSleep.zip   # 与 .sha256 文件一致
+```
+
 ### 第 6 步：打包发布资产
 
 ```sh
@@ -341,6 +353,7 @@ git tag -d v1.2.2                       # 删本地 tag
 | 1.2.1 | 助手判据改为内容摘要（去掉人工维护的构建号）；Release 拉列表以识别预发布；冲突只呈现不解决 |
 | 1.3.0 | Siri / 快捷指令（App Intents）；`deepsleep://` URL 接口；快速退出（全局快捷键强杀选定应用及其子进程，含硬名单保护与助手侧独立重算） |
 | 1.3.1 | 助手更新路径补上反馈：手动点击先弹框确认再更新，不再被「本次运行只自动试一次」的闸门静默吞掉；`--helper-version` 先探测再显示；新增 `--helper-update` 与助手更新端到端验证脚本 |
+| 1.4.0 | 开机自启（LaunchAgent plist，默认开）；系统监控：CPU/RAM 持续超阈告警 Top 3 占用者，可冻结或终结；内存泄漏检测（窗口内 RSS 单调增长 + 累计 ≥ 50MB，红字置顶 + 系统通知）；完全卸载（一键撤销所有副作用）。助手协议升至 v2，新增 `getProcessStats` / `suspendProcesses` / `killProcesses`；旧助手收到新命令会回 `unknown command`，新应用会提示一键更新助手 |
 
 > 这个表**每次发版都要加一行**。它是给未来的人判断「哪个版本引入了什么」用的，
 > 不维护的话，排查老版本问题时就没有参照。
