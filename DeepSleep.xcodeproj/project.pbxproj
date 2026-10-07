@@ -14,10 +14,12 @@
 		1918D7D77EC9140F31DE6718 /* AutomationRule.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4120515887C376197CCE7F9 /* AutomationRule.swift */; };
 		1C970D88D66C4F43D8AD1DAC /* PowerWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2DD20BF1CBB3194597701CA /* PowerWatcher.swift */; };
 		2CF3383D939893655F3DD14A /* QuickQuitView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69AD70CC1E39560226333763 /* QuickQuitView.swift */; };
+		2E04E5FA5A3F0EE1C6D77B07 /* MonitoringCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = E75BB13FF2F018F746DC727B /* MonitoringCoordinator.swift */; };
 		313486F9C714E8AC1436BE78 /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = 178D52B0BEF95859AB8B6D88 /* Components.swift */; };
 		355B12850D9D59EF6A64EDD2 /* TerminationReport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4977ACA618E906FAE14B97C0 /* TerminationReport.swift */; };
 		373014038B076AA90C1FA300 /* HelperProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE3295E35F8D28B69A629A8F /* HelperProtocol.swift */; };
 		3A1481D80852929319D7370D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 7C643740D2392EB1F876E8BA /* Assets.xcassets */; };
+		3DD32746C4046DE4C01B1BC6 /* ProcessStatsProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED60BFA7B2D37DD4613795ED /* ProcessStatsProvider.swift */; };
 		3E5B62161B19BF1CCE6E1B22 /* ControlView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DEE905EAF64EFC038DFC418 /* ControlView.swift */; };
 		43965B2CAF6676C308E55526 /* SleepController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93C5E4B4358BF400FACC53DC /* SleepController.swift */; };
 		46F0FD7486AF2AD5E745E69A /* Version.swift in Sources */ = {isa = PBXBuildFile; fileRef = F67CFF72B57B6842BFE84727 /* Version.swift */; };
@@ -37,26 +39,39 @@
 		6F47FDDC8B8A8BCEF68E6621 /* HelperClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CAA06BD31D3CA20982FDE4C /* HelperClient.swift */; };
 		708B71B465D2605742446DBD /* PowerActivityMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C993F30605CB3C3BB8F0EC18 /* PowerActivityMonitor.swift */; };
 		73ACAA59B7A7FB882CB55A50 /* AutomationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65EE86101EAC650FBB5F0CBB /* AutomationEngine.swift */; };
+		78D179B4ACE0E28FB61B6555 /* AlertWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B527587ED1D0F7A77206BE2C /* AlertWindowController.swift */; };
 		7E9BB0ED0884AB7842D45981 /* ExternalActivityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 596F4304321F89BFF2BEC9DB /* ExternalActivityView.swift */; };
+		8497605C3EFAAF988C2007FB /* SystemMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = E13408104C16C642713945FC /* SystemMonitor.swift */; };
+		89098C875F9DF3595B4F80F5 /* ProcessStats.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9280BE0F52069F606CA7D220 /* ProcessStats.swift */; };
 		89D6B9C0B4DFC68071831BD1 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96ED86613A6A98B3C2D18307 /* main.swift */; };
 		8BD0DC602D72415D81D2B19D /* PMSetOutput.swift in Sources */ = {isa = PBXBuildFile; fileRef = 575A45B0E6499C686C4827CF /* PMSetOutput.swift */; };
 		92410274FE9694B7FA8A76D8 /* install-helper.sh in Resources */ = {isa = PBXBuildFile; fileRef = 960F8920CB0412CB44C5FB31 /* install-helper.sh */; };
 		9429A1EB6266F9702E9D9158 /* ScheduleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43F312DABC0A8AAF435E103B /* ScheduleView.swift */; };
 		9551EFBCD9BC4F0B0C324544 /* DeepSleepIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09E4540A7ED2046DEB126599 /* DeepSleepIntents.swift */; };
+		9C6985268F6B8781B2C5A955 /* UninstallView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4F0B4163E1F57C80031517F /* UninstallView.swift */; };
+		A2488626DD99D32998AFF92B /* AutoStartSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13496FAE978C672E3F2EA8B8 /* AutoStartSettings.swift */; };
 		A6FDF63D0FF8D8386787E0F5 /* SelfUpdate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D53595CDD09B7293B6CF8F1 /* SelfUpdate.swift */; };
+		AB60111CE18B96059E1F1E2D /* ProcessSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 214A9E90F394CC9723FD747F /* ProcessSnapshot.swift */; };
 		B49E2B674BE4C8DBA32A22F6 /* HelperProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE3295E35F8D28B69A629A8F /* HelperProtocol.swift */; };
 		BB3A3C58E54678870163A762 /* DeepSleepAppShortcuts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52354ED18755C8CF314F230E /* DeepSleepAppShortcuts.swift */; };
+		C0EB5F908D427F907D33B32D /* SystemNotifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76A414E466231BC9EA4876AB /* SystemNotifier.swift */; };
 		C58D488668AB8F3B538FC28C /* PowerSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0E2DA26DEFB4FB3396D7063 /* PowerSettingsView.swift */; };
 		C5C82FA1DED31F6CAD42F13E /* QuickQuit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DAFF6F4654DCF7056F1BA67 /* QuickQuit.swift */; };
 		C7CAF9096B3F0A12F35B8126 /* WindowCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2955F2519DCC800EC189D9EA /* WindowCoordinator.swift */; };
+		CDC0DB341A0DB1C90C51A258 /* AutoStartManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 432740AF96D744E5DAB258F4 /* AutoStartManager.swift */; };
+		D0CC2A42F432A1A7D0DEEEE4 /* Uninstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF2BAA4DC2FE609833A597C3 /* Uninstaller.swift */; };
+		E147974598A796B15B1C1069 /* ProcessStats.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9280BE0F52069F606CA7D220 /* ProcessStats.swift */; };
 		E2B0737ADBFCBC9D4C33F3A6 /* UnixSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58014010D89130A9A194BE3F /* UnixSocket.swift */; };
+		E2F19718D39EDE8586292DC3 /* ProcessSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 214A9E90F394CC9723FD747F /* ProcessSnapshot.swift */; };
 		E3CD86EC4A9AF02878100043 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2650D41E2F701CBC6738B29 /* ContentView.swift */; };
 		E648F9B8460CA4DC6467A511 /* ProcessGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09942C2FCA248432F203B05D /* ProcessGuard.swift */; };
 		EDD6AC5A315B659622797185 /* UpdateManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03B58135C030FD6D97DD7D84 /* UpdateManager.swift */; };
+		EE8800D2705CD5331AA8F1E8 /* LeakDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = C51C05A5A8A551B93CDA4597 /* LeakDetector.swift */; };
 		EE8F090E23622184B5D04D17 /* UnixSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58014010D89130A9A194BE3F /* UnixSocket.swift */; };
 		F46459160672CE1350637D97 /* Version.swift in Sources */ = {isa = PBXBuildFile; fileRef = F67CFF72B57B6842BFE84727 /* Version.swift */; };
 		F9C83EB7C255F958694CAE61 /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 571B5897312541D688A35CB1 /* DashboardView.swift */; };
 		FBE1B06A9F086A979060AEAD /* ProcessInventory.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7D2FBFD81DFC7D2B76F709D /* ProcessInventory.swift */; };
+		FE67385E6FABA2694AF79A83 /* MonitoringView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA7EDBC6464CD66EEAAC2519 /* MonitoringView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -75,13 +90,16 @@
 		09942C2FCA248432F203B05D /* ProcessGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessGuard.swift; sourceTree = "<group>"; };
 		09E4540A7ED2046DEB126599 /* DeepSleepIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepSleepIntents.swift; sourceTree = "<group>"; };
 		0DEE905EAF64EFC038DFC418 /* ControlView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlView.swift; sourceTree = "<group>"; };
+		13496FAE978C672E3F2EA8B8 /* AutoStartSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoStartSettings.swift; sourceTree = "<group>"; };
 		13BD008C8B73D8005C11EFAC /* MenuBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarController.swift; sourceTree = "<group>"; };
 		17210D6CB4894B79813780AD /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		178D52B0BEF95859AB8B6D88 /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
 		1DAFF6F4654DCF7056F1BA67 /* QuickQuit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickQuit.swift; sourceTree = "<group>"; };
 		1DFE7EA8FCC931540BB46584 /* URLCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = URLCommands.swift; sourceTree = "<group>"; };
+		214A9E90F394CC9723FD747F /* ProcessSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessSnapshot.swift; sourceTree = "<group>"; };
 		2955F2519DCC800EC189D9EA /* WindowCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowCoordinator.swift; sourceTree = "<group>"; };
 		3E1D45DC75AB25D3BC5214F5 /* HelperVersionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelperVersionManager.swift; sourceTree = "<group>"; };
+		432740AF96D744E5DAB258F4 /* AutoStartManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoStartManager.swift; sourceTree = "<group>"; };
 		43F312DABC0A8AAF435E103B /* ScheduleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleView.swift; sourceTree = "<group>"; };
 		4977ACA618E906FAE14B97C0 /* TerminationReport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminationReport.swift; sourceTree = "<group>"; };
 		4D53595CDD09B7293B6CF8F1 /* SelfUpdate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelfUpdate.swift; sourceTree = "<group>"; };
@@ -99,20 +117,30 @@
 		65EE86101EAC650FBB5F0CBB /* AutomationEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationEngine.swift; sourceTree = "<group>"; };
 		68F588C53CC45F52D04A434B /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		69AD70CC1E39560226333763 /* QuickQuitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickQuitView.swift; sourceTree = "<group>"; };
+		76A414E466231BC9EA4876AB /* SystemNotifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemNotifier.swift; sourceTree = "<group>"; };
 		7C643740D2392EB1F876E8BA /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		9280BE0F52069F606CA7D220 /* ProcessStats.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessStats.swift; sourceTree = "<group>"; };
 		93C5E4B4358BF400FACC53DC /* SleepController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepController.swift; sourceTree = "<group>"; };
 		960F8920CB0412CB44C5FB31 /* install-helper.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = "install-helper.sh"; sourceTree = "<group>"; };
 		96ED86613A6A98B3C2D18307 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		A2DD20BF1CBB3194597701CA /* PowerWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerWatcher.swift; sourceTree = "<group>"; };
 		A4120515887C376197CCE7F9 /* AutomationRule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationRule.swift; sourceTree = "<group>"; };
+		B4F0B4163E1F57C80031517F /* UninstallView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UninstallView.swift; sourceTree = "<group>"; };
+		B527587ED1D0F7A77206BE2C /* AlertWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertWindowController.swift; sourceTree = "<group>"; };
 		C0322343BBDEB6A664F907E5 /* AssertionKind.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssertionKind.swift; sourceTree = "<group>"; };
+		C51C05A5A8A551B93CDA4597 /* LeakDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LeakDetector.swift; sourceTree = "<group>"; };
 		C621046B4A0FEBDD66540895 /* DeepSleep.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DeepSleep.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C993F30605CB3C3BB8F0EC18 /* PowerActivityMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerActivityMonitor.swift; sourceTree = "<group>"; };
 		CAB733FD825537CF3DA93F8A /* AutomationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationView.swift; sourceTree = "<group>"; };
+		CF2BAA4DC2FE609833A597C3 /* Uninstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Uninstaller.swift; sourceTree = "<group>"; };
 		D6B81675C2A48027F8DF140A /* DeepSleepHelper */ = {isa = PBXFileReference; includeInIndex = 0; path = DeepSleepHelper; sourceTree = BUILT_PRODUCTS_DIR; };
+		DA7EDBC6464CD66EEAAC2519 /* MonitoringView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonitoringView.swift; sourceTree = "<group>"; };
 		DE3295E35F8D28B69A629A8F /* HelperProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelperProtocol.swift; sourceTree = "<group>"; };
 		E0E2DA26DEFB4FB3396D7063 /* PowerSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerSettingsView.swift; sourceTree = "<group>"; };
+		E13408104C16C642713945FC /* SystemMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemMonitor.swift; sourceTree = "<group>"; };
 		E329CAE64699407C2EF03425 /* LogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogView.swift; sourceTree = "<group>"; };
+		E75BB13FF2F018F746DC727B /* MonitoringCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonitoringCoordinator.swift; sourceTree = "<group>"; };
+		ED60BFA7B2D37DD4613795ED /* ProcessStatsProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessStatsProvider.swift; sourceTree = "<group>"; };
 		F2650D41E2F701CBC6738B29 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		F67CFF72B57B6842BFE84727 /* Version.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Version.swift; sourceTree = "<group>"; };
 		F7D2FBFD81DFC7D2B76F709D /* ProcessInventory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessInventory.swift; sourceTree = "<group>"; };
@@ -159,15 +187,23 @@
 		87CE46D332B4F3AF2889D27E /* Core */ = {
 			isa = PBXGroup;
 			children = (
+				B527587ED1D0F7A77206BE2C /* AlertWindowController.swift */,
 				C0322343BBDEB6A664F907E5 /* AssertionKind.swift */,
 				65EE86101EAC650FBB5F0CBB /* AutomationEngine.swift */,
 				A4120515887C376197CCE7F9 /* AutomationRule.swift */,
+				432740AF96D744E5DAB258F4 /* AutoStartManager.swift */,
 				566F4ACAAB91680B697CC74D /* GlobalHotkey.swift */,
 				3E1D45DC75AB25D3BC5214F5 /* HelperVersionManager.swift */,
+				C51C05A5A8A551B93CDA4597 /* LeakDetector.swift */,
+				E75BB13FF2F018F746DC727B /* MonitoringCoordinator.swift */,
 				C993F30605CB3C3BB8F0EC18 /* PowerActivityMonitor.swift */,
 				A2DD20BF1CBB3194597701CA /* PowerWatcher.swift */,
+				ED60BFA7B2D37DD4613795ED /* ProcessStatsProvider.swift */,
 				1DAFF6F4654DCF7056F1BA67 /* QuickQuit.swift */,
 				93C5E4B4358BF400FACC53DC /* SleepController.swift */,
+				E13408104C16C642713945FC /* SystemMonitor.swift */,
+				76A414E466231BC9EA4876AB /* SystemNotifier.swift */,
+				CF2BAA4DC2FE609833A597C3 /* Uninstaller.swift */,
 				03B58135C030FD6D97DD7D84 /* UpdateManager.swift */,
 				1DFE7EA8FCC931540BB46584 /* URLCommands.swift */,
 			);
@@ -199,6 +235,8 @@
 				575A45B0E6499C686C4827CF /* PMSetOutput.swift */,
 				09942C2FCA248432F203B05D /* ProcessGuard.swift */,
 				F7D2FBFD81DFC7D2B76F709D /* ProcessInventory.swift */,
+				214A9E90F394CC9723FD747F /* ProcessSnapshot.swift */,
+				9280BE0F52069F606CA7D220 /* ProcessStats.swift */,
 				4977ACA618E906FAE14B97C0 /* TerminationReport.swift */,
 				58014010D89130A9A194BE3F /* UnixSocket.swift */,
 				F67CFF72B57B6842BFE84727 /* Version.swift */,
@@ -245,15 +283,18 @@
 			isa = PBXGroup;
 			children = (
 				CAB733FD825537CF3DA93F8A /* AutomationView.swift */,
+				13496FAE978C672E3F2EA8B8 /* AutoStartSettings.swift */,
 				178D52B0BEF95859AB8B6D88 /* Components.swift */,
 				F2650D41E2F701CBC6738B29 /* ContentView.swift */,
 				0DEE905EAF64EFC038DFC418 /* ControlView.swift */,
 				571B5897312541D688A35CB1 /* DashboardView.swift */,
 				596F4304321F89BFF2BEC9DB /* ExternalActivityView.swift */,
 				E329CAE64699407C2EF03425 /* LogView.swift */,
+				DA7EDBC6464CD66EEAAC2519 /* MonitoringView.swift */,
 				E0E2DA26DEFB4FB3396D7063 /* PowerSettingsView.swift */,
 				69AD70CC1E39560226333763 /* QuickQuitView.swift */,
 				43F312DABC0A8AAF435E103B /* ScheduleView.swift */,
+				B4F0B4163E1F57C80031517F /* UninstallView.swift */,
 				5BBF3FF9C3B4A0AA3E5A2493 /* UpdateView.swift */,
 			);
 			path = Views;
@@ -378,8 +419,11 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				78D179B4ACE0E28FB61B6555 /* AlertWindowController.swift in Sources */,
 				5CF047FA11D64F6D5A7CF6FB /* AppDelegate.swift in Sources */,
 				4CC529F69FC171A6A59CD5E3 /* AssertionKind.swift in Sources */,
+				CDC0DB341A0DB1C90C51A258 /* AutoStartManager.swift in Sources */,
+				A2488626DD99D32998AFF92B /* AutoStartSettings.swift in Sources */,
 				73ACAA59B7A7FB882CB55A50 /* AutomationEngine.swift in Sources */,
 				1918D7D77EC9140F31DE6718 /* AutomationRule.swift in Sources */,
 				54E4BE87EB3245B63EACF75B /* AutomationView.swift in Sources */,
@@ -397,20 +441,30 @@
 				48A8411A91BC1725A62EAE46 /* HelperInstaller.swift in Sources */,
 				B49E2B674BE4C8DBA32A22F6 /* HelperProtocol.swift in Sources */,
 				02FA7C7E50BA9D94C198223D /* HelperVersionManager.swift in Sources */,
+				EE8800D2705CD5331AA8F1E8 /* LeakDetector.swift in Sources */,
 				51B9E0C05CAD5F9A566B8C72 /* LogView.swift in Sources */,
 				5E8C2C5C7356AE760C7CBF15 /* MenuBarController.swift in Sources */,
+				2E04E5FA5A3F0EE1C6D77B07 /* MonitoringCoordinator.swift in Sources */,
+				FE67385E6FABA2694AF79A83 /* MonitoringView.swift in Sources */,
 				8BD0DC602D72415D81D2B19D /* PMSetOutput.swift in Sources */,
 				708B71B465D2605742446DBD /* PowerActivityMonitor.swift in Sources */,
 				C58D488668AB8F3B538FC28C /* PowerSettingsView.swift in Sources */,
 				1C970D88D66C4F43D8AD1DAC /* PowerWatcher.swift in Sources */,
 				6AFBA0A1C3939B8A8162754B /* ProcessGuard.swift in Sources */,
 				00E377CE865874C8D5E95A43 /* ProcessInventory.swift in Sources */,
+				AB60111CE18B96059E1F1E2D /* ProcessSnapshot.swift in Sources */,
+				E147974598A796B15B1C1069 /* ProcessStats.swift in Sources */,
+				3DD32746C4046DE4C01B1BC6 /* ProcessStatsProvider.swift in Sources */,
 				C5C82FA1DED31F6CAD42F13E /* QuickQuit.swift in Sources */,
 				2CF3383D939893655F3DD14A /* QuickQuitView.swift in Sources */,
 				9429A1EB6266F9702E9D9158 /* ScheduleView.swift in Sources */,
 				43965B2CAF6676C308E55526 /* SleepController.swift in Sources */,
+				8497605C3EFAAF988C2007FB /* SystemMonitor.swift in Sources */,
+				C0EB5F908D427F907D33B32D /* SystemNotifier.swift in Sources */,
 				355B12850D9D59EF6A64EDD2 /* TerminationReport.swift in Sources */,
 				04AADB1A90517C6AFA89E030 /* URLCommands.swift in Sources */,
+				9C6985268F6B8781B2C5A955 /* UninstallView.swift in Sources */,
+				D0CC2A42F432A1A7D0DEEEE4 /* Uninstaller.swift in Sources */,
 				E2B0737ADBFCBC9D4C33F3A6 /* UnixSocket.swift in Sources */,
 				EDD6AC5A315B659622797185 /* UpdateManager.swift in Sources */,
 				62404108B725BBFBFE76C583 /* UpdateView.swift in Sources */,
@@ -427,6 +481,8 @@
 				04E9E649615877F270D223AA /* PMSetOutput.swift in Sources */,
 				E648F9B8460CA4DC6467A511 /* ProcessGuard.swift in Sources */,
 				FBE1B06A9F086A979060AEAD /* ProcessInventory.swift in Sources */,
+				E2F19718D39EDE8586292DC3 /* ProcessSnapshot.swift in Sources */,
+				89098C875F9DF3595B4F80F5 /* ProcessStats.swift in Sources */,
 				A6FDF63D0FF8D8386787E0F5 /* SelfUpdate.swift in Sources */,
 				5CBBFE252FA1FF06D00A3222 /* TerminationReport.swift in Sources */,
 				EE8F090E23622184B5D04D17 /* UnixSocket.swift in Sources */,
@@ -625,7 +681,7 @@
 				INFOPLIST_FILE = DeepSleep/Resources/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
-				MARKETING_VERSION = 1.3.1;
+				MARKETING_VERSION = 1.4.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.skyc8266.deepsleep;
 				PRODUCT_NAME = "Deep Sleep";
 				SDKROOT = macosx;
@@ -642,7 +698,7 @@
 				INFOPLIST_FILE = DeepSleep/Resources/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
-				MARKETING_VERSION = 1.3.1;
+				MARKETING_VERSION = 1.4.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.skyc8266.deepsleep;
 				PRODUCT_NAME = "Deep Sleep";
 				SDKROOT = macosx;
