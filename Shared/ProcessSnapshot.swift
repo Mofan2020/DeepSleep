@@ -34,7 +34,16 @@ public actor ProcessSnapshotCache {
     private var lastSamples: [pid_t: Sample] = [:]
 
     /// 抓一份新快照。CPU% 基于上一次缓存；首次调用的记录写 0。
+    ///
+    /// CPU% 的口径：**0–100 表示「整个 CPU」用了多少**，不看核心数。
+    ///   - 100% = 全机所有核都跑满
+    ///   - 50%  = 8 核机器相当于 4 核跑满（也相当于所有核都用一半）
+    /// 转换：
+    ///   per-core percent = delta_cpu_nanos / dt_seconds / 1e7
+    ///   whole-cpu percent = per-core percent / coreCount
+    /// coreCount 用 `hw.ncpu` 一次缓存，整个 [ThermalBoard] 寿命内不变。
     public func snapshot(now: TimeInterval = Date().timeIntervalSince1970) -> [ProcessStats.Record] {
+        let coreCount = Self.cpuCoreCount()
         let current = Self.collectRaw()
         var records: [ProcessStats.Record] = []
         records.reserveCapacity(current.count)
@@ -44,10 +53,11 @@ public actor ProcessSnapshotCache {
             if let last = lastSamples[raw.pid] {
                 let dt = now - last.timestamp
                 // pti_total_user / pti_total_system 单位是**纳秒**（mach 绝对时间）。
-                // 单核 100% = 1 秒内 1e9 纳秒；多核可叠加。
-                // 因此 percent = delta_nanos / dt_seconds / 1e7。
+                // per-core 单核 100% = 1 秒内 1e9 纳秒；多核可叠加 → per-core percent。
+                // whole-cpu = per-core / coreCount，锁在 0–100。
                 let dCpu = raw.cpuTime >= last.cpuTime ? raw.cpuTime - last.cpuTime : 0
-                cpuPercent = dt > 0 ? Double(dCpu) / dt / 10_000_000.0 : 0
+                let perCore = dt > 0 ? Double(dCpu) / dt / 10_000_000.0 : 0
+                cpuPercent = coreCount > 0 ? perCore / Double(coreCount) : 0
             } else {
                 cpuPercent = 0
             }
@@ -68,6 +78,18 @@ public actor ProcessSnapshotCache {
         lastSamples = next
 
         return records
+    }
+
+    /// 物理 CPU 核心数（hw.ncpu）。读不到时回 1（保守值：避免 per-core / 0）。
+    private static var _coreCountCached: Int?
+    private static func cpuCoreCount() -> Int {
+        if let cached = _coreCountCached { return cached }
+        var count: Int32 = 0
+        var sizeLen = MemoryLayout<Int32>.size
+        let ret = sysctlbyname("hw.ncpu", &count, &sizeLen, nil, 0)
+        let value = ret == 0 && count > 0 ? Int(count) : 1
+        _coreCountCached = value
+        return value
     }
 
     // MARK: - 原始采集

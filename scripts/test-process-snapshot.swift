@@ -55,9 +55,9 @@ struct ProcessSnapshotTests {
         let records = await ProcessSnapshotCache.shared.snapshot()
         let self_ = records.first { $0.pid == getpid() }
         assertTrue(self_ != nil, "second snapshot has self")
-        // cpuPercent >= 0 即可；极快的循环可能被归纳掉，所以不强制 > 0
-        assertTrue(self_!.cpuPercent >= 0 && self_!.cpuPercent < 10_000,
-                   "cpuPercent in range (got \(self_!.cpuPercent))")
+        // CPU% 锁在 0–100（whole-CPU 口径）：刚跑 2M 次循环应该明显大于 0
+        assertTrue(self_!.cpuPercent >= 0 && self_!.cpuPercent <= 100,
+                   "cpuPercent in [0, 100] got \(self_!.cpuPercent)")
     }
 
     static func testRecordFieldsAreValid() async {

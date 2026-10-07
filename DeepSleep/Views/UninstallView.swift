@@ -26,6 +26,7 @@ struct UninstallView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("• 撤销所有 assertion（含 pmset disablesleep）")
                         Text("• 卸载特权助手（Helper）")
+                        Text("• 清理应用配置（Preferences / Caches / Saved State / Logs）")
                         Text("• 删除开机自启 LaunchAgent plist")
                         Text("• 删除 /Applications/Deep Sleep.app")
                         Text("• 退出应用")
@@ -69,6 +70,7 @@ struct UninstallView: View {
             撤销断言：\(report.releasedAssertions ? "✓" : "✗")
             恢复 disablesleep：\(report.disabledSleep ? "✓" : "✗")
             卸载助手：\(report.helperUninstalled ? "✓" : "✗")
+            清理配置：\(report.configsCleared ? "✓" : "✗")
             删自启 plist：\(report.autoStartDisabled ? "✓" : "✗")
             删 .app：\(report.appDeleted ? "✓" : "✗")
             """

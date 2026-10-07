@@ -4,14 +4,12 @@
 //
 //  系统过载监控用的 UserNotifications 封装。
 //
-//  通知分类与 action：
+//  通知分类：
 //    - OVERLOAD_ALERT：处理 / 冻结进程 / 结束
+//    - SINGLE_RAM_ALERT：处理 / 冻结进程 / 结束（单进程 RSS 超阈）
 //
-//  通知里的 pid 通过 userInfo["pids"] 传回（逗号分隔），
+//  pid 通过 userInfo["pids"] 传回（逗号分隔），
 //  UNUserNotificationCenterDelegate 收到 action 时再走 ProcessStatsProvider。
-//
-//  v1.4.0 早期还有 LEAK_ALERT category；v1.4.1 起内存泄漏检测整个砍掉，
-//  category 一并删除，避免误以为仍支持。
 //
 
 import Foundation
@@ -23,30 +21,37 @@ public final class SystemNotifier: NSObject, UNUserNotificationCenterDelegate {
     public static let shared = SystemNotifier()
 
     public static let overloadCategoryID = "DEEPSLEEP_OVERLOAD_ALERT"
+    public static let singleRAMCategoryID = "DEEPSLEEP_SINGLE_RAM_ALERT"
 
     public static let actionHandle = "HANDLE"
-    public static let actionSuspend = "IGNORE"  // 在过载分类里实际是冻结
+    public static let actionSuspend = "IGNORE"  // 在过载 / 单进程 RAM 分类里实际是冻结
     public static let actionEnd = "END"
 
     /// 注册分类（应用启动时调一次）。
     public func registerCategories() {
+        let actions: [UNNotificationAction] = [
+            UNNotificationAction(identifier: Self.actionHandle,
+                                 title: "处理",
+                                 options: [.foreground]),
+            UNNotificationAction(identifier: Self.actionSuspend,
+                                 title: "冻结进程",
+                                 options: [.foreground]),
+            UNNotificationAction(identifier: Self.actionEnd,
+                                 title: "结束",
+                                 options: [.foreground])
+        ]
         let overload = UNNotificationCategory(
             identifier: Self.overloadCategoryID,
-            actions: [
-                UNNotificationAction(identifier: Self.actionHandle,
-                                     title: "处理",
-                                     options: [.foreground]),
-                UNNotificationAction(identifier: Self.actionSuspend,
-                                     title: "冻结进程",
-                                     options: [.foreground]),
-                UNNotificationAction(identifier: Self.actionEnd,
-                                     title: "结束",
-                                     options: [.foreground])
-            ],
+            actions: actions,
+            intentIdentifiers: [],
+            options: [])
+        let singleRAM = UNNotificationCategory(
+            identifier: Self.singleRAMCategoryID,
+            actions: actions,
             intentIdentifiers: [],
             options: [])
 
-        UNUserNotificationCenter.current().setNotificationCategories([overload])
+        UNUserNotificationCenter.current().setNotificationCategories([overload, singleRAM])
         UNUserNotificationCenter.current().delegate = self
     }
 
@@ -55,7 +60,6 @@ public final class SystemNotifier: NSObject, UNUserNotificationCenterDelegate {
         UNUserNotificationCenter.current().requestAuthorization(
             options: [.alert, .sound, .badge]
         ) { granted, _ in
-            // 失败也不报错，UI 在监控设置页用 status 取真实状态。
             _ = granted
         }
     }
@@ -86,8 +90,29 @@ public final class SystemNotifier: NSObject, UNUserNotificationCenterDelegate {
         UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
     }
 
+    /// 发单进程 RAM 超阈通知。
+    public func notifySingleProcessRAM(_ event: SingleProcessRAMEvent) {
+        let rssGB = Double(event.record.rssBytes) / 1_073_741_824
+        let thresholdGB = Double(event.thresholdBytes) / 1_073_741_824
+        let content = UNMutableNotificationContent()
+        content.title = "⚠️ 单进程占用过高：\(event.record.name)"
+        content.body = String(format: "当前 %.2f GB，已超过阈值 %.2f GB", rssGB, thresholdGB)
+        content.sound = .defaultCritical
+        content.categoryIdentifier = Self.singleRAMCategoryID
+        content.userInfo = [
+            "pids": String(event.record.pid),
+            "kind": "singleRAM"
+        ]
+
+        let request = UNNotificationRequest(
+            identifier: "singleRAM-\(event.record.pid)-\(Int(event.timestamp.timeIntervalSince1970))",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
+    }
+
     /// 用户在通知里点的 action：走 ProcessStatsProvider。
-    /// 由 AlertWindowController / 主界面统一调度，本类只把 action 翻译成命令。
     public var onAction: ((_ kind: String, _ action: String, _ pids: [pid_t]) -> Void)?
 
     // MARK: - UNUserNotificationCenterDelegate

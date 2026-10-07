@@ -55,6 +55,33 @@ public final class AlertWindowController {
         present(host: host)
     }
 
+    /// 单进程 RSS 超阈值对话框。
+    /// - Parameter onSuspend / onEnd: 用户操作按钮后的执行。pids 列表里只会有一个。
+    public func presentSingleProcessRAM(
+        event: SingleProcessRAMEvent,
+        onSuspend: @escaping (pid_t) -> Void,
+        onEnd: @escaping (pid_t) -> Void
+    ) {
+        let pid = event.record.pid
+
+        let host = NSHostingController(rootView: SingleProcessRAMAlertView(
+            record: event.record,
+            thresholdBytes: event.thresholdBytes,
+            onSuspend: { [weak self] in
+                self?.dismiss()
+                onSuspend(pid)
+            },
+            onEnd: { [weak self] in
+                self?.dismiss()
+                onEnd(pid)
+            },
+            onClose: { [weak self] in
+                self?.dismiss()
+            }
+        ))
+        present(host: host)
+    }
+
     // MARK: - 实现
 
     private func present(host: NSHostingController<some View>) {
@@ -148,6 +175,49 @@ private struct OverloadAlertView: View {
                         .font(.system(.body, design: .monospaced))
                         .foregroundColor(.red)
                 }
+            }
+
+            HStack {
+                Button("关闭", action: onClose)
+                    .keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("冻结进程", action: onSuspend)
+                Button("结束") { onEnd() }
+                    .foregroundColor(.red)
+            }
+        }
+        .padding(20)
+        .frame(width: 480)
+    }
+}
+
+private struct SingleProcessRAMAlertView: View {
+    let record: ProcessStats.Record
+    let thresholdBytes: Int
+    let onSuspend: () -> Void
+    let onEnd: () -> Void
+    let onClose: () -> Void
+
+    private var rssGB: Double { Double(record.rssBytes) / 1_073_741_824 }
+    private var thresholdGB: Double { Double(thresholdBytes) / 1_073_741_824 }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "memorychip.fill")
+                    .foregroundColor(.red)
+                Text("单进程占用过高")
+                    .font(.title2.weight(.semibold))
+                    .foregroundColor(.red)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("进程：\(record.name)").font(.headline)
+                Text(String(format: "当前占用：%.2f GB", rssGB))
+                    .font(.body)
+                    .foregroundColor(.red)
+                Text(String(format: "阈值：%.2f GB", thresholdGB))
+                    .font(.caption).foregroundColor(.secondary)
             }
 
             HStack {

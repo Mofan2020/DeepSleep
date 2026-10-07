@@ -8,8 +8,6 @@
 //   - onEvent: 弹对话框（保证用户能看到）+ 发通知（不抢焦点时也能看到）
 //   - onAction: 通知按钮被点了 → 调用 ProcessStatsProvider 走助手
 //
-//  v1.4.0 早期还有泄漏分支；v1.4.1 起只做过载监控。
-//
 
 import Foundation
 
@@ -48,6 +46,17 @@ final class MonitoringCoordinator {
                     Task { _ = try? await ProcessStatsProvider.shared.kill(pids) }
                 }
             )
+        case .singleProcessRAM(let ram):
+            SystemNotifier.shared.notifySingleProcessRAM(ram)
+            AlertWindowController.shared.presentSingleProcessRAM(
+                event: ram,
+                onSuspend: { pid in
+                    Task { _ = try? await ProcessStatsProvider.shared.suspend([pid]) }
+                },
+                onEnd: { pid in
+                    Task { _ = try? await ProcessStatsProvider.shared.kill([pid]) }
+                }
+            )
         }
     }
 
@@ -55,12 +64,14 @@ final class MonitoringCoordinator {
         guard !pids.isEmpty else { return }
         switch (kind, action) {
         case ("overload", SystemNotifier.actionHandle),
-             ("overload", SystemNotifier.actionEnd):
+             ("overload", SystemNotifier.actionEnd),
+             ("singleRAM", SystemNotifier.actionHandle),
+             ("singleRAM", SystemNotifier.actionEnd):
             _ = try? await ProcessStatsProvider.shared.kill(pids)
-        case ("overload", SystemNotifier.actionSuspend):
+        case ("overload", SystemNotifier.actionSuspend),
+             ("singleRAM", SystemNotifier.actionSuspend):
             _ = try? await ProcessStatsProvider.shared.suspend(pids)
         default:
-            // 忽略 / 未知：什么都不做
             break
         }
     }

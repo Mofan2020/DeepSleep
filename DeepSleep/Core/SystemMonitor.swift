@@ -2,17 +2,12 @@
 //  SystemMonitor.swift
 //  Deep Sleep
 //
-//  系统过载监控的采样循环与阈值判定（CPU / RAM 持续超阈 → Top 3 占用者）。
+//  系统过载监控的采样循环与阈值判定：
+//   - CPU% 持续超阈（whole-CPU 口径：100% = 全机所有核都跑满）
+//   - RAM 总使用率持续超阈
+//   - 单进程 RSS 一次性超阈值（不等持续时间，立刻报）
 //
-//  跑法：
-//    - 每 sampleIntervalSeconds 从 ProcessStatsProvider.fetchStats() 拿一次快照
-//    - 计算总 RAM 使用率与累计 CPU%
-//    - 持续超过阈值 N 秒 → 触发过载事件
-//
-//  v1.4.0 早期版本里还有「内存泄漏检测」分支；v1.4.1 起砍掉，
-//  只保留过载监控。原因：内存泄漏没有靠「绝对阈值」能用的好判定，
-//  应用启动涨几百 MB、游戏加载涨几 GB 都正常；继续做误报远多于真报。
-//  算法注释与剩余字段都只服务过载判定。
+//  v1.4.0 早期还有「内存泄漏检测」分支；v1.4.1 起砍掉。
 //
 
 import Foundation
@@ -23,7 +18,7 @@ public struct MonitorConfig: Codable, Sendable, Equatable {
     public var enabled: Bool
     /// RAM 总使用率阈值（0–100）。
     public var ramHighPercent: Double
-    /// 累计非保护用户进程 CPU% 阈值（0+）。多核可超过 100。
+    /// 累计 CPU% 阈值（0–100，whole-CPU 口径）。
     public var cpuHighPercent: Double
     /// 持续超过阈值多少秒才报警。
     public var highDurationSeconds: Int
@@ -31,25 +26,29 @@ public struct MonitorConfig: Codable, Sendable, Equatable {
     public var sampleIntervalSeconds: Double
     /// 是否允许自动冻结进程（必须在 UI 中显式打开；默认 false）。
     public var autoSuspend: Bool
+    /// 单进程 RSS 阈值（字节）。任一进程当前占用 ≥ 此值，立刻报警，不走持续时间。
+    public var singleProcessRAMBytes: Int
 
     public init(enabled: Bool = false,
                 ramHighPercent: Double = 90,
-                cpuHighPercent: Double = 400,
+                cpuHighPercent: Double = 85,
                 highDurationSeconds: Int = 60,
                 sampleIntervalSeconds: Double = 3,
-                autoSuspend: Bool = false) {
+                autoSuspend: Bool = false,
+                singleProcessRAMBytes: Int = 4 * 1024 * 1024 * 1024) {
         self.enabled = enabled
         self.ramHighPercent = ramHighPercent
         self.cpuHighPercent = cpuHighPercent
         self.highDurationSeconds = highDurationSeconds
         self.sampleIntervalSeconds = sampleIntervalSeconds
         self.autoSuspend = autoSuspend
+        self.singleProcessRAMBytes = singleProcessRAMBytes
     }
 
     public static let `default` = MonitorConfig()
 }
 
-/// 系统过载事件：含当前 RAM% / 累计 CPU% / Top 3 占用者。
+/// 系统过载事件：累计 CPU / RAM 持续超阈。
 public struct OverloadEvent: Sendable {
     public let ramPercent: Double
     public let totalCpuPercent: Double
@@ -57,9 +56,17 @@ public struct OverloadEvent: Sendable {
     public let timestamp: Date
 }
 
+/// 单进程占用超阈事件：RSS ≥ 用户设定的字节数。
+public struct SingleProcessRAMEvent: Sendable {
+    public let record: ProcessStats.Record
+    public let thresholdBytes: Int
+    public let timestamp: Date
+}
+
 /// SystemMonitor 把这些事件推给上层。
 public enum MonitorEvent: Sendable {
     case overload(OverloadEvent)
+    case singleProcessRAM(SingleProcessRAMEvent)
 }
 
 public final class SystemMonitor {
@@ -71,10 +78,16 @@ public final class SystemMonitor {
     private let queue = DispatchQueue(label: "com.skyc8266.deepsleep.monitor")
     private var timer: DispatchSourceTimer?
     private var config: MonitorConfig
-    /// 当前 RAM% 持续超过阈值的开始时间；为 nil 表示当前未在超阈。
+    /// 当前 RAM%/CPU% 持续超过阈值的开始时间；为 nil 表示当前未在超阈。
     private var overloadStartedAt: Date?
     /// 已发出的过载事件 cooldown 起点；防止 4/24s 内连发两条同样的过载。
     private var lastOverloadReportAt: Date?
+    /// 单进程 RSS 报警 cooldown：同一个 PID 5 分钟内最多报一次。
+    private var singleRAMCooldown: [pid_t: Date] = [:]
+    /// 最近一次发出的事件（含时间戳）。UI 用它展示「最近事件」。
+    /// 改了 MainActor 访问 + 串行队列写锁，UI 读不会卡。
+    private var _lastEvent: MonitorEvent?
+    private var _lastEventAt: Date?
 
     public var onEvent: ((MonitorEvent) -> Void)?
 
@@ -95,7 +108,28 @@ public final class SystemMonitor {
         }
     }
 
+    /// 最近一次事件的描述（UI 显示用）。空字符串表示「无」。
+    public func lastEventDescription() -> (description: String, date: Date)? {
+        queue.sync {
+            guard let event = self._lastEvent, let at = self._lastEventAt else { return nil }
+            return (Self.describe(event), at)
+        }
+    }
+
+    private static func describe(_ event: MonitorEvent) -> String {
+        switch event {
+        case .overload(let o):
+            return "系统过载：RAM \(Int(o.ramPercent))% / CPU \(Int(o.totalCpuPercent))%"
+        case .singleProcessRAM(let r):
+            let gb = Double(r.record.rssBytes) / 1_073_741_824
+            return String(format: "单进程过高：%@ (%.2f GB)", r.record.name, gb)
+        }
+    }
+
     public func start() {
+        // 启动时从 UserDefaults 读持久化的 config（之前版本在这里丢：
+        // UI 改了 enable 但 SystemMonitor 永远是 .default。）
+        self.config = MonitorConfig.load()
         queue.async { [weak self] in
             guard let self else { return }
             guard self.config.enabled else { return }
@@ -138,7 +172,24 @@ public final class SystemMonitor {
 
         let now = Date()
 
-        // 判定过载
+        // 单进程 RSS 一次性超阈（不等持续时间）
+        let threshold = config.singleProcessRAMBytes
+        if threshold > 0 {
+            for record in records where Int(record.rssBytes) >= threshold {
+                if let last = singleRAMCooldown[record.pid],
+                   now.timeIntervalSince(last) < 300 { continue }
+                singleRAMCooldown[record.pid] = now
+                let event = SingleProcessRAMEvent(
+                    record: record,
+                    thresholdBytes: threshold,
+                    timestamp: now)
+                _lastEvent = .singleProcessRAM(event)
+                _lastEventAt = now
+                onEvent?(.singleProcessRAM(event))
+            }
+        }
+
+        // 累计 CPU% 与 RAM% 持续超阈
         let totalRSS: UInt64 = records.reduce(0) { $0 + $1.rssBytes }
         let totalCPU: Double = records.reduce(0) { $0 + $1.cpuPercent }
         let physicalMemoryBytes = Self.physicalMemory()
@@ -162,6 +213,8 @@ public final class SystemMonitor {
                                           timestamp: now)
                 lastOverloadReportAt = now
                 overloadStartedAt = nil
+                _lastEvent = .overload(event)
+                _lastEventAt = now
                 onEvent?(.overload(event))
             }
         } else {
