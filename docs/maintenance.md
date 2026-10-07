@@ -321,6 +321,19 @@ Swift 源码里被转义掉的插值 `\\(`（会在界面上原样显示）。
 - 真的对 Siri 说话、在「快捷指令」App 里点击 Deep Sleep 动作
 - UI 截图（`screencapture` 需要「屏幕录制」、`System Events` 需要「辅助功能」）
 
+### 4.7 监控的日志在哪
+
+- **应用侧** 监控异常 / 弹窗 / 通知 走的是 `SleepController.appendLog`，
+  在应用内「运行日志」页可见；不写文件。
+- **助手侧** v2 协议命令的进出都走 `logLine("…")`，日志在
+  `/var/log/com.skyc8266.deepsleep.helper.log`。看 `getProcessStats` /
+  `suspendProcesses` / `killProcesses` 的请求与结果：
+  ```bash
+  tail -50 /var/log/com.skyc8266.deepsleep.helper.log
+  ```
+- **系统通知** 「过载 / 泄漏」走标准 `UNUserNotificationCenter`，
+  取消与历史在「系统设置 → 通知 → Deep Sleep」。
+
 ---
 
 ## 五、调试工具（`scripts/`）
@@ -337,6 +350,10 @@ Swift 源码里被转义掉的插值 `\\(`（会在界面上原样显示）。
 | `test-version-compare.swift` | 版本比较回归（含防循环用例） |
 | `test-selfupdate.swift` | 助手自我更新四条校验 |
 | `test-process-guard.swift` | 快速退出裁决回归（保护名单 / 进程树 / 结果编解码 / 真杀一棵树） |
+| `test-process-stats.swift` | 进程快照编解码 round-trip + 特殊字符处理 |
+| `test-process-snapshot.swift` | 真实进程快照（验证 RSS / 启动时间 / CPU% 范围） |
+| `test-leak-detector.swift` | 内存泄漏启发式（稳定 / 锯齿 / 短尖峰 / 单调增长 / 阈值下限） |
+| `test-auto-start-manager.swift` | LaunchAgent plist 内容生成（无 KeepAlive=true） |
 | `build-release.sh` | 构建 Release 并打包 `DeepSleep.zip` + sha256 |
 | `check-docs.py` | 文档与代码一致性检查（兼扫转义插值） |
 | `test-check-docs.py` | 前者的负向测试：逐条把文档改坏，确认它真的会拦 |

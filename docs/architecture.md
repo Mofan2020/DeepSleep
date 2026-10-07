@@ -62,6 +62,9 @@
 | `terminateProcesses` | 强制结束给定的根 pid 及其全部子进程。**助手独立重算保护名单**，不信任调用方给的结论（见第六节） |
 | `uninstall` | 卸载助手：停止任务并删除文件 |
 | `updateSelf` | 用应用内置的新二进制替换助手自身（四条校验，见下文 3.6） |
+| `getProcessStats` | 返回当前所有进程的 RSS / CPU% / 启动时间快照。v2 协议 |
+| `suspendProcesses` | 用 SIGSTOP 挂起一组 pid（监控场景；仍走保护名单） |
+| `killProcesses` | 用 SIGKILL 杀掉一组 pid（监控场景；仍走保护名单） |
 
 ## 二、权限模型：管理员密码只输一次
 
@@ -466,6 +469,37 @@ bundle id 从可执行文件路径反查（结果带缓存）。
 
 名单之外的一切都可以结束，包括 `bash`、`python3`、终端里跑的东西 ——
 「不能杀系统进程」不等于「什么都不敢杀」，否则这个功能就没有意义了。
+
+### 系统监控：CPU/RAM 过载 + 内存泄漏 + 开机自启
+
+v1.4.0 新增的被动观测能力。
+
+- **判定在主应用，执行走特权助手**。抓进程数据不需要权限；需要权限的是 `SIGSTOP` / `SIGKILL`。
+- **新增的三条助手命令仍走保护名单**。`suspendProcesses` / `killProcesses` 用 `ProcessGuard.refusalReason(for:)` 验传入的 pid，命中记 `refused`。
+- **内存泄漏命中白名单时只警告，不给快速处理按钮**。对话框必须有关闭按钮。
+
+数据流：
+
+```
+Timer.scheduledTimer(every: sampleIntervalSeconds)
+  └─ ProcessStatsProvider.fetchStats()
+       ├─ 更新 RSS 环形缓冲
+       ├─ LeakDetector.evaluateAll → 命中 → AlertWindow + Notifier
+       └─ 累计 RAM/CPU% 持续超阈 → AlertWindow + Notifier
+```
+
+开机自启（与监控一起发布，逻辑独立）：
+
+- 写 `~/Library/LaunchAgents/com.skyc8266.deepsleep.plist`，`RunAtLoad=true`。
+- **`KeepAlive=false`**：用户主动退出不会被强行唤起。
+- 写 plist 不需要 root，不依赖「完全控制」。
+- `--autostart` 参数让应用区分「用户手动开」与「自启动」，自启动不抢主窗口焦点。
+
+完全卸载：
+
+- 撤销断言 → 恢复 `disablesleep` → 卸载助手 → 删自启 plist → 删 .app → 退出应用。
+- 助手不可达不算失败。
+- `.app` 路径白名单：不能是 `/`、`/Applications`、或任何含 `LaunchAgents` 的路径。
 
 ---
 

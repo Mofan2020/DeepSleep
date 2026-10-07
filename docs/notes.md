@@ -713,3 +713,21 @@ Debug 与 Release 两个产物内置的助手摘要不同，正好互为「不�
 - 跨零点时间段规则的边界测试（已有实现，缺自动化测试）
 - 规则与 assertion 状态的持久化恢复（当前每次启动从空白开始）
 - 菜单栏图标的可选样式（有人偏好用颜色区分「正在保持清醒」）
+
+---
+
+## v1.4.0：系统监控 + 开机自启 + 完全卸载（2026-10-07）
+
+### 做了什么
+
+- **Shared/ProcessStats.swift + Shared/ProcessSnapshot.swift**：进程统计快照的共享模型 + 助手侧的采样实现（proc_pidinfo(PROC_PIDTBSDINFO / PROC_PIDTASKINFO)）。`CPU%` 用两次采样差值，单位是纳秒（mach 绝对时间），转换系数 `/dt/1e7`。踩了一次坑：第一次写的 `/dt/100` 比真实大 2224 倍，test-process-snapshot 在 Apple Silicon 上抓到 222397% 直接修掉。
+- **HelperProtocol v2**：新增 `getProcessStats` / `suspendProcesses` / `killProcesses`。三条命令仍走 `ProcessGuard.refusalReason`，挂起 / 杀掉监控场景的叶子节点不连带子树，但保护名单那一道闸不省。
+- **ProcessStatsProvider / SystemMonitor / LeakDetector / AlertWindowController / SystemNotifier / MonitoringCoordinator**：监控的主干。LeakDetector 是纯函数 `evaluate(history:) -> LeakReport?`，单测覆盖稳定 / 锯齿 / 短尖峰 / 单调增长 / 阈值下限。AlertWindowController 红字置顶 + NSVisualEffectView.hudWindow 模糊背景，命中白名单的对话框只有关闭按钮。
+- **AutoStartManager**：LaunchAgent plist。`RunAtLoad=true` / `KeepAlive=false`，后者刻意的，避免「关掉会再起」。
+- **Uninstaller**：撤销断言 / 恢复 disablesleep / 卸助手 / 删 plist / 删 .app / 退出。`.app` 路径白名单防误删。
+
+### 没动的与原因
+
+- **没用 SMAppService**：任务决策时选了 LaunchAgent plist，写 plist 不需要 fork。
+- **没默认自动冻结**：监控发现过载后必须用户显式打开「过载时自动冻结 Top 3」。
+- **没引入 pressure API**：只看 RAM% 与累计 CPU%。
