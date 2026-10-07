@@ -145,6 +145,10 @@ struct ControlView: View {
 
                 Divider()
 
+                AutoStartToggle()
+
+                Divider()
+
                 Toggle(isOn: $controller.requireConfirmationPerAction) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("每次提权操作都要求确认").font(.body.weight(.medium))

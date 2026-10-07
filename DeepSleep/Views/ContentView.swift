@@ -20,37 +20,44 @@ enum SidebarItem: String, CaseIterable, Identifiable {
     case log
     /// 更新：应用自身与特权助手的版本维护。
     case update
+    /// 系统监控：CPU/RAM 过载检测 + 内存泄漏告警。
+    case systemMonitor
+    /// 卸载 Deep Sleep：二级确认 + 全流程清理。
+    case uninstall
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .dashboard:  return "总览"
-        case .control:    return "完全控制"
-        case .power:      return "电源设置"
-        case .automation: return "自动化"
-        case .schedule:   return "定时与唤醒"
-        case .quickQuit:  return "快速退出"
-        case .external:   return "外部活动"
-        case .log:        return "运行日志"
-        case .update:     return "更新"
+        case .dashboard:      return "总览"
+        case .control:        return "完全控制"
+        case .power:          return "电源设置"
+        case .automation:     return "自动化"
+        case .schedule:       return "定时与唤醒"
+        case .quickQuit:      return "快速退出"
+        case .external:       return "外部活动"
+        case .log:            return "运行日志"
+        case .update:         return "更新"
+        case .systemMonitor:  return "系统监控"
+        case .uninstall:      return "卸载 Deep Sleep"
         }
     }
 
     var symbol: String {
         switch self {
-        case .dashboard:  return "gauge.with.dots.needle.bottom.50percent"
-        case .control:    return "lock.shield"
-        case .power:      return "slider.horizontal.3"
-        case .automation: return "wand.and.stars"
-        case .schedule:   return "clock.arrow.circlepath"
-        case .quickQuit:  return "bolt.horizontal.circle"
-        case .external:   return "binoculars"
-        case .log:        return "text.alignleft"
-        case .update:     return "arrow.down.circle"
+        case .dashboard:      return "square.grid.2x2"
+        case .control:        return "lock.shield"
+        case .power:          return "bolt"
+        case .automation:     return "gearshape.2"
+        case .schedule:       return "clock"
+        case .quickQuit:      return "bolt.slash"
+        case .external:       return "person.2"
+        case .log:            return "doc.text"
+        case .update:         return "arrow.down.circle"
+        case .systemMonitor:  return "waveform.path.ecg"
+        case .uninstall:      return "trash"
         }
     }
-}
 
 struct ContentView: View {
 
@@ -80,10 +87,14 @@ struct ContentView: View {
                         .tag(SidebarItem.external)
                     Label(SidebarItem.log.title, systemImage: SidebarItem.log.symbol)
                         .tag(SidebarItem.log)
+                    Label(SidebarItem.systemMonitor.title, systemImage: SidebarItem.systemMonitor.symbol)
+                        .tag(SidebarItem.systemMonitor)
                 }
                 Section("维护") {
                     Label(SidebarItem.update.title, systemImage: SidebarItem.update.symbol)
                         .tag(SidebarItem.update)
+                    Label(SidebarItem.uninstall.title, systemImage: SidebarItem.uninstall.symbol)
+                        .tag(SidebarItem.uninstall)
                 }
             }
             .listStyle(.sidebar)
@@ -110,15 +121,17 @@ struct ContentView: View {
     @ViewBuilder
     private var detailContent: some View {
         switch selection {
-        case .dashboard:  DashboardView()
-        case .control:    ControlView()
-        case .power:      PowerSettingsView()
-        case .automation: AutomationView()
-        case .schedule:   ScheduleView()
-        case .quickQuit:  QuickQuitView()
-        case .external:   ExternalActivityView()
-        case .log:        LogView()
-        case .update:     UpdateView()
+        case .dashboard:      DashboardView()
+        case .control:        ControlView()
+        case .power:          PowerSettingsView()
+        case .automation:     AutomationView()
+        case .schedule:       ScheduleView()
+        case .quickQuit:      QuickQuitView()
+        case .external:       ExternalActivityView()
+        case .log:            LogView()
+        case .update:         UpdateView()
+        case .systemMonitor:  MonitoringView()
+        case .uninstall:      UninstallView()
         }
     }
 }

@@ -28,6 +28,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menuBar = MenuBarController(controller: .shared)
             // 全局快捷键要在状态机就绪之后注册：注册成功的记录会写进日志。
             QuickQuitEngine.shared.activate()
+            // 系统监控：把 SystemMonitor 的事件接到 AlertWindow + Notifier
+            MonitoringCoordinator.shared.wire()
             await Self.handleLaunchArguments()
         }
     }
@@ -188,6 +190,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             case "--helper-version":
                 await Self.emitHelperVersion()
+                index += 1
+
+            case "--autostart":
+                // 自启动：不开主窗口，仅把菜单栏 + 系统监控跑起来。
+                // 主窗口仍可由用户点菜单栏图标打开。
                 index += 1
 
             case "--helper-update":
