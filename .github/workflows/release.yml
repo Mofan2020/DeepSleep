@@ -16,7 +16,7 @@ jobs:
         run: brew install xcodegen
 
       - name: 构建并打包
-        run: scripts/build-release.sh
+        run: bash scripts/build-release.sh
 
       - name: 上传产物为 workflow artifact
         uses: actions/upload-artifact@v4
