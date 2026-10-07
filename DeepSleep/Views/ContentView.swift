@@ -58,6 +58,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .uninstall:      return "trash"
         }
     }
+}
 
 struct ContentView: View {
 
