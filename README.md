@@ -6,7 +6,7 @@
 - **应用名**：Deep Sleep
 - **最低系统**：macOS 26.0
 - **语言 / 框架**：Swift 5、SwiftUI + AppKit、IOKit、LocalAuthentication
-- **当前版本**：1.4.1
+- **当前版本**：1.4.2
 
 ## 安装
 
@@ -85,6 +85,8 @@
 - **CPU / RAM 过载告警**：连续 N 秒超过阈值时提示前三大占用的进程，
   用户可冻结（SIGSTOP）或结束（SIGKILL），也可忽略。
 - **单进程 RAM 超阈告警**：任一进程 RSS 超过设定值立刻提示（不等持续）。
+- **CPU 温度超阈告警**：通过特权助手从 Apple SMC（`TCMz` / `TCMb` / `TCDX`）读 CPU Die 温度，
+  超过设定阈值时弹窗 + 通知。仅告警不自动杀进程，冻结不降温，让系统自动调频即可。
 - **完全卸载**：撤销所有断言，恢复 disablesleep，清理配置（Preferences / Caches / Application Support / Saved State / Logs），卸载助手，删除自启 plist，删除 .app 包。侧栏「卸载 Deep Sleep」项入口。
 
 ## 命令行接口

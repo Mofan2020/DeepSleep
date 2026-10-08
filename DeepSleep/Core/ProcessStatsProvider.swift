@@ -21,6 +21,10 @@ enum ProcessStatsProviderError: LocalizedError {
     case outdatedHelper
     /// 助手根本没在跑 / 没安装。
     case helperUnavailable(String)
+    /// 助手版本够新，但不识别这条命令（例如旧版 v2 没 `getCPUTemperature`）。
+    /// 与 `outdatedHelper` 不同:这条不需要整体升级助手,只是「这个能力没启用」,
+    /// 调用方应**静默降级**,不要弹错误。
+    case unsupportedHelper
 
     var errorDescription: String? {
         switch self {
@@ -28,6 +32,8 @@ enum ProcessStatsProviderError: LocalizedError {
             return "完全控制中的助手版本太旧，不支持系统监控相关命令。请在「完全控制」页重新启用以更新助手。"
         case .helperUnavailable(let detail):
             return "特权助手不可用：\(detail)"
+        case .unsupportedHelper:
+            return "助手版本不支持该能力。"
         }
     }
 }
@@ -38,6 +44,11 @@ final class ProcessStatsProvider {
 
     /// 协议版本门禁。监控新命令需要 v2。
     private var hasConfirmedV2 = false
+    /// 助手是否支持 `getCPUTemperature`。旧助手（v=2 但发布早于该命令）没有。
+    /// **注意**：我们用协议版本号做不到这点（v2 协议里加命令是兼容的），
+    /// 所以每次 fetchCPUTemperature 失败时**用「未知命令」识别能力缺失**，
+    /// 第一次成功后置 true，之后缓存。
+    private var helperSupportsCPUTemperature = false
 
     /// 抓一份进程快照。会自动校验助手协议版本。
     func fetchStats() async throws -> [ProcessStats.Record] {
@@ -48,6 +59,29 @@ final class ProcessStatsProvider {
             throw ProcessStatsProviderError.helperUnavailable(response.message)
         }
         return ProcessStats.decode(response.payload).records
+    }
+
+    /// 抓一次 CPU 温度读数。助手必须支持 `getCPUTemperature`（v1.4.2+）。
+    /// 旧助手会回「unknown command」类失败 → 抛 `unsupportedHelper`,
+    /// 调用方应当**静默降级**(不弹错误),不是故障。
+    func fetchCPUTemperature() async throws -> CPUTemperatureSample {
+        try await ensureV2()
+        if !helperSupportsCPUTemperature {
+            // 探测阶段已完成 v2 协议校验。但「是否带 getCPUTemperature 命令」
+            // 还要看助手是否含此命令 —— 用一次失败/成功识别。
+        }
+        let request = HelperRequest(command: .getCPUTemperature)
+        let response = try await HelperClient.shared.send(request, timeout: 4)
+        guard response.success else {
+            // 旧助手收到未识别命令会回「unknown command」(英文),
+            // 我们以这个关键字判定「助手没有这个能力」。
+            if response.message.localizedCaseInsensitiveContains("unknown command") {
+                throw ProcessStatsProviderError.unsupportedHelper
+            }
+            throw ProcessStatsProviderError.helperUnavailable(response.message)
+        }
+        helperSupportsCPUTemperature = true
+        return CPUTemperatureSample.decode(response.payload)
     }
 
     /// 挂起（SIGSTOP）一组 pid。结果里 `killed` 表示「已挂起」，

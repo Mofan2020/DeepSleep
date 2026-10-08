@@ -28,6 +28,12 @@ public struct MonitorConfig: Codable, Sendable, Equatable {
     public var autoSuspend: Bool
     /// 单进程 RSS 阈值（字节）。任一进程当前占用 ≥ 此值，立刻报警，不走持续时间。
     public var singleProcessRAMBytes: Int
+    /// CPU 温度阈值（°C，Apple Die Max / Average / Aggregate 中的最大值 ≥ 此值即告警）。
+    /// 0 表示禁用（CPU 温度监控关闭）。
+    public var cpuTempHighCelsius: Double
+    /// CPU 温度监控是否启用(与 `enabled` 配合:总开关与子开关)。
+    /// 单独保留是为了:总开关可以临时关掉全部监控而不丢温度阈值。
+    public var cpuTempEnabled: Bool
 
     public init(enabled: Bool = false,
                 ramHighPercent: Double = 90,
@@ -35,7 +41,9 @@ public struct MonitorConfig: Codable, Sendable, Equatable {
                 highDurationSeconds: Int = 60,
                 sampleIntervalSeconds: Double = 3,
                 autoSuspend: Bool = false,
-                singleProcessRAMBytes: Int = 4 * 1024 * 1024 * 1024) {
+                singleProcessRAMBytes: Int = 4 * 1024 * 1024 * 1024,
+                cpuTempHighCelsius: Double = 90,
+                cpuTempEnabled: Bool = true) {
         self.enabled = enabled
         self.ramHighPercent = ramHighPercent
         self.cpuHighPercent = cpuHighPercent
@@ -43,6 +51,8 @@ public struct MonitorConfig: Codable, Sendable, Equatable {
         self.sampleIntervalSeconds = sampleIntervalSeconds
         self.autoSuspend = autoSuspend
         self.singleProcessRAMBytes = singleProcessRAMBytes
+        self.cpuTempHighCelsius = cpuTempHighCelsius
+        self.cpuTempEnabled = cpuTempEnabled
     }
 
     public static let `default` = MonitorConfig()
@@ -63,10 +73,27 @@ public struct SingleProcessRAMEvent: Sendable {
     public let timestamp: Date
 }
 
+/// CPU 温度超阈事件：Apple SMC 报的 Die Max / Average / Aggregate 三个读数中的
+/// 最大值 ≥ 用户设定的 °C 阈值。
+///
+/// 实际取值逻辑：
+///   - 三个读数都拿不到 → 不发事件(SMC 不可用)
+///   - 三个里有任一 → 用「最大值」作判定基准,与 macOS 上「CPU 过热告警」
+///     的口径一致（系统只看最热的那一项,不看平均）
+public struct CPUTemperatureEvent: Sendable {
+    public let maxC: Double?
+    public let averageC: Double?
+    public let aggregateC: Double?
+    public let observedMaxC: Double
+    public let thresholdC: Double
+    public let timestamp: Date
+}
+
 /// SystemMonitor 把这些事件推给上层。
 public enum MonitorEvent: Sendable {
     case overload(OverloadEvent)
     case singleProcessRAM(SingleProcessRAMEvent)
+    case cpuTemp(CPUTemperatureEvent)
 }
 
 public final class SystemMonitor {
@@ -78,12 +105,18 @@ public final class SystemMonitor {
     private let queue = DispatchQueue(label: "com.skyc8266.deepsleep.monitor")
     private var timer: DispatchSourceTimer?
     private var config: MonitorConfig
+    /// CPU 温度采样节流计数器。每 N 个 tick 读一次 SMC(N 见 `cpuTempEveryNTicks`)。
+    /// 温度是秒级缓变,15s 一次足够。
+    private var cpuTempTickCounter: Int = 0
+    private let cpuTempEveryNTicks: Int = 5
     /// 当前 RAM%/CPU% 持续超过阈值的开始时间；为 nil 表示当前未在超阈。
     private var overloadStartedAt: Date?
     /// 已发出的过载事件 cooldown 起点；防止 4/24s 内连发两条同样的过载。
     private var lastOverloadReportAt: Date?
     /// 单进程 RSS 报警 cooldown：同一个 PID 5 分钟内最多报一次。
     private var singleRAMCooldown: [pid_t: Date] = [:]
+    /// CPU 温度告警 cooldown：一次告警后 5 分钟内不再重复发。
+    private var lastCPUTempReportAt: Date?
     /// 最近一次发出的事件（含时间戳）。UI 用它展示「最近事件」。
     /// 改了 MainActor 访问 + 串行队列写锁，UI 读不会卡。
     private var _lastEvent: MonitorEvent?
@@ -123,6 +156,9 @@ public final class SystemMonitor {
         case .singleProcessRAM(let r):
             let gb = Double(r.record.rssBytes) / 1_073_741_824
             return String(format: "单进程过高：%@ (%.2f GB)", r.record.name, gb)
+        case .cpuTemp(let t):
+            return String(format: "CPU 温度过高：%.1f°C（阈值 %.0f°C）",
+                          t.observedMaxC, t.thresholdC)
         }
     }
 
@@ -220,6 +256,59 @@ public final class SystemMonitor {
         } else {
             overloadStartedAt = nil
         }
+
+        // CPU 温度超阈判定（节流:每 N 个 tick 读一次 SMC）
+        if config.cpuTempEnabled, config.cpuTempHighCelsius > 0 {
+            cpuTempTickCounter += 1
+            if cpuTempTickCounter >= cpuTempEveryNTicks {
+                cpuTempTickCounter = 0
+                await checkCPUTemperature(now: now)
+            }
+        }
+    }
+
+    /// 单独抽出来的 CPU 温度检查。失败不报错（旧的 v2 助手没有这个命令,
+    /// `unsupportedHelper` 是预期情况不是故障）。
+    private func checkCPUTemperature(now: Date) async {
+        let sample: CPUTemperatureSample
+        do {
+            sample = try await ProcessStatsProvider.shared.fetchCPUTemperature()
+        } catch ProcessStatsProviderError.unsupportedHelper {
+            // 旧助手。一次性静默关闭本子开关,避免每 15s 报错一次。
+            // 走主线程是为了避开 self 在 @Sendable closure 里的捕获,
+            // 同时和 saveIfNotDefault() 走的串行写入路径保持一致。
+            Task { @MainActor in
+                guard self.config.cpuTempEnabled else { return }
+                var c = self.config
+                c.cpuTempEnabled = false
+                self.config = c
+                c.saveIfNotDefault()
+            }
+            return
+        } catch {
+            // 其它错误(助手不可用 / SMC 失败):不告警也不写盘,等下次 tick 再试。
+            return
+        }
+        // 取三个读数的最大值,作为判定值
+        let candidates: [Double] = [sample.maxC, sample.averageC, sample.aggregateC].compactMap { $0 }
+        guard !candidates.isEmpty else { return }
+        guard let observedMax = candidates.max() else { return }
+        let threshold = config.cpuTempHighCelsius
+        guard observedMax >= threshold else { return }
+        // cooldown:5 分钟内同阈值不重发
+        if let last = lastCPUTempReportAt, now.timeIntervalSince(last) < 300 { return }
+        lastCPUTempReportAt = now
+        let event = CPUTemperatureEvent(
+            maxC: sample.maxC,
+            averageC: sample.averageC,
+            aggregateC: sample.aggregateC,
+            observedMaxC: observedMax,
+            thresholdC: threshold,
+            timestamp: now
+        )
+        _lastEvent = .cpuTemp(event)
+        _lastEventAt = now
+        onEvent?(.cpuTemp(event))
     }
 
     /// 物理内存（字节）。读不到时返回 0（表示「跳过 RAM 判定」）。

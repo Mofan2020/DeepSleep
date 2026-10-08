@@ -35,6 +35,7 @@
 		5E8C2C5C7356AE760C7CBF15 /* MenuBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13BD008C8B73D8005C11EFAC /* MenuBarController.swift */; };
 		62404108B725BBFBFE76C583 /* UpdateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BBF3FF9C3B4A0AA3E5A2493 /* UpdateView.swift */; };
 		683EF363E4F084BEF59CD0EB /* BiometricAuth.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BE799E3FF01373354EC7D76 /* BiometricAuth.swift */; };
+		68BBD23F6A82CF25F557453C /* CPUTemperatureSample.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16BB6D07F5EFD58141E50A48 /* CPUTemperatureSample.swift */; };
 		6AFBA0A1C3939B8A8162754B /* ProcessGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09942C2FCA248432F203B05D /* ProcessGuard.swift */; };
 		6F47FDDC8B8A8BCEF68E6621 /* HelperClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CAA06BD31D3CA20982FDE4C /* HelperClient.swift */; };
 		708B71B465D2605742446DBD /* PowerActivityMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C993F30605CB3C3BB8F0EC18 /* PowerActivityMonitor.swift */; };
@@ -59,6 +60,7 @@
 		C58D488668AB8F3B538FC28C /* PowerSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0E2DA26DEFB4FB3396D7063 /* PowerSettingsView.swift */; };
 		C5C82FA1DED31F6CAD42F13E /* QuickQuit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DAFF6F4654DCF7056F1BA67 /* QuickQuit.swift */; };
 		C7CAF9096B3F0A12F35B8126 /* WindowCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2955F2519DCC800EC189D9EA /* WindowCoordinator.swift */; };
+		CB745D9E5F4E7E41B2ACE70C /* SMCTemperature.swift in Sources */ = {isa = PBXBuildFile; fileRef = 950C18882A5E056E157F7741 /* SMCTemperature.swift */; };
 		CDC0DB341A0DB1C90C51A258 /* AutoStartManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 432740AF96D744E5DAB258F4 /* AutoStartManager.swift */; };
 		D0CC2A42F432A1A7D0DEEEE4 /* Uninstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF2BAA4DC2FE609833A597C3 /* Uninstaller.swift */; };
 		E147974598A796B15B1C1069 /* ProcessStats.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9280BE0F52069F606CA7D220 /* ProcessStats.swift */; };
@@ -70,6 +72,7 @@
 		EE8F090E23622184B5D04D17 /* UnixSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58014010D89130A9A194BE3F /* UnixSocket.swift */; };
 		F46459160672CE1350637D97 /* Version.swift in Sources */ = {isa = PBXBuildFile; fileRef = F67CFF72B57B6842BFE84727 /* Version.swift */; };
 		F9C83EB7C255F958694CAE61 /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 571B5897312541D688A35CB1 /* DashboardView.swift */; };
+		FABDC04A63BAF735E931419F /* CPUTemperatureSample.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16BB6D07F5EFD58141E50A48 /* CPUTemperatureSample.swift */; };
 		FBE1B06A9F086A979060AEAD /* ProcessInventory.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7D2FBFD81DFC7D2B76F709D /* ProcessInventory.swift */; };
 		FE67385E6FABA2694AF79A83 /* MonitoringView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA7EDBC6464CD66EEAAC2519 /* MonitoringView.swift */; };
 /* End PBXBuildFile section */
@@ -92,6 +95,7 @@
 		0DEE905EAF64EFC038DFC418 /* ControlView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlView.swift; sourceTree = "<group>"; };
 		13496FAE978C672E3F2EA8B8 /* AutoStartSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoStartSettings.swift; sourceTree = "<group>"; };
 		13BD008C8B73D8005C11EFAC /* MenuBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarController.swift; sourceTree = "<group>"; };
+		16BB6D07F5EFD58141E50A48 /* CPUTemperatureSample.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CPUTemperatureSample.swift; sourceTree = "<group>"; };
 		17210D6CB4894B79813780AD /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		178D52B0BEF95859AB8B6D88 /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
 		1DAFF6F4654DCF7056F1BA67 /* QuickQuit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickQuit.swift; sourceTree = "<group>"; };
@@ -122,6 +126,7 @@
 		9280BE0F52069F606CA7D220 /* ProcessStats.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessStats.swift; sourceTree = "<group>"; };
 		93466523D815E2238BF5E8FA /* MonitorConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonitorConfig.swift; sourceTree = "<group>"; };
 		93C5E4B4358BF400FACC53DC /* SleepController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepController.swift; sourceTree = "<group>"; };
+		950C18882A5E056E157F7741 /* SMCTemperature.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SMCTemperature.swift; sourceTree = "<group>"; };
 		960F8920CB0412CB44C5FB31 /* install-helper.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = "install-helper.sh"; sourceTree = "<group>"; };
 		96ED86613A6A98B3C2D18307 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		A2DD20BF1CBB3194597701CA /* PowerWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerWatcher.swift; sourceTree = "<group>"; };
@@ -180,6 +185,7 @@
 			children = (
 				96ED86613A6A98B3C2D18307 /* main.swift */,
 				4D53595CDD09B7293B6CF8F1 /* SelfUpdate.swift */,
+				950C18882A5E056E157F7741 /* SMCTemperature.swift */,
 			);
 			path = DeepSleepHelper;
 			sourceTree = "<group>";
@@ -231,6 +237,7 @@
 		B08498667B75590523A8F293 /* Shared */ = {
 			isa = PBXGroup;
 			children = (
+				16BB6D07F5EFD58141E50A48 /* CPUTemperatureSample.swift */,
 				DE3295E35F8D28B69A629A8F /* HelperProtocol.swift */,
 				575A45B0E6499C686C4827CF /* PMSetOutput.swift */,
 				09942C2FCA248432F203B05D /* ProcessGuard.swift */,
@@ -428,6 +435,7 @@
 				1918D7D77EC9140F31DE6718 /* AutomationRule.swift in Sources */,
 				54E4BE87EB3245B63EACF75B /* AutomationView.swift in Sources */,
 				683EF363E4F084BEF59CD0EB /* BiometricAuth.swift in Sources */,
+				FABDC04A63BAF735E931419F /* CPUTemperatureSample.swift in Sources */,
 				313486F9C714E8AC1436BE78 /* Components.swift in Sources */,
 				E3CD86EC4A9AF02878100043 /* ContentView.swift in Sources */,
 				3E5B62161B19BF1CCE6E1B22 /* ControlView.swift in Sources */,
@@ -477,12 +485,14 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				68BBD23F6A82CF25F557453C /* CPUTemperatureSample.swift in Sources */,
 				373014038B076AA90C1FA300 /* HelperProtocol.swift in Sources */,
 				04E9E649615877F270D223AA /* PMSetOutput.swift in Sources */,
 				E648F9B8460CA4DC6467A511 /* ProcessGuard.swift in Sources */,
 				FBE1B06A9F086A979060AEAD /* ProcessInventory.swift in Sources */,
 				E2F19718D39EDE8586292DC3 /* ProcessSnapshot.swift in Sources */,
 				89098C875F9DF3595B4F80F5 /* ProcessStats.swift in Sources */,
+				CB745D9E5F4E7E41B2ACE70C /* SMCTemperature.swift in Sources */,
 				A6FDF63D0FF8D8386787E0F5 /* SelfUpdate.swift in Sources */,
 				5CBBFE252FA1FF06D00A3222 /* TerminationReport.swift in Sources */,
 				EE8F090E23622184B5D04D17 /* UnixSocket.swift in Sources */,
@@ -677,11 +687,11 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 5;
 				INFOPLIST_FILE = DeepSleep/Resources/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
-				MARKETING_VERSION = 1.4.1;
+				MARKETING_VERSION = 1.4.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.skyc8266.deepsleep;
 				PRODUCT_NAME = "Deep Sleep";
 				SDKROOT = macosx;
@@ -694,11 +704,11 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 5;
 				INFOPLIST_FILE = DeepSleep/Resources/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
-				MARKETING_VERSION = 1.4.1;
+				MARKETING_VERSION = 1.4.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.skyc8266.deepsleep;
 				PRODUCT_NAME = "Deep Sleep";
 				SDKROOT = macosx;

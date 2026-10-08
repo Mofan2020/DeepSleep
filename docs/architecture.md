@@ -65,6 +65,7 @@
 | `getProcessStats` | 返回当前所有进程的 RSS / CPU% / 启动时间快照。v2 协议 |
 | `suspendProcesses` | 用 SIGSTOP 挂起一组 pid（监控场景；仍走保护名单） |
 | `killProcesses` | 用 SIGKILL 杀掉一组 pid（监控场景；仍走保护名单） |
+| `getCPUTemperature` | 读 Apple SMC（`TCMz` / `TCMb` / `TCDX`）拿 CPU Die Max / Average / Aggregate °C。算法借鉴自 dkorunic/iSMC（GPL-3.0），见 `DeepSleepHelper/SMCTemperature.swift` 顶部借鉴声明；DeepSleep 仍是 MIT，未复制 iSMC Go 源码。**仅 helper 能在 root 下连 SMC**，普通进程会失败 |
 
 ## 二、权限模型：管理员密码只输一次
 

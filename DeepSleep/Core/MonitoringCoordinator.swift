@@ -57,6 +57,11 @@ final class MonitoringCoordinator {
                     Task { _ = try? await ProcessStatsProvider.shared.kill([pid]) }
                 }
             )
+        case .cpuTemp(let temp):
+            // CPU 温度场景只告警,不冻结进程——冻结不降温,且系统会自动调频,
+            // 用户需要的不是「帮我杀进程」而是「提醒我机器热」。
+            SystemNotifier.shared.notifyCPUTemperature(temp)
+            AlertWindowController.shared.presentCPUTemperature(event: temp)
         }
     }
 

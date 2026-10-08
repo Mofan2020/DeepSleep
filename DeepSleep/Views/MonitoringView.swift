@@ -36,7 +36,8 @@ struct MonitoringView: View {
 
                     Text("监控每 \(Int(config.sampleIntervalSeconds)) 秒抓一次进程快照；"
                          + "对整体 RAM / CPU 持续超阈则提示冻结或终结 Top 3 占用者；"
-                         + "对单进程 RAM 超过阈值则立刻提示。")
+                         + "对单进程 RAM 超过阈值则立刻提示；"
+                         + "CPU 温度超阈时只告警，不冻结进程。")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -76,6 +77,24 @@ struct MonitoringView: View {
                     }
                     Toggle("过载时自动冻结 Top 3", isOn: $config.autoSuspend)
                         .help("必须显式开启；否则只会弹对话框让用户决定")
+                    Divider()
+                    Toggle("监控 CPU 温度", isOn: $config.cpuTempEnabled)
+                        .help("需要特权助手支持 getCPUTemperature 命令（v1.4.2+ 助手）"
+                              + "；旧助手会一次性静默关闭此开关")
+                    HStack {
+                        Text("CPU 温度阈值")
+                        Spacer()
+                        Text(config.cpuTempHighCelsius > 0
+                             ? String(format: "%.0f°C", config.cpuTempHighCelsius)
+                             : "已禁用")
+                            .monospacedDigit()
+                    }
+                    Slider(value: $config.cpuTempHighCelsius, in: 0...105, step: 1)
+                    Text("CPU 温度来自 SMC（TCMz/TCMb/TCDX），"
+                         + "每 5 个采样周期读一次；超过阈值时只告警，"
+                         + "不会自动冻结或结束进程。")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
             }
 

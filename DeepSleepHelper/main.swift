@@ -418,6 +418,9 @@ private final class CommandHandler {
         case .killProcesses:
             return killProcesses(request)
 
+        case .getCPUTemperature:
+            return getCPUTemperature()
+
         case .uninstall:
             logLine("uninstall requested")
             uninstallSelf()
@@ -586,6 +589,36 @@ private final class CommandHandler {
     private func parsePids(_ raw: String) -> [pid_t] {
         raw.split(separator: ",")
             .compactMap { pid_t($0.trimmingCharacters(in: .whitespaces)) }
+    }
+
+    /// 读一次 CPU 温度。算法与事实借鉴自 dkorunic/iSMC（GPL-3.0），
+    /// 见 `SMCTemperature.swift` 顶部的借鉴声明。本助手仍是 MIT,
+    /// 不混 GPL 代码。
+    private func getCPUTemperature() -> HelperResponse {
+        let reader = SMCTemperature()
+        do {
+            let sample = try reader.readSample()
+            if !sample.hasAnyReading {
+                // SMC 接口开了但所有 key 都读不到 —— 通常是固件版本不匹配
+                // 平台型号。返回 success=true + payload 都是空,让应用侧
+                // 用「没数据」分支(不是「命令失败」)。
+                logLine("getCPUTemperature: SMC 开了但所有 key 读不到")
+                return .ok("smc read", payload: sample.encode())
+            }
+            let parts: [String] = [
+                sample.maxC.map { String(format: "max=%.2f", $0) },
+                sample.averageC.map { String(format: "avg=%.2f", $0) },
+                sample.aggregateC.map { String(format: "agg=%.2f", $0) },
+            ].compactMap { $0 }
+            logLine("getCPUTemperature: \(parts.joined(separator: " "))")
+            return .ok("smc read", payload: sample.encode())
+        } catch let error as SMCTemperature.SMCError {
+            logLine("getCPUTemperature failed: \(error)")
+            return .failure("无法读取 SMC：\(error)")
+        } catch {
+            logLine("getCPUTemperature unexpected: \(error)")
+            return .failure("读取 CPU 温度失败：\(error.localizedDescription)")
+        }
     }
 
     /// 卸载：写入一个延迟脚本，让本进程退出后再删除文件与 launchd 任务。

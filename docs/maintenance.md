@@ -48,6 +48,9 @@ swiftc Shared/HelperProtocol.swift DeepSleepHelper/SelfUpdate.swift \
 swiftc Shared/ProcessInventory.swift Shared/ProcessGuard.swift \
        Shared/TerminationReport.swift scripts/test-process-guard.swift \
        -o /tmp/t4 && /tmp/t4
+swiftc DeepSleepHelper/SMCTemperature.swift Shared/CPUTemperatureSample.swift \
+       scripts/test-cpu-temperature-decode.swift -parse-as-library \
+       -o /tmp/cput && /tmp/cput
 
 # 文档一致性
 python3 scripts/check-docs.py

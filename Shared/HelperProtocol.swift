@@ -54,6 +54,10 @@ public enum HelperCommand: String, Codable, CaseIterable, Sendable {
     /// 用 SIGKILL 杀掉一组进程。用于「通知/对话框点了处理（建议）」路径。
     /// 不连带子树、不走保护名单豁免 —— 必须经过 `ProcessGuard.plan` 全套裁决。
     case killProcesses
+    /// 读 CPU 温度（Apple SMC）。仅在特权助手侧能直接连 SMC，普通进程不行。
+    /// 返回 `CPUTemperatureSample`(max/average/aggregate °C,字段缺失 = 该值读不到)。
+    /// v3 协议才支持；旧版助手（v<=2）会回 `unknown command` 失败。
+    case getCPUTemperature
 }
 
 // MARK: - 请求
@@ -109,10 +113,18 @@ public enum HelperConstants {
     ///   - v1：所有现有命令（assertion、pmset、计划唤醒、终止）
     ///   - v2：新增 `getProcessStats` / `suspendProcesses` / `killProcesses`，
     ///         用于系统过载监控与内存泄漏检测
+    ///   - v3：**未发**。原计划跟随 `getCPUTemperature`（Apple SMC）一起升，
+    ///         但 maintenance 3.2 节明确写「新增命令不需要升级 protocolVersion」，
+    ///         旧助手遇新命令会回解码错误而非崩溃（已实测），保持兼容更好。
+    ///         所以 `getCPUTemperature` 仍跑在 v2 协议上：旧助手直接拒绝
+    ///         （应用侧用 ProtocolVersion=2 仍能跑现有功能），新助手支持；
+    ///         `ProcessStatsProvider.fetchCPUTemperature()` 会用协议版本门禁
+    ///         探测能力。
     ///
-    /// 升级路径：用户启动新版 app 后，app 探测到旧助手（v=1），
+    /// 升级路径：用户启动新版 app 后，app 探测到旧助手（v=2 不含 CPU 温度），
     /// 主动触发 `updateSelf` —— docs/release.md 已说明助手能自我更新。
-    /// 旧助手对 v2 命令会回 `unknown command`；应用侧必须探测协议版本并提示。
+    /// 旧助手对 `getCPUTemperature` 会回 `unknown command`；应用侧必须探测协议版本
+    /// 并提示「助手需要更新才能支持 CPU 温度」。
     public static let protocolVersion = 2
 }
 

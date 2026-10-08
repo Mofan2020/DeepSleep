@@ -82,6 +82,22 @@ public final class AlertWindowController {
         present(host: host)
     }
 
+    /// CPU 温度超阈对话框。只告警,不允许通过它冻结/结束进程
+    /// （冻结/结束都不会降温,且系统会自动调频,用户应自行决定处理方式）。
+    public func presentCPUTemperature(event: CPUTemperatureEvent) {
+        let host = NSHostingController(rootView: CPUTemperatureAlertView(
+            maxC: event.maxC,
+            averageC: event.averageC,
+            aggregateC: event.aggregateC,
+            observedMaxC: event.observedMaxC,
+            thresholdC: event.thresholdC,
+            onClose: { [weak self] in
+                self?.dismiss()
+            }
+        ))
+        present(host: host)
+    }
+
     // MARK: - 实现
 
     private func present(host: NSHostingController<some View>) {
@@ -227,6 +243,61 @@ private struct SingleProcessRAMAlertView: View {
                 Button("冻结进程", action: onSuspend)
                 Button("结束") { onEnd() }
                     .foregroundColor(.red)
+            }
+        }
+        .padding(20)
+        .frame(width: 480)
+    }
+}
+
+private struct CPUTemperatureAlertView: View {
+    let maxC: Double?
+    let averageC: Double?
+    let aggregateC: Double?
+    let observedMaxC: Double
+    let thresholdC: Double
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "thermometer.high")
+                    .foregroundColor(.red)
+                Text("CPU 温度过高")
+                    .font(.title2.weight(.semibold))
+                    .foregroundColor(.red)
+            }
+
+            Text(String(format: "当前最高 %.1f°C，已超过阈值 %.0f°C",
+                        observedMaxC, thresholdC))
+                .font(.body)
+                .foregroundColor(.red)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("SMC 读数：").font(.caption).foregroundColor(.secondary)
+                if let m = maxC {
+                    Text(String(format: "• Die Max：%.1f°C", m))
+                        .font(.system(.body, design: .monospaced))
+                }
+                if let a = averageC {
+                    Text(String(format: "• Die Average：%.1f°C", a))
+                        .font(.system(.body, design: .monospaced))
+                }
+                if let g = aggregateC {
+                    Text(String(format: "• Die Aggregate：%.1f°C", g))
+                        .font(.system(.body, design: .monospaced))
+                }
+            }
+
+            Text("提示：macOS 会自动调频。结束大程序或改善散热即可，"
+                 + "Deep Sleep 不会自动杀进程来降温。")
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            HStack {
+                Spacer()
+                Button("知道了", action: onClose)
+                    .keyboardShortcut(.defaultAction)
             }
         }
         .padding(20)

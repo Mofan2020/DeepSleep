@@ -756,3 +756,72 @@ Debug 与 Release 两个产物内置的助手摘要不同，正好互为「不�
 
 - **没引入相对基准的内存泄漏判定**：用户说先不做了，等有更好的检测方法再说。
 - **没改监控整体架构**：还是「判定主应用 + 执行走助手」，新增事件类型仍走同一套 AlertWindow + Notifier 流程。
+
+---
+
+## v1.4.2：CPU 温度监控（Apple SMC，2026-10-07）
+
+### 用户反馈
+
+- 系统过载监控的 RAM / CPU 只能反映软件行为，反映不出硬件状态。
+  M2 笔记本在高负载时 CPU 温度经常 90°C+，但应用侧只看 CPU%，告警后用户
+  也不知道「真的热」。需要一个能直接读硬件温度的分支。
+- 「借鉴 iSMC 但不抄」是用户的明确决定：iSMC 是 GPL-3.0，DeepSleep 是 MIT，
+  直接抄代码会污染 MIT。借鉴算法事实可以，但代码必须自己写，commit 与代码里
+  都要标借鉴。
+
+### 做了什么
+
+- **协议层**：`HelperCommand` 新增 `getCPUTemperature`；`HelperConstants.protocolVersion`
+  保持 v2 不升（`maintenance` 3.2 节明确「新增命令不需要升 protocolVersion」，
+  旧助手遇新命令会回解码错误而非崩溃，保持兼容更好）。
+- **helper 端**：`DeepSleepHelper/SMCTemperature.swift` 用纯 Swift 调 IOKit 读
+  `TCMz` / `TCMb` / `TCDX`（`Platform: "Apple"` 的 M1+/M2/M3/M4 通用 key）。
+  借鉴自 dkorunic/iSMC（GPL-3.0）的算法事实：
+  - SMC IOKit 接口（`IOServiceMatching` + `IOServiceOpen` + `IOConnectCallStructMethod`）
+  - fp/sp 字典 31 项（`spXY` = signed 16-bit、小数部分 Y 位，div=2^Y）
+  - `flt` = LE Float32bits；`ioft` = LE int64/65536；`Ta0P` 例外按 sp78
+  - 合理性窗口 [-100, 200] °C
+  - 与 iSMC 的关系：**纯 Swift 重写**，不是 Go 源码的翻译；**没有 import iSMC，
+    没有 copy 一行 Go 代码**；DeepSleep 仍是 MIT。
+  - `main.swift` 的 `getCPUTemperature()` 是包装层，记日志 + 错误识别（区分
+    「SMC 接口打不开」与「SMC 开了但所有 key 读不到」，后者是固件问题，
+    返回 success=true + 空 payload，应用侧走「没数据」分支）。
+- **Shared 层**：`Shared/CPUTemperatureSample.swift` 新数据模型（纯数据，
+  helper 与应用共用），与 `ProcessStats` 同样用 `[String: String]` payload 通道。
+  任一字段缺失 = 该值读不到，应用侧不要把缺失当作 0。
+- **应用层**：`ProcessStatsProvider.fetchCPUTemperature()` 走协议层；
+  新错误 `unsupportedHelper`（旧助手不识别该命令，识别后**静默降级**
+  —— 不弹错误，把 `cpuTempEnabled` 置 false 落盘，避免每 15s 报错一次）。
+- **监控集成**：`MonitorConfig` 新增 `cpuTempHighCelsius`（默认 90，0=禁用）
+  + `cpuTempEnabled`；`MonitorEvent.cpuTemp`；每 5 个 tick 读一次 SMC（温度
+  秒级缓变，15s 一次足够）；三个读数取最大值，≥ 阈值时 cooldown 5 分钟发一次。
+- **告警层**：`AlertWindowController.presentCPUTemperature()` 弹窗只显示
+  数据 + 「知道了」按钮；`SystemNotifier.notifyCPUTemperature()` 通知分类
+  `DEEPSLEEP_CPU_TEMP_ALERT` 也只给「知道了」一个 action。**温度场景不冻结/不杀进程**：
+  冻结不降温，且系统会自动调频，让用户自己决定处理方式。
+- **UI**：`MonitoringView` 加 Slider（0-105°C，0=禁用）+ 单独 toggle；
+  「状态」栏 `lastEventDescription` 已能自动显示 CPU 温度事件（走同一个 `describe`）。
+- **测试**：`scripts/test-cpu-temperature-decode.swift` 24 例单测覆盖全部 fp/sp/flt/ioft
+  类型 + CPUTemperatureSample round-trip；**本机解码算法 24/24 全过**。
+  但 IOKit 连 SMC 本身需要 root 进程，普通进程单测连不上，所以这部分
+  **只能在你装上新版 helper 之后真实运行验证**。整套 5 个 swiftc 单测 + check-docs
+  + test-check-docs 全部 16/16 + 14/14 通过。
+- **文档同步**：`architecture.md` 协议命令表 + `maintenance.md` 回归测试；
+  `check-docs.py` 全部一致，`test-check-docs.py` 14/14 通过（含负向自测）。
+
+### 没动的与原因
+
+- **没升 `protocolVersion` 到 v3**：`maintenance` 3.2 节明确「新增命令不需要
+  升 protocolVersion，旧助手遇新命令会回解码错误而非崩溃」—— 所以 `getCPUTemperature`
+  仍跑在 v2 协议上，旧助手收到会回「unknown command」，应用侧用 `unsupportedHelper`
+  静默降级。这与 maintenance 既定原则一致，新助手会自我升级到支持该命令。
+- **没动 Shared/ 的运行时序**：用户 2026-10-06 明确「macOS 我已确认过」= macOS
+  行为不能动。`CPUTemperatureSample` 是纯数据模型，无 IOKit 依赖，符合「只加不改」边界。
+- **没引入相对基准的温度判定**：不同机型 SMC 报告的温度基准不同，绝对阈值够用。
+- **没让 CPU 温度告警自动冻结进程**：温度问题不是杀进程能解决的——macOS 会自动
+  调频，杀进程反而可能让用户误以为是「Deep Sleep 误判」。
+- **没在 M2 本机验证 IOKit SMC 调用**：本机 Swift 普通进程调 `IOServiceOpen`
+  会 SIGKILL（已实测），需要 root 进程。你装上新版 helper 之后能验证。
+  整个解码算法已用真实字节样本单测过 24/24，但「拿到 bytes」这一步需要 root。
+
