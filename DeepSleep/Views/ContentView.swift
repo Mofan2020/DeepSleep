@@ -24,6 +24,12 @@ enum SidebarItem: String, CaseIterable, Identifiable {
     case systemMonitor
     /// 卸载 Deep Sleep：二级确认 + 全流程清理。
     case uninstall
+    /// LLM Gateway 配额总览（feature gated）。
+    case tokenMonitor
+    /// LLM Gateway 模型与 Provider 管理（feature gated）。
+    case gateway
+    /// LLM Gateway 默认模型切换（feature gated）。
+    case modelSwitcher
 
     var id: String { rawValue }
 
@@ -40,6 +46,9 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .update:         return "更新"
         case .systemMonitor:  return "系统监控"
         case .uninstall:      return "卸载 Deep Sleep"
+        case .tokenMonitor:   return "Token 用量"
+        case .gateway:        return "模型 Provider"
+        case .modelSwitcher:  return "模型切换"
         }
     }
 
@@ -56,6 +65,9 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .update:         return "arrow.down.circle"
         case .systemMonitor:  return "waveform.path.ecg"
         case .uninstall:      return "trash"
+        case .tokenMonitor:   return "gauge.with.dots.needle.50percent"
+        case .gateway:        return "server.rack"
+        case .modelSwitcher:  return "list.bullet.indent"
         }
     }
 }
@@ -97,6 +109,16 @@ struct ContentView: View {
                     Label(SidebarItem.uninstall.title, systemImage: SidebarItem.uninstall.symbol)
                         .tag(SidebarItem.uninstall)
                 }
+                if LLMGatewayFeature.tokenMonitor.isEnabled {
+                    Section("LLM Gateway") {
+                        Label(SidebarItem.tokenMonitor.title, systemImage: SidebarItem.tokenMonitor.symbol)
+                            .tag(SidebarItem.tokenMonitor)
+                        Label(SidebarItem.gateway.title, systemImage: SidebarItem.gateway.symbol)
+                            .tag(SidebarItem.gateway)
+                        Label(SidebarItem.modelSwitcher.title, systemImage: SidebarItem.modelSwitcher.symbol)
+                            .tag(SidebarItem.modelSwitcher)
+                    }
+                }
             }
             .listStyle(.sidebar)
             .navigationSplitViewColumnWidth(min: 190, ideal: 205, max: 250)
@@ -133,6 +155,9 @@ struct ContentView: View {
         case .update:         UpdateView()
         case .systemMonitor:  MonitoringView()
         case .uninstall:      UninstallView()
+        case .tokenMonitor:   TokenDashboardView()
+        case .gateway:        ProviderListView()
+        case .modelSwitcher:  ModelSwitcherView()
         }
     }
 }
