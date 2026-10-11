@@ -23,15 +23,20 @@ final class ProviderRegistry {
     private init() {}
 
     /// 真实平台基础 URL。
-    /// 注意：plan 里写的 platform.minimax.com 域名是错的；
-    /// 真实平台域名是 platform.minimaxi.com，国内为 api.minimaxi.com。
+    /// 注意（2026-10-11 按 MiniMax 官方文档修正）：
+    /// - 官方公开 API 只有一个域名 `api.minimax.cn`，对应 Anthropic 兼容 base URL
+    ///   `https://api.minimax.cn/anthropic` 与 OpenAI 兼容 base URL
+    ///   `https://api.minimax.cn/v1`。Anthropic SDK 文档、OpenAI SDK 文档、
+    ///   速查示例 curl 全部使用同一个域名。
+    /// - 因此 MiniMax 不再区分"海外 / 国内"，仅 `LLMPlatform.minimaxCN` 一个 case；
+    ///   `minimaxGlobal` 在平台枚举里保留为 alias（title 与 base URL 都映射到同一个），
+    ///   已存在的 ProviderConfig 升级到新枚举后行为不变。
     private func baseURL(for platform: LLMPlatform) -> String {
         switch platform {
         case .anthropicGlobal:  return "https://api.anthropic.com"
         case .anthropicCN:      return "https://api.anthropic.cn"
         case .openai:           return "https://api.openai.com"
-        case .minimaxGlobal:    return "https://api.minimax.io"
-        case .minimaxCN:        return "https://api.minimaxi.com"
+        case .minimaxGlobal, .minimaxCN: return "https://api.minimax.cn"
         case .deepseek:         return "https://api.deepseek.com"
         case .zhipu:            return "https://open.bigmodel.cn"
         case .dashScope:        return "https://dashscope.aliyuncs.com"

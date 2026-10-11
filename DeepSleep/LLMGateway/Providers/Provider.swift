@@ -29,12 +29,19 @@ struct UnifiedRequest: Codable, Hashable {
     var toolChoice: UnifiedToolChoice?
     var stop: [String]?
     var metadata: [String: String]?
+    /// 思考深度（MiniMax M3.1-Flash-Preview 必填；M3 / M2 系列可省）。
+    /// 取值 `low` / `medium` / `high` / `xhigh` / `max`。
+    /// 当平台不识别时 Provider 应静默忽略该字段。
+    var thinkingEffort: ThinkingEffort?
 
     /// 来源格式：UI / 客户端用的是 Anthropic 还是 OpenAI 协议？
     /// Provider 在 send() 内部按 sourceFormat 拼装自己的请求体。
     var sourceFormat: APIFormat
 
     enum APIFormat: String, Codable { case anthropic, openai }
+    enum ThinkingEffort: String, Codable, Hashable {
+        case low, medium, high, xhigh, max
+    }
 }
 
 struct UnifiedMessage: Codable, Hashable {
@@ -79,6 +86,7 @@ struct UnifiedResponse: Codable, Hashable {
 struct UnifiedStreamChunk: Codable, Hashable {
     var index: Int?
     var deltaText: String?
+    var thinkingText: String?
     var toolCallDelta: ToolCallDelta?
     var finishReason: String?
     var usage: UnifiedUsage?

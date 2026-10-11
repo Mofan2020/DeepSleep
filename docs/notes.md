@@ -835,7 +835,7 @@ Debug 与 Release 两个产物内置的助手摘要不同，正好互为「不�
   - **KeychainStore**：API Key 走 macOS Keychain (`kSecClassGenericPassword`，service `com.skyc8266.deepsleep.llmgateway`)
   - **QuotaModels**：`ProviderConfig` / `QuotaWindow` / `UsageRecord` / `GatewayConfig` / `LLMPlatform` / `BillingMode`
   - **HTTPClient**：URLSession 包装，自动错误映射
-  - **14 个 Provider 适配层**：Anthropic（海外 + 国内）/ OpenAI / MiniMax（海外 + 国内）/ DeepSeek / 智谱 GLM / DashScope / Kimi / 字节豆包 / 百度千帆 / Gemini / Grok / Mistral / Cohere / Ollama；每个实现 `fetchQuota` / `send` / `listModels`，按 billingMode 区分抓取逻辑
+  - **14 个 Provider 适配层**：Anthropic（海外 + 国内）/ OpenAI / MiniMax / DeepSeek / 智谱 GLM / DashScope / Kimi / 字节豆包 / 百度千帆 / Gemini / Grok / Mistral / Cohere / Ollama；每个实现 `fetchQuota` / `send` / `listModels`，按 billingMode 区分抓取逻辑
   - **FormatConverter**：Anthropic ↔ OpenAI Messages/Chat Completions 双向转换，覆盖 system/vision/tools
   - **StreamForwarder**：SSE 字节级转发（OpenAI ↔ Anthropic event 命名/顺序差异处理）
   - **QuotaPoller**：actor 后台轮询，按量 5min / 订阅 1min；5 次失败停轮询
@@ -849,7 +849,7 @@ Debug 与 Release 两个产物内置的助手摘要不同，正好互为「不�
 ### 没动的与原因
 
 - **没改 HelperProtocol / 助手二进制 / pmset / automation / release 路径**：v1.5.0 是纯应用层增量，遵守"不破坏助手兼容性"
-- **MiniMax plan 里写的 `platform.minimax.com` 域名是错的**，真实域名 `platform.minimaxi.com`（base `api.minimax.io` 海外 / `api.minimaxi.com` 国内）；用 MiniMax-AI/cli 源码（GitHub `MiniMax-AI/cli`，src/sdk/endpoints.ts）确认了 endpoint：chat = `POST {base}/anthropic/v1/messages`，quota = `GET {base}/v1/token_plan/remains` 或 `POST {base}/account/query_balance`（按 `sk-api-` 前缀分流）
+- **MiniMax 真实域名**：按官方文档（2026-10-11 拉取 `https://platform.minimax.cn/docs/llms.txt` + `text-chat-anthropic` 等页），公开 API 只有一套 base URL `https://api.minimax.cn`，Anthropic 兼容路径 `/anthropic/v1/messages`；早期 plan 里写的 `api.minimax.io` / `api.minimaxi.com` 两个域名均**不公开**。MiniMax **不**暴露 HTTP quota 查询 endpoint（用量查看只能去 `https://platform.minimax.cn/console/usage` 网页或 `mmx quota` CLI），所以 MiniMaxProvider.fetchQuota() 返回一条 status=unknown 的占位窗口，提示用户到控制台查看；之前 plan 里"按 `sk-api-` 前缀分流 `account/query_balance` 与 `v1/token_plan/remains`"的逻辑整段移除（按"不返回固定内容"硬规则）
 - **没动 SQLite 依赖选型**：plan 里建议手写封装，确实手写（SQLite.swift 走 SPM 会带额外编译时间）
 - **没改 Provider 失败重试策略**：QuotaPoller 失败 5 次后停轮询，按 plan 默认值 (a) 实现
 - **没做 LiteLLM 100+ 模型覆盖**：DeepSleep 只做这 14 家 + Ollama
