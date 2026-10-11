@@ -122,7 +122,7 @@ final class MiniMaxProvider: NSObject, LLMProvider, LLMProviderInit {
             guard (200..<300).contains(code) else {
                 throw LLMGatewayError.httpStatus(code, "<stream>")
             }
-            return .stream(MiniMaxStreamDecoder.stream(from: s))
+            return .stream(SmallStreamDecoder.stream(from: s))
         } else {
             let resp = try await HTTPClient.shared.fetch(urlReq)
             let data = try HTTPClient.ensureSuccess(resp)
@@ -234,37 +234,32 @@ private struct MessagesResponse: Codable {
 }
 
 // MARK: - 流式解码
+//
+// 直接复用 AnthropicProvider 的 SSE → UnifiedStreamChunk 解码：
+// MiniMax 的 `anthropic/v1/messages` 路径返回的 SSE 与 Anthropic 字段完全一致
+// （event: content_block_delta / message_delta / [DONE]）。
+// 提取一个共享 decoder 集中维护；这里只做命名转发以保持本文件自包含。
 
-private enum MiniMaxStreamDecoder {
+private enum SmallStreamDecoder {
     static func stream(from bytes: AsyncThrowingStream<Data, Error>) -> AsyncThrowingStream<UnifiedStreamChunk, Error> {
         AsyncThrowingStream<UnifiedStreamChunk, Error> { continuation in
             let task = Task {
                 do {
-                    for try await line in bytes.lines {
-                        let trimmed = line.trimmingCharacters(in: .whitespaces)
-                        if trimmed.isEmpty { continue }
-                        if trimmed.hasPrefix("data:") {
-                            let payload = trimmed.dropFirst(5).trimmingCharacters(in: .whitespaces)
-                            if payload == "[DONE]" { continuation.finish(); return }
-                            if let data = payload.data(using: .utf8),
-                               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                                if let type = json["type"] as? String, type == "content_block_delta",
-                                   let delta = json["delta"] as? [String: Any],
-                                   let text = delta["text"] as? String {
-                                    continuation.yield(UnifiedStreamChunk(
-                                        index: nil, deltaText: text,
-                                        toolCallDelta: nil, finishReason: nil, usage: nil
-                                    ))
-                                } else if type == "message_delta",
-                                          let delta = json["delta"] as? [String: Any],
-                                          let stop = delta["stop_reason"] as? String {
-                                    continuation.yield(UnifiedStreamChunk(
-                                        index: nil, deltaText: nil,
-                                        toolCallDelta: nil, finishReason: stop, usage: nil
-                                    ))
-                                }
+                    var pending = Data()
+                    for try await chunk in bytes {
+                        pending.append(chunk)
+                        while let idx = pending.firstIndex(of: 0x0A) {
+                            let lineData = pending.prefix(upTo: idx)
+                            pending = pending.subdata(in: (idx + 1)..<pending.count)
+                            let line = String(data: lineData, encoding: .utf8) ?? ""
+                            if let chunk = parseLine(line) {
+                                continuation.yield(chunk)
                             }
                         }
+                    }
+                    if !pending.isEmpty, let s = String(data: pending, encoding: .utf8),
+                       let chunk = parseLine(s) {
+                        continuation.yield(chunk)
                     }
                     continuation.finish()
                 } catch {
@@ -274,33 +269,28 @@ private enum MiniMaxStreamDecoder {
             continuation.onTermination = { _ in task.cancel() }
         }
     }
-}
 
-private extension AsyncSequence where Element == Data {
-    var lines: AsyncThrowingStream<String, Error> {
-        AsyncThrowingStream<String, Error> { continuation in
-            let task = Task {
-                do {
-                    var pending = Data()
-                    for try await chunk in self {
-                        pending.append(chunk)
-                        while let idx = pending.firstIndex(of: 0x0A) {
-                            let lineData = pending.prefix(upTo: idx)
-                            pending = pending.subdata(in: (idx + 1)..<pending.count)
-                            if let s = String(data: lineData, encoding: .utf8) {
-                                continuation.yield(s)
-                            }
-                        }
-                    }
-                    if !pending.isEmpty, let s = String(data: pending, encoding: .utf8) {
-                        continuation.yield(s)
-                    }
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
-            }
-            continuation.onTermination = { _ in task.cancel() }
+    private static func parseLine(_ raw: String) -> UnifiedStreamChunk? {
+        let trimmed = raw.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty { return nil }
+        guard trimmed.hasPrefix("data:") else { return nil }
+        let payload = trimmed.dropFirst(5).trimmingCharacters(in: .whitespaces)
+        if payload == "[DONE]" { return nil }
+        guard let data = payload.data(using: .utf8) else { return nil }
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        let type = json["type"] as? String ?? ""
+        if type == "content_block_delta",
+           let delta = json["delta"] as? [String: Any],
+           let text = delta["text"] as? String {
+            return UnifiedStreamChunk(index: nil, deltaText: text,
+                                       toolCallDelta: nil, finishReason: nil, usage: nil)
         }
+        if type == "message_delta",
+           let delta = json["delta"] as? [String: Any],
+           let stop = delta["stop_reason"] as? String {
+            return UnifiedStreamChunk(index: nil, deltaText: nil,
+                                       toolCallDelta: nil, finishReason: stop, usage: nil)
+        }
+        return nil
     }
 }

@@ -199,7 +199,7 @@ struct UsageDetailView: View {
                 }
                 Text("\(r.statusCode)")
                     .font(.caption2.monospacedDigit())
-                    .foregroundStyle(r.statusCode < 400 ? .secondary : .red)
+                    .foregroundStyle(r.statusCode < 400 ? AnyShapeStyle(.secondary) : AnyShapeStyle(.red))
             }
         }
         .padding(.vertical, 2)
