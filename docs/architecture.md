@@ -325,6 +325,7 @@ Deep Sleep 自己的断言也会列出并标记「本应用」，方便对照。
 | `DeepSleep/Intents/DeepSleepAppShortcuts.swift` | App Shortcuts 短语与展示目录 | 短语是编译期常量、必须含 `\(.applicationName)`；两份短语由 check-docs 逐条比对 |
 | `DeepSleep/Core/UpdateManager.swift` | 应用自更新：检查、校验、替换 | 回滚分支不要删目标路径 |
 | `DeepSleep/Core/HelperVersionManager.swift` | 助手版本状态与触发自我更新 | 判据是内容摘要 |
+| `DeepSleep/LLMGateway/` | Token 监控 + 本地 LLM 网关（v1.5.0 新增） | 功能默认关闭；加 Provider 看 docs/maintenance.md 第 X 节 |
 | `DeepSleep/Privileged/HelperClient.swift` | socket 客户端、`probe()` | `Probe` 是结构体，加字段比改元组便宜 |
 | `DeepSleep/Privileged/HelperInstaller.swift` | 一次性安装 / 卸载 | 路径常量在 `HelperConstants`，脚本从环境变量取 |
 | `DeepSleep/Auth/BiometricAuth.swift` | Touch ID 授权封装 | — |

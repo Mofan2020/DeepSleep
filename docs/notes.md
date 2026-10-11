@@ -825,3 +825,42 @@ Debug 与 Release 两个产物内置的助手摘要不同，正好互为「不�
   会 SIGKILL（已实测），需要 root 进程。你装上新版 helper 之后能验证。
   整个解码算法已用真实字节样本单测过 24/24，但「拿到 bytes」这一步需要 root。
 
+
+## v1.5.0：LLM Gateway — Token 监控 + 本地 LLM 网关（2026-10-11）
+
+### 做了什么
+
+- **LLMGateway 子模块**（`DeepSleep/LLMGateway/`，独立可关）：
+  - **Database**：手写 sqlite3 封装（零依赖），表 `providers` / `quota_snapshots` / `usage_records` + WAL 模式；`~/Library/Application Support/DeepSleep/llm-gateway.sqlite`
+  - **KeychainStore**：API Key 走 macOS Keychain (`kSecClassGenericPassword`，service `com.skyc8266.deepsleep.llmgateway`)
+  - **QuotaModels**：`ProviderConfig` / `QuotaWindow` / `UsageRecord` / `GatewayConfig` / `LLMPlatform` / `BillingMode`
+  - **HTTPClient**：URLSession 包装，自动错误映射
+  - **14 个 Provider 适配层**：Anthropic（海外 + 国内）/ OpenAI / MiniMax（海外 + 国内）/ DeepSeek / 智谱 GLM / DashScope / Kimi / 字节豆包 / 百度千帆 / Gemini / Grok / Mistral / Cohere / Ollama；每个实现 `fetchQuota` / `send` / `listModels`，按 billingMode 区分抓取逻辑
+  - **FormatConverter**：Anthropic ↔ OpenAI Messages/Chat Completions 双向转换，覆盖 system/vision/tools
+  - **StreamForwarder**：SSE 字节级转发（OpenAI ↔ Anthropic event 命名/顺序差异处理）
+  - **QuotaPoller**：actor 后台轮询，按量 5min / 订阅 1min；5 次失败停轮询
+  - **GatewayServer**：Network framework NWListener 监听 `127.0.0.1:15999`，路由 `/v1/chat/completions` / `/v1/messages` / `/v1/models` / `/health`；启动时通过 SleepController 申请 `preventIdleSystemSleep` assertion 让 LLM 任务期间 Mac 不睡，停止时释放
+  - **GatewayController**：`@MainActor` ObservableObject，UI 直接订阅
+  - **6 个 SwiftUI View**：TokenDashboard（卡片网格 + 1 秒 TimelineView 倒计时）/ ProviderList / ProviderEdit（含测试连接）/ ModelSwitcher / UsageDetail（CSV 导出）/ GatewaySettings
+  - **FeatureToggle**：默认全关；升级 v1.4.x→v1.5.0 不会突然冒出新 UI
+- **Sidebar 新增 3 个 case**（tokenMonitor / gateway / modelSwitcher）；只在 `LLMGatewayFeature.tokenMonitor.isEnabled == true` 时才显示
+- **项目版本**：1.4.2 → 1.5.0，CURRENT_PROJECT_VERSION: 5 → 6
+
+### 没动的与原因
+
+- **没改 HelperProtocol / 助手二进制 / pmset / automation / release 路径**：v1.5.0 是纯应用层增量，遵守"不破坏助手兼容性"
+- **MiniMax plan 里写的 `platform.minimax.com` 域名是错的**，真实域名 `platform.minimaxi.com`（base `api.minimax.io` 海外 / `api.minimaxi.com` 国内）；用 MiniMax-AI/cli 源码（GitHub `MiniMax-AI/cli`，src/sdk/endpoints.ts）确认了 endpoint：chat = `POST {base}/anthropic/v1/messages`，quota = `GET {base}/v1/token_plan/remains` 或 `POST {base}/account/query_balance`（按 `sk-api-` 前缀分流）
+- **没动 SQLite 依赖选型**：plan 里建议手写封装，确实手写（SQLite.swift 走 SPM 会带额外编译时间）
+- **没改 Provider 失败重试策略**：QuotaPoller 失败 5 次后停轮询，按 plan 默认值 (a) 实现
+- **没做 LiteLLM 100+ 模型覆盖**：DeepSleep 只做这 14 家 + Ollama
+- **没做公网暴露 / API Key 分发 / MCP-Skills / Prompt 缓存 / Extended thinking**：plan 里写 v1.5.0 不做
+- **没让网关 OpenAI ↔ Anthropic 转换支持 prompt cache / extended thinking**：字段语义不一致，按 plan 不做
+
+### 已知限制
+
+- **Subagent 写的代码需要人工 review**：Provider 13 个 + FormatConverter / StreamForwarder 是 subagent 实现，response schema 解析按各平台文档 best-effort；只有 OpenAI / Anthropic 在本机可立即手动验证，其他平台需要真 API Key
+- **网关 SSE 流式按 SSE 标准实现（`data: <json>\n\n`）**，但没做 chunked transfer encoding 完整 RFC 解析——只有最简分块传输。复杂 chunked（带 trailer / 扩展字段）会失败
+- **Gemini RPM** 没建模：Google 不对外暴露 quota，fetchQuota 只能校验 key 有效性
+- **Grok** 只能告诉 key active/blocked，没余额/RPM 信息
+- **Cohere** 工具调用格式差异大，OpenAI→Cohere 路径只做最简转换
+- **MiniMaxProvider 的流式解码器**：原本实现是 `private extension AsyncSequence where Element == Data` + 大闭包，Xcode 27 + Swift 5 + 5 万行增量触发了 Swift 编译器的 type-checker "please submit a bug report" 错误。重构为单一函数 + 内联行解析（行为不变）后 BUILD SUCCEEDED

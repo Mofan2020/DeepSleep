@@ -355,6 +355,7 @@ git tag -d v1.2.2                       # 删本地 tag
 | 1.3.1 | 助手更新路径补上反馈：手动点击先弹框确认再更新，不再被「本次运行只自动试一次」的闸门静默吞掉；`--helper-version` 先探测再显示；新增 `--helper-update` 与助手更新端到端验证脚本 |
 | 1.4.0 | 开机自启（LaunchAgent plist，默认开）；系统监控：CPU/RAM 持续超阈告警 Top 3 占用者，可冻结或终结；内存泄漏检测（窗口内 RSS 单调增长 + 累计 ≥ 50MB，红字置顶 + 系统通知）；完全卸载（一键撤销所有副作用）。助手协议升至 v2，新增 `getProcessStats` / `suspendProcesses` / `killProcesses`；旧助手收到新命令会回 `unknown command`，新应用会提示一键更新助手 |
 | 1.4.1 | 删除内存泄漏检测（绝对阈值对应用启动 / 游戏加载误报太多）；CPU% 改为 whole-CPU 口径（100% = 全机所有核都用上）；新增「单进程 RAM 超阈」告警（默认 4 GB，可调）；监控设置切页自动落盘，不依赖「保存设置」按钮；最近事件实时刷新；完全卸载加「清应用配置」步（Prefs / Caches / AppSupport / Logs / Saved State） |
+| 1.5.0 | LLM Gateway：Token 监控（14 家 LLM 平台余额 / 5h 窗口 / 周限额 / 重置倒计时统一展示，按量/订阅自适应）+ 本地 LLM 网关（127.0.0.1:15999，OpenAI ↔ Anthropic 双向格式转换，转发到任意 Provider，支持流式 SSE + vision + function calling + 用量统计）；SideBar 新增 3 个标签（功能默认关闭，Token 监控开关在 LLMGatewayFeature.tokenMonitor / LLMGatewayFeature.gateway） |
 
 > 这个表**每次发版都要加一行**。它是给未来的人判断「哪个版本引入了什么」用的，
 > 不维护的话，排查老版本问题时就没有参照。

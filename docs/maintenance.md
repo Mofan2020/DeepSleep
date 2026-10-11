@@ -100,7 +100,23 @@ python3 scripts/check-docs.py
 4. **用户可见的 UI 里不要写开发笔记** —— 不写 `(A5.2)`、不写「按您说的…」、
    不写「TODO」。要解释设计写进这份文档或代码注释
 
-### 3.4 加一个自动化触发条件
+### 3.4 加一个 LLM Provider（v1.5.0+）
+
+LLMGateway 子模块当前已实现 14 家 Provider（Anthropic / OpenAI / MiniMax /
+DeepSeek / 智谱 / DashScope / Moonshot / Doubao / Qianfan / Gemini / Grok /
+Mistral / Cohere / Ollama）。再加新平台：
+
+1. `DeepSleep/LLMGateway/Providers/<Name>Provider.swift` —— 新文件，
+   `class <Name>Provider: NSObject, LLMProvider, LLMProviderInit`
+2. `ProviderRegistry.makeProvider(for:apiKey:)` 加 `case` 把平台分发到新类
+3. `QuotaModels.LLMPlatform` 加 `case .newProvider = "new-provider"`
+   + `title` + `needsBillingMode` / `needsAPIKey` 等映射
+4. 如有 quota 接口与现有 schema 不同，在 Provider 内私有定义 `Codable`
+   schema；不要污染 QuotaModels
+5. **真实 API 行为需要人工验证**：本工程只保证编译通过，不假设任何
+   Provider 的 quota/send 调用都对 —— 这些需要真 API Key 在你手测时确认
+
+### 3.5 加一个自动化触发条件
 
 1. `DeepSleep/Core/AutomationRule.swift` —— 规则模型的枚举
 2. `DeepSleep/Core/AutomationEngine.swift` —— 求值逻辑
@@ -108,7 +124,7 @@ python3 scripts/check-docs.py
 4. 记住：**规则只表达意图**，不直接申请断言。申请与释放统一由
    `SleepController` 收敛，否则手动开关和规则会互相打架
 
-### 3.5 改断言或对账行为
+### 3.6 改断言或对账行为
 
 这是全项目最敏感的地方，动手前先读
 [architecture.md](architecture.md) 的 3.1–3.3。
@@ -120,7 +136,7 @@ python3 scripts/check-docs.py
   「所有电源设置都听应用的」。范围表在 architecture.md 的 3.3
 - 改完必须实测：`--wait 10 --status` 看 `audits=` 是否按周期递增
 
-### 3.6 改安装 / 卸载脚本
+### 3.7 改安装 / 卸载脚本
 
 1. 脚本在 `DeepSleep/Resources/`，**单独成文件而不是内联进 Swift 字符串** ——
    这样可以被 `sh -n` 静态检查和 dry-run 验证，请保持这个性质
@@ -136,7 +152,7 @@ python3 scripts/check-docs.py
    ```
    真正的端到端安装需要管理员授权，只能人工确认
 
-### 3.7 改更新机制
+### 3.8 改更新机制
 
 - 应用侧：`DeepSleep/Core/UpdateManager.swift`
 - 助手侧：`DeepSleepHelper/SelfUpdate.swift`
@@ -161,7 +177,7 @@ python3 scripts/check-docs.py
 端到端验证：`bash scripts/test-helper-update.sh`
 （用 Debug 与 Release 两个产物互为「不同的一份」，真的替换系统里的助手，再换回来）。
 
-### 3.8 加一个回归测试
+### 3.9 加一个回归测试
 
 `scripts/` 下的测试都是 **`swiftc` 直接编译真实源码 + 一个 `@main` 测试文件**，
 不引入测试框架，也不复制一份逻辑来测。新测试请沿用这个形式：
@@ -176,7 +192,7 @@ swiftc <被依赖的真实源文件...> scripts/test-xxx.swift -o /tmp/t && /tmp
 **为什么不复制逻辑**：项目里曾出现「同一段解析 app 和助手各写一份、
 同一个 bug 存在两处」。复制到测试里等于再存一份可能过期的副本。
 
-### 3.9 加一条 URL 命令 / 一个 Siri 短语
+### 3.10 加一条 URL 命令 / 一个 Siri 短语
 
 **URL 命令**：在 `DeepSleep/Core/URLCommands.swift` 的 `commands` 表里加一条，
 再在 `handle(_:)` 的 switch 里加分支。那张表是界面说明、`--automation` 输出、
@@ -198,7 +214,7 @@ swiftc <被依赖的真实源文件...> scripts/test-xxx.swift -o /tmp/t && /tmp
 **验证**：`--automation` 打印的清单就是「系统里实际能说的话」。
 真的对 Siri 说话、在快捷指令里点击动作，只能人工确认。
 
-### 3.10 改快速退出的保护名单
+### 3.11 改快速退出的保护名单
 
 名单在 `Shared/ProcessGuard.swift`（`protectedNames` / `protectedBundleIDs`），
 **app 与助手编译同一份**。
@@ -214,7 +230,7 @@ swiftc <被依赖的真实源文件...> scripts/test-xxx.swift -o /tmp/t && /tmp
 - **不要**只挡根进程而放行它的子树（`plan()` 里命中即 `blockSubtree()`）
 - 名单之外不该被顺带拦住：「不能杀系统进程」不等于「什么都不敢杀」
 
-### 3.11 改快速退出的执行路径
+### 3.12 改快速退出的执行路径
 
 - 目标解析、双路执行、演练：`DeepSleep/Core/QuickQuit.swift`
 - 助手侧：`DeepSleepHelper/main.swift` 的 `terminateProcesses` 分支
