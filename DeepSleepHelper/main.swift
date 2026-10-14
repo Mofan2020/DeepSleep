@@ -626,13 +626,17 @@ private final class CommandHandler {
 
     /// 立即锁屏（不解锁）。
     ///
-    /// 路径选择：macOS 上没有公开的「只锁屏不解锁」API。
-    /// 稳定可用、不引入私有符号、不修改全局偏好的两条：
-    ///   1. `pmset displaysleepnow` 关显示器 —— 让屏幕黑掉
-    ///   2. 触发屏保 —— 系统设置里若启用了「立即要求密码」，屏保启动等同于锁屏
+    /// 路径选择：macOS 上没有公开 API 能"立刻锁屏但不解锁"。
+    /// 但 macOS 自带的「系统设置 → 锁屏 → 立即要求密码」配合 `pmset displaysleepnow`
+    /// 就够了：关屏后 macOS 自动判定为"已离开"，立刻要求密码。
     ///
-    /// 触发屏保的稳定路径：`open -a ScreenSaverEngine`（公开可执行文件）。
-    /// 若系统设置里未启用「立即要求密码」，这条只关屏、不锁屏 —— UI 文案要明确告诉用户。
+    /// 与早期版本的区别（v1.6.0 → v1.6.1）：早期实现走 `open -a ScreenSaverEngine`，
+    /// 但那只启动屏保动画，**不**等价于锁屏。若系统设置没启用"立即要求密码"，
+    /// 屏保启动后用户看到的是屏保界面（而不是黑屏 + 要求密码）。已改为单纯的
+    /// `pmset displaysleepnow` —— 等价于 `sleepDisplay` 命令本身。
+    ///
+    /// 调用方在 UI 上要明确告诉用户：「锁屏」依赖系统设置里已勾选"立即要求密码"。
+    /// 否则本命令只关屏，不要求输密码。
     private func lockScreen() -> HelperResponse {
         let sleep = runProcess("/usr/bin/pmset", ["displaysleepnow"])
         if sleep.status != 0 {
@@ -640,18 +644,8 @@ private final class CommandHandler {
             logLine("lockScreen: displaysleepnow 失败 \(detail)")
             return .failure("pmset displaysleepnow 失败：\(detail)")
         }
-        let saver = Process()
-        saver.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        saver.arguments = ["-a", "ScreenSaverEngine"]
-        do {
-            try saver.run()
-            saver.waitUntilExit()
-            logLine("lockScreen ok")
-            return .ok("显示器已关，屏保已启动")
-        } catch {
-            logLine("lockScreen: ScreenSaverEngine 启动失败 \(error.localizedDescription)")
-            return .failure("关屏成功但触发屏保失败：\(error.localizedDescription)")
-        }
+        logLine("lockScreen ok (= displaysleepnow)")
+        return .ok("显示器已关；若系统设置里开启了「立即要求密码」，macOS 会同时要求输入密码")
     }
 
     // MARK: - 进程优先级 nice（v1.6 起）

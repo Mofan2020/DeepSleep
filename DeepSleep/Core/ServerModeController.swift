@@ -19,11 +19,13 @@
 //      SleepController 仍然跑自己的对账。
 //
 //  安全边界：
-//    - 用户活动检测走 NSEvent.addGlobalMonitorForEvents —— 仅观察，
-//      不拦截，不修改输入。无需 Accessibility 权限。
-//    - 真要锁屏走助手（lockScreen 命令），路径里讲过的两条：
-//      关屏 + 启动 ScreenSaverEngine。ScreenSaverEngine 启动后，
-//      系统若启用了「立即要求密码」就等于锁屏。
+//    - 「空闲」用 `CGEventSourceSecondsSinceLastEventType` 读内核 HID idle time。
+//      这是 macOS 公开 API、**不**需要 Accessibility 授权即可读取。
+//      v1.6.0 早期版本用 NSEvent.addGlobalMonitorForEvents，但那需要 Accessibility
+//      授权，没授权时回调根本不来，导致"用户在操作却仍判为空闲"。
+//    - 真要锁屏走助手（sleepDisplay 命令）：关屏后 macOS 按"系统设置 → 锁屏 → 立即
+//      要求密码"决定是否要求密码。**不**调用 ScreenSaverEngine —— 那是屏保动画，
+//      不是锁屏。
 //    - 关闭服务器模式时把缓存的 displaysleep 写回系统，
 //      避免「服务器模式期间临时改的 displaysleep」留下来。
 //
@@ -59,8 +61,6 @@ final class ServerModeController: ObservableObject {
     @Published var initialSleepDelaySeconds: TimeInterval = 5
 
     private var watchdog: Timer?
-    private var eventMonitor: Any?
-    private var waitingSince: Date?
     private var helperStateWhenStarted: HelperState = .unknown
 
     private init() {}
@@ -114,7 +114,6 @@ final class ServerModeController: ObservableObject {
         uninstallUserActivityMonitor()
         watchdog?.invalidate()
         watchdog = nil
-        waitingSince = nil
         phase = .off
         lastEventDescription = "已关闭"
         controller.appendLog("服务器模式已关闭")
@@ -134,7 +133,9 @@ final class ServerModeController: ObservableObject {
         }
     }
 
-    /// 一次性动作：5 秒（或者用户配置的初始延迟）到点 → 关屏 + 锁屏。
+    /// 一次性动作：5 秒（或者用户配置的初始延迟）到点 → 关屏。
+    /// 关屏即等同"锁屏"，前提是用户在系统设置 → 锁屏里启用了"立即要求密码"。
+    /// 助手侧 `lockScreen` 与 `sleepDisplay` 是同一实现，所以这里只发一次。
     /// 之后进 `locked` 状态，等用户活动唤醒。
     private func performSleepAndLock() async {
         guard phase == .starting else { return }
@@ -144,18 +145,12 @@ final class ServerModeController: ObservableObject {
             let sleep = try await HelperClient.shared.send(.init(command: .sleepDisplay))
             if !sleep.success {
                 controller.appendLog("服务器模式：关屏失败 \(sleep.message)", isError: true)
-            }
-
-            let lock = try await HelperClient.shared.send(.init(command: .lockScreen))
-            if !lock.success {
-                controller.appendLog("服务器模式：锁屏失败 \(lock.message)", isError: true)
-                lastEventDescription = "关屏成功但锁屏失败：\(lock.message)"
+                lastEventDescription = "关屏失败：\(sleep.message)"
             } else {
-                lastEventDescription = "屏幕已关、已锁屏"
+                lastEventDescription = "屏幕已关；macOS 会按系统设置决定是否要求密码"
+                controller.appendLog("服务器模式：已关屏，等待用户唤醒")
             }
-
             phase = .locked
-            controller.appendLog("服务器模式：已关屏锁屏，等待用户唤醒")
             startIdleWatchdogAfterUnlock()
         } catch {
             controller.appendLog("服务器模式：与助手通信失败 \(error.localizedDescription)", isError: true)
@@ -168,7 +163,6 @@ final class ServerModeController: ObservableObject {
     /// 解锁后启动空闲检测 —— 用户连续 `idleThresholdSeconds` 没动，
     /// 就再走一次「关屏 + 锁屏」。
     private func startIdleWatchdogAfterUnlock() {
-        waitingSince = Date()
         watchdog?.invalidate()
         let interval: TimeInterval = 5
         let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
@@ -182,59 +176,37 @@ final class ServerModeController: ObservableObject {
     }
 
     private func tickIdleWatchdog() {
-        guard phase == .waitingForIdle, let waitingSince else { return }
-        let elapsed = Date().timeIntervalSince(waitingSince)
-        if elapsed >= idleThresholdSeconds {
+        guard phase == .waitingForIdle else { return }
+
+        // CGEventSourceSecondsSinceLastEventType 直接读内核的 HID idle time，
+        // 这是"用户最后一次操作至今"的秒数。**不**依赖 NSEvent 回调，
+        // 所以不需要 Accessibility 授权，且用户在操作时这个值会持续归零。
+        let idle = IdleTime.systemIdleSeconds() ?? 0
+
+        if idle >= idleThresholdSeconds {
             watchdog?.invalidate()
             watchdog = nil
             Task { @MainActor in
                 await performSleepAndLock()
             }
         } else {
-            let remaining = Int(idleThresholdSeconds - elapsed)
+            let remaining = Int(idleThresholdSeconds - idle)
             lastEventDescription = "空闲倒计时：\(remaining) 秒后再次关屏"
         }
     }
 
-    // MARK: - 用户活动监听
+    // MARK: - 用户活动监听（已弃用，见 IdleTime.swift）
 
     private func installUserActivityMonitor() {
-        // 监听鼠标 / 键盘事件 —— 不拦截，只观察。
-        // 仅观察不消费，所以不需要 Accessibility 权限。
-        let monitor = NSEvent.addGlobalMonitorForEvents(
-            matching: [.mouseMoved, .keyDown, .leftMouseDown, .rightMouseDown, .scrollWheel]
-        ) { [weak self] _ in
-            Task { @MainActor in
-                self?.handleUserActivity()
-            }
-        }
-        eventMonitor = monitor
+        // v1.6.0 早期版本这里用 NSEvent.addGlobalMonitorForEvents 监听回调。
+        // 但该 API 必须有 Accessibility 授权才真正回调，没授权时回调根本不来，
+        // 导致"用户在操作却仍判为空闲"的 bug。v1.6.1 起改用 IdleTime.systemIdleSeconds()
+        // 直接读内核 HID 时间戳，无需权限、不会假阴性。
+        // 此方法保留为空壳，避免破坏调用方语义。
     }
 
     private func uninstallUserActivityMonitor() {
-        if let monitor = eventMonitor {
-            NSEvent.removeMonitor(monitor)
-            eventMonitor = nil
-        }
-    }
-
-    /// 任何用户活动都「重置」空闲计时器。
-    ///
-    /// 这里隐含一个细节：用户解锁后**第一次**活动就是「解锁了，开始操作」。
-    /// 如果在 locked 状态收到活动，说明已经解锁；后续活动都是 idle 重置。
-    private func handleUserActivity() {
-        switch phase {
-        case .locked:
-            // 第一次活动 = 已解锁，开始倒计时
-            waitingSince = Date()
-            phase = .waitingForIdle
-            lastEventDescription = "已解锁，空闲计时开始"
-            SleepController.shared.appendLog("服务器模式：检测到用户活动，屏幕已唤醒")
-        case .waitingForIdle:
-            waitingSince = Date()
-        case .starting, .off:
-            break
-        }
+        // 同上：v1.6.1 起为空。
     }
 }
 

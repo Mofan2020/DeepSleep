@@ -100,7 +100,7 @@ struct ServerModeView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     BulletLine("「系统永不睡眠」通过 `pmset disablesleep=1` + 特权助手持有的 PreventSystemSleep 断言双重落实，与「完全禁止睡眠」共用对账层。")
                     BulletLine("「关屏」走 `pmset displaysleepnow`，每次都会落日志。")
-                    BulletLine("「锁屏」通过关屏 + 启动屏保实现 —— 这要求系统设置 → 锁屏已开启「立即要求密码」。否则只会关屏，不会要求输密码。")
+                    BulletLine("「锁屏」依赖系统设置 → 锁屏 → 「立即要求密码」：勾上之后，关屏即等同 macOS 要求输入密码。**首次开启前请确认该选项已勾选**，否则只会关屏，不会要求输密码。")
                     BulletLine("服务器模式期间，系统监控若启用：仅告警，不弹冻结 / 终结对话框 —— 不打扰后台服务进程。")
                     BulletLine("手动关闭或 Deep Sleep 退出时，`disablesleep` 自动恢复为 0。")
                 }

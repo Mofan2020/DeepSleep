@@ -562,12 +562,15 @@ macOS 上想做到「只锁屏、不睡眠、不注销」，公开路径里没�
 - `pmset displaysleepnow` 只关屏，屏保默认不在跑时**不**会锁屏。
 - `pmset lockscreen` 不存在。
 - 模拟 ⌃⌘Q 的 `osascript` 路径依赖 System Events 授权，且对深睡眠路径不可靠。
+- v1.6.0 早期版本尝试 `open -a ScreenSaverEngine` —— 这只启动屏保动画，
+  **不**等价于锁屏。若系统设置没启用「立即要求密码」，屏保启动后用户看到的是
+  屏保界面，而不是「黑屏 + 要求密码」。
 
-实际可用的稳定组合是两条：
+实际可用的稳定组合是：
 
 1. `pmset displaysleepnow` 关显示器。
-2. 启动 `ScreenSaverEngine.app`（`open -a ScreenSaverEngine`）。如果系统设置
-   → 锁屏里启用了「立即要求密码」，屏保启动等同于锁屏。
+2. macOS 自带的「系统设置 → 锁屏 → 立即要求密码」：勾上之后，关屏动作本身
+   就会被 macOS 当作"用户已离开"，立刻要求输入密码 —— 锁屏等价于关屏 + 该设置。
 
 这条路径**不**写 `~/Library/Preferences/com.apple.screensaver.plist`，所以不会
 悄悄改动用户的全局偏好 —— 但代价是用户的「立即要求密码」必须自己开启，
@@ -603,6 +606,26 @@ Deep Sleep 的现有解决（沿用「完全禁止睡眠」的对账）：
 与「服务器模式衍生的 disablesleep」分成两个独立状态 —— 当前不做，理由是
 这两份意图叠加运行时，关 disablesleep 后系统立刻进睡眠，那一秒的体验比
 「重新点一下禁用按钮」的代价更低。
+
+---
+
+## 17. `NSEvent.addGlobalMonitorForEvents` 需要 Accessibility 授权才能回调
+
+v1.6.0 早期版本在「服务器模式」里用 `NSEvent.addGlobalMonitorForEvents` 监听
+全局鼠标 / 键盘事件回调来识别「用户在操作」。
+
+Apple 文档说得非常清楚：该 API 必须有 Accessibility 授权才会真正回调；
+没授权时回调根本不来 —— 表现为「用户在操作却仍被判为空闲」。
+
+所以「想读系统空闲时间」应直接读内核，而**不是**靠事件回调：
+
+- 推荐：`IORegistryEntryFromPath(kIOMainPortDefault, "IOService:/IOResources/IOHIDSystem")`
+  + `IORegistryEntryCreateCFProperties` 读 `HIDIdleTime`（单位：纳秒）。
+  这是 `pmset -g` 内部用的同一来源，公开 API、无需权限。
+- 不推荐：CGEventSource.secondsSinceLastEventType（macOS 26 上签名变了，
+  可用但返回的是 CFTimeInterval 类型需转换；不是首选路径）。
+
+Deep Sleep 在 v1.6.1 起改用 IOKit registry 直读，详见 `Shared/IdleTime.swift`。
 
 ---
 

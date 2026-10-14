@@ -357,6 +357,7 @@ git tag -d v1.2.2                       # 删本地 tag
 | 1.4.1 | 删除内存泄漏检测（绝对阈值对应用启动 / 游戏加载误报太多）；CPU% 改为 whole-CPU 口径（100% = 全机所有核都用上）；新增「单进程 RAM 超阈」告警（默认 4 GB，可调）；监控设置切页自动落盘，不依赖「保存设置」按钮；最近事件实时刷新；完全卸载加「清应用配置」步（Prefs / Caches / AppSupport / Logs / Saved State） |
 | 1.5.0 | LLM Gateway：Token 监控（14 家 LLM 平台余额 / 5h 窗口 / 周限额 / 重置倒计时统一展示，按量/订阅自适应）+ 本地 LLM 网关（127.0.0.1:15999，OpenAI ↔ Anthropic 双向格式转换，转发到任意 Provider，支持流式 SSE + vision + function calling + 用量统计）；SideBar 新增 3 个标签（功能默认关闭，Token 监控开关在 LLMGatewayFeature.tokenMonitor / LLMGatewayFeature.gateway） |
 | 1.6.0 | 服务器模式：系统永不睡眠 + 5 秒后自动关屏锁屏 + 解锁后空闲 10 分钟再重复；期间系统监控仅告警不弹处理对话框。进程优先级（nice）工具：查看任意进程 nice、改任何非系统进程的 nice（走助手），系统进程一律拒绝，极端值（≤ -10 或 ≥ +15）需二级确认。Shared 新增 `ProcessPriority` + `RunningProcess.nice` 字段；协议新增 `sleepDisplay` / `lockScreen` / `getProcessNice` / `setProcessNice`；侧边栏新增「服务器模式」「进程优先级」两个标签 |
+| 1.6.1 | 服务器模式锁屏路径修正：移除 `open -a ScreenSaverEngine`（那是屏保动画，不是锁屏），改为仅 `pmset displaysleepnow`；UI 提示用户需在系统设置 → 锁屏 → 立即要求密码勾上，macOS 关屏即等同锁屏。空闲计时修正：用 `IORegistryEntryFromPath` 读 `IOHIDSystem.HIDIdleTime`（纳秒）替代 `NSEvent.addGlobalMonitorForEvents`（后者需要 Accessibility 授权才回调，否则永远不刷新倒计时）。Nice 页面修「调整…」按钮不弹窗 bug（v1.6.0 按钮直接调 applyNice，未设 `pendingPid`，导致 `.alert` 永不触发）+ 重写为后台 actor 异步加载 + 路径 / bundle id 懒加载，UI 不再卡顿。新增 `Shared/IdleTime.swift` + `scripts/test-idle-time.swift` 单测 |
 
 > 这个表**每次发版都要加一行**。它是给未来的人判断「哪个版本引入了什么」用的，
 > 不维护的话，排查老版本问题时就没有参照。

@@ -6,7 +6,7 @@
 - **应用名**：Deep Sleep
 - **最低系统**：macOS 26.0
 - **语言 / 框架**：Swift 5、SwiftUI + AppKit、IOKit、LocalAuthentication
-- **当前版本**：1.6.0
+- **当前版本**：1.6.1
 
 ## 安装
 
@@ -150,7 +150,7 @@ open "deepsleep://server-mode?value=1"
 实现要点：
 
 - 系统不睡通过 `pmset disablesleep=1` + 特权助手持有的 PreventSystemSleep 断言双重落实，与「完全禁止睡眠」共用对账层。
-- 关屏走 `pmset displaysleepnow`，锁屏走「关屏 + 启动屏保」组合 —— 启动屏保等于锁屏，需要在系统设置 → 锁屏里开启「立即要求密码」。
+- 关屏走 `pmset displaysleepnow`。**锁屏依赖系统设置 → 锁屏 → 立即要求密码**：勾上之后，关屏即等同 macOS 要求输入密码（Deep Sleep 不写 `~/Library/Preferences/com.apple.screensaver.plist`，所以不会偷偷改你的偏好）。
 - 服务器模式期间系统监控若启用：仅告警，不弹冻结 / 终结对话框。
 - 退出时 `disablesleep` 自动恢复为 0。
 
