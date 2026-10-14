@@ -11,7 +11,9 @@
 //  会试图操作真正的 boot 系统），所以 enable() 的实际效果不在单测中覆盖。
 //  集成验证在 docs/release.md 的发版流程中做。
 //
-//  运行：swift -parse DeepSleep/Core/AutoStartManager.swift scripts/test-auto-start-manager.swift
+//  运行：
+//    swiftc -parse-as-library DeepSleep/Core/AutoStartManager.swift \
+//           scripts/test-auto-start-manager.swift -o /tmp/atest && /tmp/atest
 //
 
 import Foundation

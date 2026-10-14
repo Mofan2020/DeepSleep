@@ -10,3 +10,6 @@ xcuserdata/
 
 # macOS
 .DS_Store
+
+# Hermes Agent 本地状态
+.hermes/

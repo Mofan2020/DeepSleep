@@ -8,7 +8,8 @@
 //
 //  运行：
 //    swiftc Shared/ProcessInventory.swift Shared/ProcessGuard.swift \
-//           Shared/TerminationReport.swift scripts/test-process-guard.swift -o /tmp/gt && /tmp/gt
+//           Shared/ProcessPriority.swift Shared/TerminationReport.swift \
+//           scripts/test-process-guard.swift -o /tmp/gt && /tmp/gt
 //
 
 import Darwin
@@ -31,7 +32,8 @@ struct ProcessGuardTests {
             name: name,
             executablePath: path,
             bundlePath: ProcessInventory.bundlePath(forExecutablePath: path),
-            bundleIdentifier: bundle
+            bundleIdentifier: bundle,
+            nice: 0
         )
     }
 

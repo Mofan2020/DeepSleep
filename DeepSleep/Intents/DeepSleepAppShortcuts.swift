@@ -66,6 +66,14 @@ enum DeepSleepShortcutCatalog {
             "用 {应用名} 强制退出选定的应用",
             "用 {应用名} 快速退出",
             "用 {应用名} 结束选定的应用"
+        ]),
+        Entry(title: "服务器模式", symbol: "powersleep", phrases: [
+            "用 {应用名} 开启服务器模式",
+            "用 {应用名} 关闭服务器模式"
+        ]),
+        Entry(title: "调整进程优先级", symbol: "gauge.with.dots.needle.bottom.50percent", phrases: [
+            "用 {应用名} 调整进程优先级",
+            "用 {应用名} 改进程优先级"
         ])
     ]
 
@@ -159,6 +167,26 @@ struct DeepSleepAppShortcuts: AppShortcutsProvider {
             ],
             shortTitle: "强制退出选定的应用",
             systemImageName: "xmark.circle"
+        )
+
+        AppShortcut(
+            intent: SetServerModeIntent(),
+            phrases: [
+                "用 \(.applicationName) 开启服务器模式",
+                "用 \(.applicationName) 关闭服务器模式"
+            ],
+            shortTitle: "服务器模式",
+            systemImageName: "powersleep"
+        )
+
+        AppShortcut(
+            intent: AdjustProcessNiceIntent(),
+            phrases: [
+                "用 \(.applicationName) 调整进程优先级",
+                "用 \(.applicationName) 改进程优先级"
+            ],
+            shortTitle: "调整进程优先级",
+            systemImageName: "gauge.with.dots.needle.bottom.50percent"
         )
     }
 }

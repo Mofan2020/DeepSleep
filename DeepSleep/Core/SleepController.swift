@@ -596,7 +596,7 @@ final class SleepController: ObservableObject {
     }
 
     /// 提权操作前的本地授权确认。
-    private func confirmPrivilegedAction(reason: String) async -> Bool {
+    func confirmPrivilegedAction(reason: String) async -> Bool {
         guard requireConfirmationPerAction else { return true }
         let allowed = await BiometricAuth.authenticate(reason: reason)
         if !allowed {
@@ -990,6 +990,30 @@ final class SleepController: ObservableObject {
             banner = Banner(level: .error, text: error.localizedDescription)
         }
         await refreshScheduledWake()
+    }
+
+    // MARK: - 服务器模式（v1.6 起）
+
+    /// 服务器模式开关。仅作为 `ServerModeController` 的钩入点；
+    /// 实际的状态机、用户活动监听、空闲倒计时都在那里。
+    ///
+    /// 这里只做一件事：把请求转给 controller，并把对账层
+    /// （disablesleep）按需打开 / 关闭。
+    func setServerMode(_ enabled: Bool) async {
+        if enabled {
+            await ServerModeController.shared.setEnabled(true, controller: self)
+        } else {
+            await ServerModeController.shared.setEnabled(false, controller: self)
+            // 退出时恢复 disablesleep = 0（让系统回到正常睡眠行为）。
+            // 用户在「完全控制」页主动开的 disablesleep 会被这条一并
+            // 撤销 —— 这是 server mode 的语义：「开了 server 就关系统睡眠」
+            await setSleepDisabled(false)
+        }
+    }
+
+    /// 当前是否处于服务器模式。UI 用来决定要不要展示状态徽章。
+    var isServerModeActive: Bool {
+        ServerModeController.shared.phase != .off
     }
 
     // MARK: - 日志

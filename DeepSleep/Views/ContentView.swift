@@ -30,6 +30,10 @@ enum SidebarItem: String, CaseIterable, Identifiable {
     case gateway
     /// LLM Gateway 默认模型切换（feature gated）。
     case modelSwitcher
+    /// 服务器模式：永不睡眠 + 定时关屏锁屏。
+    case serverMode
+    /// 进程优先级（nice）：查看 / 调整任何非系统进程的 nice。
+    case nice
 
     var id: String { rawValue }
 
@@ -49,6 +53,8 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .tokenMonitor:   return "Token 用量"
         case .gateway:        return "模型 Provider"
         case .modelSwitcher:  return "模型切换"
+        case .serverMode:     return "服务器模式"
+        case .nice:           return "进程优先级"
         }
     }
 
@@ -68,6 +74,8 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .tokenMonitor:   return "gauge.with.dots.needle.50percent"
         case .gateway:        return "server.rack"
         case .modelSwitcher:  return "list.bullet.indent"
+        case .serverMode:     return "powersleep"
+        case .nice:           return "gauge.with.dots.needle.bottom.50percent"
         }
     }
 }
@@ -88,6 +96,8 @@ struct ContentView: View {
                     ForEach([SidebarItem.control, .power, .schedule]) { item in
                         Label(item.title, systemImage: item.symbol).tag(item)
                     }
+                    Label(SidebarItem.serverMode.title, systemImage: SidebarItem.serverMode.symbol)
+                        .tag(SidebarItem.serverMode)
                 }
                 Section("自动化") {
                     Label(SidebarItem.automation.title, systemImage: SidebarItem.automation.symbol)
@@ -108,6 +118,10 @@ struct ContentView: View {
                         .tag(SidebarItem.update)
                     Label(SidebarItem.uninstall.title, systemImage: SidebarItem.uninstall.symbol)
                         .tag(SidebarItem.uninstall)
+                }
+                Section("工具") {
+                    Label(SidebarItem.nice.title, systemImage: SidebarItem.nice.symbol)
+                        .tag(SidebarItem.nice)
                 }
                 if LLMGatewayFeature.tokenMonitor.isEnabled {
                     Section("LLM Gateway") {
@@ -158,6 +172,8 @@ struct ContentView: View {
         case .tokenMonitor:   TokenDashboardView()
         case .gateway:        ProviderListView()
         case .modelSwitcher:  ModelSwitcherView()
+        case .serverMode:     ServerModeView()
+        case .nice:           NiceView()
         }
     }
 }
@@ -181,6 +197,11 @@ struct SidebarFooter: View {
             }
             if controller.sleepDisabled {
                 Label("已完全禁止睡眠", systemImage: "exclamationmark.octagon.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+            }
+            if controller.isServerModeActive {
+                Label("服务器模式运行中", systemImage: "powersleep")
                     .font(.caption2)
                     .foregroundStyle(.orange)
             }

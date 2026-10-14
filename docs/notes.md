@@ -864,3 +864,12 @@ Debug 与 Release 两个产物内置的助手摘要不同，正好互为「不�
 - **Grok** 只能告诉 key active/blocked，没余额/RPM 信息
 - **Cohere** 工具调用格式差异大，OpenAI→Cohere 路径只做最简转换
 - **MiniMaxProvider 的流式解码器**：原本实现是 `private extension AsyncSequence where Element == Data` + 大闭包，Xcode 27 + Swift 5 + 5 万行增量触发了 Swift 编译器的 type-checker "please submit a bug report" 错误。重构为单一函数 + 内联行解析（行为不变）后 BUILD SUCCEEDED
+
+## v1.6 实测：服务器模式 + 进程优先级（nice）
+
+- **`pmset displaysleepnow` 在 macOS 26 实测**：返回 exit=0 且立即关屏，不需要 entitlements、不需要 root。普通应用也能用，但服务器模式走助手是为了和 lockScreen 共享日志路径。
+- **`open -a ScreenSaverEngine`**：在 macOS 26 实测可启动屏保。系统设置 → 锁屏里启用了「立即要求密码」时，启动屏保 ≈ 锁屏。需要在 UI 上明确告诉用户去检查一次这个设置。
+- **`getpriority(PRIO_PROCESS, pid)` 在 macOS 26 对其他用户的进程**：实测可读到 nice 值，不需要 root。
+- **`setpriority` 任何方向**：实测普通进程被 EPERM 拒绝，所以 UI 上"调整 nice"按钮在助手未就绪时一定禁用。
+- **NSEvent `addGlobalMonitorForEvents`**：服务器模式监听用户活动用这个 API，仅观察不消费，不需要 Accessibility 权限。`tapCreate` 才需要权限 —— 这里专门避开。
+- **didEnableSleepDisabled 副作用**：服务器模式退出时主动关 disablesleep，会把用户此前手动开的 disablesleep 一并撤销。日志已记；想要更精细语义需拆分两层状态（见 gotchas.md 第 16 条）。

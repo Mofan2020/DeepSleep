@@ -421,6 +421,18 @@ private final class CommandHandler {
         case .getCPUTemperature:
             return getCPUTemperature()
 
+        case .sleepDisplay:
+            return sleepDisplay()
+
+        case .lockScreen:
+            return lockScreen()
+
+        case .getProcessNice:
+            return getProcessNice(request)
+
+        case .setProcessNice:
+            return setProcessNice(request)
+
         case .uninstall:
             logLine("uninstall requested")
             uninstallSelf()
@@ -589,6 +601,120 @@ private final class CommandHandler {
     private func parsePids(_ raw: String) -> [pid_t] {
         raw.split(separator: ",")
             .compactMap { pid_t($0.trimmingCharacters(in: .whitespaces)) }
+    }
+
+    // MARK: - 服务器模式（v1.6 起）
+
+    /// 立即关显示器。
+    ///
+    /// 走 `pmset displaysleepnow` 而不是直接持有 PreventUserIdleDisplaySleep
+    /// 反向断言 —— 后者只是「让它不要自己关」，关不掉的瞬间是 powerd 决策的。
+    /// 这里是「请现在就关」，符合用户原话「开启后五秒关闭（单系统不休眠）」。
+    ///
+    /// 不读 `displaysleep` 设置、不修改任何 `pmset` 值 —— 退出服务器模式
+    /// 时由应用侧负责把缓存的 `displaysleep` 原样写回。
+    private func sleepDisplay() -> HelperResponse {
+        let result = runProcess("/usr/bin/pmset", ["displaysleepnow"])
+        if result.status == 0 {
+            logLine("sleepDisplay ok")
+            return .ok("显示器已进入睡眠")
+        }
+        let detail = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        logLine("sleepDisplay failed: \(detail)")
+        return .failure("pmset displaysleepnow 失败：\(detail)")
+    }
+
+    /// 立即锁屏（不解锁）。
+    ///
+    /// 路径选择：macOS 上没有公开的「只锁屏不解锁」API。
+    /// 稳定可用、不引入私有符号、不修改全局偏好的两条：
+    ///   1. `pmset displaysleepnow` 关显示器 —— 让屏幕黑掉
+    ///   2. 触发屏保 —— 系统设置里若启用了「立即要求密码」，屏保启动等同于锁屏
+    ///
+    /// 触发屏保的稳定路径：`open -a ScreenSaverEngine`（公开可执行文件）。
+    /// 若系统设置里未启用「立即要求密码」，这条只关屏、不锁屏 —— UI 文案要明确告诉用户。
+    private func lockScreen() -> HelperResponse {
+        let sleep = runProcess("/usr/bin/pmset", ["displaysleepnow"])
+        if sleep.status != 0 {
+            let detail = sleep.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            logLine("lockScreen: displaysleepnow 失败 \(detail)")
+            return .failure("pmset displaysleepnow 失败：\(detail)")
+        }
+        let saver = Process()
+        saver.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        saver.arguments = ["-a", "ScreenSaverEngine"]
+        do {
+            try saver.run()
+            saver.waitUntilExit()
+            logLine("lockScreen ok")
+            return .ok("显示器已关，屏保已启动")
+        } catch {
+            logLine("lockScreen: ScreenSaverEngine 启动失败 \(error.localizedDescription)")
+            return .failure("关屏成功但触发屏保失败：\(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - 进程优先级 nice（v1.6 起）
+
+    /// 读一组 pid 的 nice。
+    /// payload 形如 `nice:<pid>=<value>;...`；读不到记成 `missing:<pid>`。
+    private func getProcessNice(_ request: HelperRequest) -> HelperResponse {
+        guard let raw = request.arguments["pids"] else {
+            return .failure("缺少 pids 参数")
+        }
+        let pids = parsePids(raw)
+        guard !pids.isEmpty else { return .failure("pids 为空或无法解析") }
+        guard pids.count <= ProcessGuard.maximumRootCount else {
+            return .failure("一次最多接受 \(ProcessGuard.maximumRootCount) 个 pid")
+        }
+
+        var payload: [String: String] = [:]
+        for pid in pids {
+            if let value = ProcessPriority.nice(of: pid) {
+                payload["nice:\(pid)"] = String(value)
+            } else {
+                payload["missing:\(pid)"] = "1"
+            }
+        }
+        return .ok("已读 \(pids.count) 个进程的 nice", payload: payload)
+    }
+
+    /// 改一个进程的 nice。
+    ///
+    /// 校验流程（与 terminateProcesses 同模式）：
+    ///   1. 解析 pid 与 value；
+    ///   2. 自己重新抓快照，读出 RunningProcess；
+    ///   3. 走 `ProcessGuard.niceRefusalReason` 判定；命中即拒绝；
+    ///   4. 调用 `ProcessPriority.setNice`（POSIX setpriority）；
+    ///   5. 失败时不重试（避免「设了又改回去」语义不清）。
+    private func setProcessNice(_ request: HelperRequest) -> HelperResponse {
+        guard let rawPid = request.arguments["pid"], let pid = pid_t(rawPid) else {
+            return .failure("缺少或非法的 pid 参数")
+        }
+        guard let rawValue = request.arguments["value"],
+              let value = NiceLevel.parse(rawValue) else {
+            return .failure("缺少或非法的 value 参数（应为 [-20, 19] 整数）")
+        }
+
+        let snapshot = ProcessInventory.snapshot()
+        guard let process = snapshot.first(where: { $0.pid == pid }) else {
+            return .failure("找不到 pid \(pid)（可能已退出）")
+        }
+
+        if let reason = ProcessGuard.niceRefusalReason(for: process) {
+            logLine("setProcessNice 拒绝 pid=\(pid) \(process.name)：\(reason)")
+            return .failure("\(reason)；Deep Sleep 不会改系统进程的 nice")
+        }
+
+        switch ProcessPriority.setNice(value, of: pid) {
+        case .success(let verified):
+            logLine("setProcessNice pid=\(pid) \(process.name) → \(verified)")
+            return .ok("已将 \(process.name) 的 nice 设为 \(NiceLevel.format(verified))",
+                       payload: ["pid": "\(pid)", "value": "\(verified)"])
+        case .failure(let reason):
+            logLine("setProcessNice 失败 pid=\(pid) \(process.name)：\(reason)")
+            return .failure("改 nice 失败：\(reason)")
+        }
     }
 
     /// 读一次 CPU 温度。算法与事实借鉴自 dkorunic/iSMC（GPL-3.0），

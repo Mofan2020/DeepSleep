@@ -555,6 +555,57 @@ codesign --verify --deep --strict "/tmp/zt/Deep Sleep.app"
 
 ---
 
+## 14. 「锁屏不解锁」没有公开 API
+
+macOS 上想做到「只锁屏、不睡眠、不注销」，公开路径里没有一条能做到。
+
+- `pmset displaysleepnow` 只关屏，屏保默认不在跑时**不**会锁屏。
+- `pmset lockscreen` 不存在。
+- 模拟 ⌃⌘Q 的 `osascript` 路径依赖 System Events 授权，且对深睡眠路径不可靠。
+
+实际可用的稳定组合是两条：
+
+1. `pmset displaysleepnow` 关显示器。
+2. 启动 `ScreenSaverEngine.app`（`open -a ScreenSaverEngine`）。如果系统设置
+   → 锁屏里启用了「立即要求密码」，屏保启动等同于锁屏。
+
+这条路径**不**写 `~/Library/Preferences/com.apple.screensaver.plist`，所以不会
+悄悄改动用户的全局偏好 —— 但代价是用户的「立即要求密码」必须自己开启，
+否则锁屏只关屏、不要求输密码。Deep Sleep 的「服务器模式」采用这条，
+并在 UI 里明确告诉用户要去系统设置检查一次。
+
+---
+
+## 15. nice 任何方向都要 root
+
+POSIX `setpriority(PRIO_PROCESS, …)` 的权限规则：
+
+- 想把 nice **调高**（正值，>0）：**也**需要 root。看似「让出资源」是无害的，
+  但允许普通进程调高自己会影响系统调度器对它的判断。
+- 想把 nice **调低**（负值，<0）：更明确需要 root，因为这是抢资源。
+- 想**读取** nice（`getpriority`）：普通进程就能读自己的、其他用户的也行（POSIX 没有
+  限制，但 macOS 实测读得到）。
+
+所以 Deep Sleep 的 nice 工具所有方向都走助手（root），而不是应用侧尝试。
+
+---
+
+## 16. `disablesleep` 的退出恢复要靠幂等缓存
+
+服务器模式期间会把 `pmset disablesleep` 设为 1，关闭时要还原为 0。
+问题是：用户可能在「完全控制」页**先**手动开了 disablesleep，
+服务器模式只是叠在它上面；这时关闭服务器模式不该把 disablesleep 关掉，
+因为那是用户的另一份意图。
+
+Deep Sleep 的现有解决（沿用「完全禁止睡眠」的对账）：
+服务器模式的退出**主动**关 disablesleep，并在日志里说明「这是服务器模式的副作用」，
+让用户重新评估。如果想要更精细的语义，需要把「用户意图的 disablesleep」
+与「服务器模式衍生的 disablesleep」分成两个独立状态 —— 当前不做，理由是
+这两份意图叠加运行时，关 disablesleep 后系统立刻进睡眠，那一秒的体验比
+「重新点一下禁用按钮」的代价更低。
+
+---
+
 ## 附：排查问题的通用姿势
 
 从这个项目的经历里提炼出来的：

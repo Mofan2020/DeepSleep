@@ -60,7 +60,13 @@ enum DeepSleepURL {
                 summary: "强制退出选定的应用。加 dry-run=1 只演练不执行"),
         Command(name: "show",
                 example: "deepsleep://show",
-                summary: "打开主界面")
+                summary: "打开主界面"),
+        Command(name: "server-mode",
+                example: "deepsleep://server-mode?value=1",
+                summary: "开启（value=1）或关闭（value=0）服务器模式，需要完全控制"),
+        Command(name: "nice",
+                example: "deepsleep://nice?pid=1234&value=5",
+                summary: "把 pid 的 nice 设为 value（[-20, 19]）；系统进程会被助手拒绝")
     ]
 
     /// 处理一个 URL。
@@ -170,6 +176,27 @@ enum DeepSleepURL {
         case "show":
             WindowCoordinator.shared.showMainWindow()
             return "已打开 Deep Sleep 主界面"
+
+        case "server-mode":
+            let raw = value("value") ?? "0"
+            let enabled = ["1", "true", "yes", "on"].contains(raw.lowercased())
+            await controller.setServerMode(enabled)
+            return enabled ? "服务器模式已开启" : "服务器模式已关闭"
+
+        case "nice":
+            guard let rawPid = value("pid"), let pid = pid_t(rawPid) else {
+                return "缺少或非法的 pid 参数"
+            }
+            guard let rawValue = value("value"),
+                  let parsed = NiceLevel.parse(rawValue) else {
+                return "缺少或非法的 value 参数（[-20, 19] 整数）"
+            }
+            do {
+                let verified = try await ProcessNiceService.shared.setNice(parsed, of: pid)
+                return "已将 pid \(pid) 的 nice 设为 \(NiceLevel.format(verified))"
+            } catch {
+                return "改 nice 失败：\(error)"
+            }
 
         default:
             return "无法识别的命令「\(name)」，可用命令见 --automation"

@@ -365,3 +365,75 @@ struct QuickQuitAppsIntent: AppIntent {
         return .result(dialog: "\(dialog)")
     }
 }
+
+// MARK: - 服务器模式
+
+struct SetServerModeIntent: AppIntent {
+
+    static var title: LocalizedStringResource { "服务器模式" }
+
+    static var description: IntentDescription {
+        IntentDescription("开启后系统永不睡眠，5 秒后自动关屏锁屏；解锁后空闲 10 分钟再重复。")
+    }
+
+    static var supportedModes: IntentModes { .background }
+
+    @Parameter(title: "开启")
+    var enabled: Bool
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("把服务器模式设为\(\.$enabled)")
+    }
+
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        let enabled = self.enabled
+        let dialog = await onMain { () -> String in
+            let controller = SleepController.shared
+            await controller.ensureReady()
+            await controller.setServerMode(enabled)
+            return enabled ? "服务器模式已开启" : "服务器模式已关闭"
+        }
+        return .result(dialog: "\(dialog)")
+    }
+}
+
+// MARK: - 调整进程优先级
+
+struct AdjustProcessNiceIntent: AppIntent {
+
+    static var title: LocalizedStringResource { "调整进程优先级" }
+
+    static var description: IntentDescription {
+        IntentDescription("把一个进程的 nice 设为给定值；系统进程会被 Deep Sleep 拒绝。")
+    }
+
+    static var supportedModes: IntentModes { .background }
+
+    @Parameter(title: "pid")
+    var pid: Int
+
+    @Parameter(title: "nice 值", default: 0)
+    var value: Int
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("把 pid \(\.$pid) 的 nice 设为 \(\.$value)")
+    }
+
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        let pidValue = pid_t(pid)
+        let valueValue = value
+        let dialog = await onMain { () -> String in
+            guard valueValue >= NiceLevel.minValue, valueValue <= NiceLevel.maxValue else {
+                return "nice 值 \(valueValue) 超出范围 [\(NiceLevel.minValue), \(NiceLevel.maxValue)]"
+            }
+            await SleepController.shared.ensureReady()
+            do {
+                let verified = try await ProcessNiceService.shared.setNice(valueValue, of: pidValue)
+                return "已将 pid \(pidValue) 的 nice 设为 \(NiceLevel.format(verified))"
+            } catch {
+                return "改 nice 失败：\(error)"
+            }
+        }
+        return .result(dialog: "\(dialog)")
+    }
+}

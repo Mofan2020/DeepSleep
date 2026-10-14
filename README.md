@@ -6,7 +6,7 @@
 - **应用名**：Deep Sleep
 - **最低系统**：macOS 26.0
 - **语言 / 框架**：Swift 5、SwiftUI + AppKit、IOKit、LocalAuthentication
-- **当前版本**：1.5.0
+- **当前版本**：1.6.0
 
 ## 安装
 
@@ -120,6 +120,8 @@ open -a "Deep Sleep" --args --status
 | `--automation` | 打印 Siri 短语与 `deepsleep://` 的命令清单 |
 | `--hotkey-status` | 打印快速退出快捷键的注册状态（排查「按了没反应」） |
 | `--autostart` | 由 LaunchAgent 自启动时传的参数：不抢主窗口焦点，仅跑菜单栏与监控 |
+| `--server-mode <0\|1>` | 开启或关闭服务器模式（系统永不睡眠 + 定时关屏锁屏） |
+| `--nice <pid> <value>` | 把 pid 的 nice 设为 value（[-20, 19]）；系统进程会被助手拒绝 |
 
 > `--hold` 与 `--release` 作用于启动它的那个实例。macOS 是单实例机制，
 > 对已经在运行的实例再传参不会生效。需要脚本持续控制时，请用下面的 URL 或自动化规则。
@@ -135,6 +137,53 @@ open "deepsleep://quick-quit?dry-run=1"
 URL 每次都会送到正在运行的那个实例，所以比命令行参数更适合重复调用。
 AppleScript 用 `open location "deepsleep://release"`，自动操作用「打开 URL」动作。
 完整的命令表与参数见 [docs/architecture.md](docs/architecture.md) 的「URL 命令一览」。
+
+## 服务器模式
+
+让一台 Mac 当服务器用：系统永不睡眠，开启后 5 秒自动关屏 + 锁屏，
+用户解锁后空闲 10 分钟再重复一次。
+
+```sh
+open "deepsleep://server-mode?value=1"
+```
+
+实现要点：
+
+- 系统不睡通过 `pmset disablesleep=1` + 特权助手持有的 PreventSystemSleep 断言双重落实，与「完全禁止睡眠」共用对账层。
+- 关屏走 `pmset displaysleepnow`，锁屏走「关屏 + 启动屏保」组合 —— 启动屏保等于锁屏，需要在系统设置 → 锁屏里开启「立即要求密码」。
+- 服务器模式期间系统监控若启用：仅告警，不弹冻结 / 终结对话框。
+- 退出时 `disablesleep` 自动恢复为 0。
+
+参数：
+
+- 首次关屏延迟：默认 5 秒，UI 可调 0–60 秒。
+- 解锁后空闲阈值：默认 10 分钟，UI 可调 1–60 分钟。
+
+可用入口：侧边栏「系统控制 → 服务器模式」、`deepsleep://server-mode?value=1|0`、
+Siri「用 Deep Sleep 开启/关闭服务器模式」、`--server-mode 0|1`。
+
+## 进程优先级（nice）
+
+查看与调整任何非系统进程的 nice 值。
+
+```sh
+open "deepsleep://nice?pid=1234&value=5"
+```
+
+nice 是 POSIX 的 CPU 调度建议值：`-20` 最优先，`+19` 最让权，`0` 是默认。
+
+- **正值（>0）也必须走 root** —— 这是 POSIX 的硬约束，应用层无特权也不能调高。
+- **改错值会让系统变卡**：负值会跟系统进程抢 CPU；系统进程一律被 Deep Sleep 拒绝。
+- **极端值（≤ -10 或 ≥ +15）需要二级确认**：给一句"仍然继续"才生效，由用户自己拍板。负值会让进程跟系统抢资源、正值会让进程几乎拿不到 CPU 时间片。
+- 本工具等价于 `sudo renice <value> <pid>`。
+
+被拒绝的目标：pid 1、内核任务、`launchd` / `WindowServer` / `powerd` 等系统进程、
+bundle id 在保护名单里的 Apple 应用、可执行文件落在 `/System/Library/` /
+`/usr/libexec/` / `/usr/sbin/` / `/usr/bin/` / `/bin/` / `/sbin/` 下的任何进程。
+
+可用入口：侧边栏「工具 → 进程优先级」、`deepsleep://nice?pid=<pid>&value=<v>`、
+Siri「用 Deep Sleep 调整进程优先级」（提供 pid + value 两个参数）、
+`--nice <pid> <value>`。
 
 ## 外部活动
 

@@ -11,6 +11,7 @@
 //  运行：
 //    swiftc -parse-as-library \
 //       Shared/ProcessStats.swift Shared/HelperProtocol.swift Shared/ProcessSnapshot.swift \
+//       Shared/ProcessPriority.swift Shared/ProcessInventory.swift \
 //       scripts/test-process-snapshot.swift -o /tmp/snap && /tmp/snap
 //
 

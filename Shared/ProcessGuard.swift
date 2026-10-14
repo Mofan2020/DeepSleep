@@ -252,6 +252,53 @@ public enum ProcessGuard {
     /// 一次动作的进程数上限（含子进程）。超过就整体拒绝，不做部分执行：
     /// 「杀了一半」比「一个没杀」更难收拾。
     public static let maximumTargetCount = 512
+
+    // MARK: - nice 改写保护
+
+    /// 关键路径前缀：这些路径下的可执行文件视为系统关键进程，
+    /// 一律拒绝改 nice。原因：nice 调高（正值）只是「让出 CPU」，
+    /// 调低（负值）是「抢 CPU」。系统进程本来就被精心调度过，
+    /// 任何方向的调整都可能让 GUI / 音频 / 电源子系统变卡。
+    private static let protectedPathPrefixes: [String] = [
+        "/System/Library/",
+        "/usr/libexec/",
+        "/usr/sbin/",
+        "/usr/bin/",
+        "/bin/",
+        "/sbin/",
+    ]
+
+    /// 判定能否改 nice。
+    ///
+    /// 与 `refusalReason` 不同的点：
+    ///   1. **不**用 `pid == getpid()` 拒绝 —— 应用进程本身可以给自己调高 nice；
+    ///   2. **不**拒绝 Deep Sleep 自己（应用 + 助手）—— 它本来就是被用户授权
+    ///      在跑的，自己给自己让权是合规的；
+    ///   3. 多了「路径前缀」这条 —— 系统关键路径下的进程不在 protectedNames
+    ///      里也能命中（例如 `mDNSResponder` 改名后跑在 `/usr/sbin/`）。
+    public static func niceRefusalReason(for process: RunningProcess) -> String? {
+        // 内核与 pid 1 无条件拒绝。名单里也有它们，但这一条不依赖名单正确。
+        if process.pid <= 1 {
+            return "内核或 launchd（pid \(process.pid)）"
+        }
+
+        let name = process.name.lowercased()
+        if protectedNames.contains(name) {
+            return "受保护的系统进程「\(process.name)」"
+        }
+        if let bundleID = process.bundleIdentifier,
+           protectedBundleIDs.contains(bundleID) {
+            return "受保护的系统应用「\(process.name)」（\(bundleID)）"
+        }
+        if !process.executablePath.isEmpty {
+            for prefix in protectedPathPrefixes {
+                if process.executablePath.hasPrefix(prefix) {
+                    return "受保护的系统路径「\(process.executablePath)」"
+                }
+            }
+        }
+        return nil
+    }
 }
 
 // MARK: - 执行

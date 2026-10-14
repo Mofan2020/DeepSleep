@@ -30,6 +30,9 @@ public struct RunningProcess: Sendable, Equatable {
     public let bundlePath: String?
     /// app 束的 `CFBundleIdentifier`；取不到时为 nil。
     public let bundleIdentifier: String?
+    /// nice 值（POSIX 优先级）。读不到时为 nil —— 这是「现在拿不到」，
+    /// 不是「进程没有 nice」（每个进程都有）。
+    public let nice: Int?
 
     public init(pid: pid_t,
                 parentPID: pid_t,
@@ -37,7 +40,8 @@ public struct RunningProcess: Sendable, Equatable {
                 name: String,
                 executablePath: String,
                 bundlePath: String?,
-                bundleIdentifier: String?) {
+                bundleIdentifier: String?,
+                nice: Int?) {
         self.pid = pid
         self.parentPID = parentPID
         self.uid = uid
@@ -45,6 +49,7 @@ public struct RunningProcess: Sendable, Equatable {
         self.executablePath = executablePath
         self.bundlePath = bundlePath
         self.bundleIdentifier = bundleIdentifier
+        self.nice = nice
     }
 }
 
@@ -97,6 +102,7 @@ public enum ProcessInventory {
         let path = pathLength > 0 ? String(cString: pathBuffer) : ""
 
         let bundle = bundlePath(forExecutablePath: path)
+        let nice = ProcessPriority.nice(of: pid)
         return RunningProcess(
             pid: pid,
             parentPID: pid_t(bitPattern: info.pbi_ppid),
@@ -104,7 +110,8 @@ public enum ProcessInventory {
             name: name,
             executablePath: path,
             bundlePath: bundle,
-            bundleIdentifier: bundle.flatMap(bundleIdentifier(forBundlePath:))
+            bundleIdentifier: bundle.flatMap(bundleIdentifier(forBundlePath:)),
+            nice: nice
         )
     }
 

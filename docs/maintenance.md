@@ -294,8 +294,8 @@ swiftc Shared/PMSetOutput.swift scripts/test-pmset-parse.swift -o /tmp/t2 && /tm
 swiftc Shared/HelperProtocol.swift DeepSleepHelper/SelfUpdate.swift \
        scripts/test-selfupdate.swift -o /tmp/t3 && /tmp/t3
 swiftc Shared/ProcessInventory.swift Shared/ProcessGuard.swift \
-       Shared/TerminationReport.swift scripts/test-process-guard.swift \
-       -o /tmp/t4 && /tmp/t4
+       Shared/ProcessPriority.swift Shared/TerminationReport.swift \
+       scripts/test-process-guard.swift -o /tmp/t4 && /tmp/t4
 ```
 
 第四个（`test-process-guard.swift`）是快速退出的裁决层：保护名单、进程树、

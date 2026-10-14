@@ -82,6 +82,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     ///   --hold <kinds>   逗号分隔，接受 idle-system / display / system 及其别名
     ///   --release        释放全部保持
     ///   --status         把当前状态输出到标准输出
+    ///   --server-mode 0|1 开启或关闭服务器模式（系统永不睡眠 + 定时关屏锁屏）
+    ///   --nice <pid> <value> 改一个进程的 nice；value ∈ [-20, 19]；系统进程会被助手拒绝
     ///   --window-self-test  自检窗口显示与 Dock 图标策略
     ///   --blockers       列出当前所有在阻止休眠的进程
     ///   --changes        列出检测到的电源设置改动
@@ -196,6 +198,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // 自启动：不开主窗口，仅把菜单栏 + 系统监控跑起来。
                 // 主窗口仍可由用户点菜单栏图标打开。
                 index += 1
+
+            case "--server-mode":
+                // 服务器模式开关：--server-mode 1 开启；--server-mode 0 关闭。
+                guard index + 1 < arguments.count else {
+                    emit("--server-mode 需要 0 或 1")
+                    index += 1
+                    continue
+                }
+                let raw = arguments[index + 1]
+                let enabled = ["1", "true", "yes", "on"].contains(raw.lowercased())
+                await controller.setServerMode(enabled)
+                emit(enabled ? "服务器模式已开启" : "服务器模式已关闭")
+                index += 2
+
+            case "--nice":
+                // 改一个进程的 nice：--nice <pid> <value>
+                guard index + 2 < arguments.count,
+                      let pid = pid_t(arguments[index + 1]),
+                      let parsed = NiceLevel.parse(arguments[index + 2]) else {
+                    emit("--nice 需要两个参数：<pid> <value>（value 在 [-20, 19]）")
+                    index += 1
+                    continue
+                }
+                do {
+                    let verified = try await ProcessNiceService.shared.setNice(parsed, of: pid)
+                    emit("已将 pid \(pid) 的 nice 设为 \(NiceLevel.format(verified))")
+                } catch {
+                    emit("改 nice 失败：\(error)")
+                }
+                index += 3
 
             case "--helper-update":
                 await Self.runHelperUpdate()

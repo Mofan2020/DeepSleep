@@ -66,6 +66,10 @@
 | `suspendProcesses` | 用 SIGSTOP 挂起一组 pid（监控场景；仍走保护名单） |
 | `killProcesses` | 用 SIGKILL 杀掉一组 pid（监控场景；仍走保护名单） |
 | `getCPUTemperature` | 读 Apple SMC（`TCMz` / `TCMb` / `TCDX`）拿 CPU Die Max / Average / Aggregate °C。算法借鉴自 dkorunic/iSMC（GPL-3.0），见 `DeepSleepHelper/SMCTemperature.swift` 顶部借鉴声明；DeepSleep 仍是 MIT，未复制 iSMC Go 源码。**仅 helper 能在 root 下连 SMC**，普通进程会失败 |
+| `sleepDisplay` | 立刻关显示器（`pmset displaysleepnow`）；供服务器模式用 |
+| `lockScreen` | 关屏 + 启动 ScreenSaverEngine（系统设置需开启「立即要求密码」才等效锁屏） |
+| `getProcessNice` | 读一组 pid 的 nice（payload `nice:<pid>=<value>` / `missing:<pid>=1`） |
+| `setProcessNice` | 改一个进程的 nice；助手独立重算 `ProcessGuard.niceRefusalReason` 拒绝系统进程 |
 
 ## 二、权限模型：管理员密码只输一次
 
@@ -411,6 +415,8 @@ Bundle ID：`com.skyc8266.deepsleep`。
 | `disable-sleep` | 完全禁止（`value=1`）或恢复（`value=0`）系统睡眠，需要完全控制 |
 | `quick-quit` | 强制退出选定的应用。加 `dry-run=1` 只演练不执行 |
 | `show` | 打开主界面 |
+| `server-mode` | 开启（`value=1`）或关闭（`value=0`）服务器模式，需要完全控制 |
+| `nice` | 把 pid 的 nice 设为 `value`（[-20, 19]）；系统进程会被助手拒绝 |
 
 无法识别的命令会被拒绝并提示「可用命令见 `--automation`」，不会静默忽略。
 

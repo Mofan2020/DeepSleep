@@ -58,6 +58,31 @@ public enum HelperCommand: String, Codable, CaseIterable, Sendable {
     /// 返回 `CPUTemperatureSample`(max/average/aggregate °C,字段缺失 = 该值读不到)。
     /// v3 协议才支持；旧版助手（v<=2）会回 `unknown command` 失败。
     case getCPUTemperature
+
+    // MARK: - 服务器模式（v1.6 起）
+
+    /// 立刻关显示器（等价于 `pmset displaysleepnow`）。
+    /// 服务模式需要「系统不睡 + 显示器关」，普通应用可以走 `pmset`，
+    /// 但这里仍走助手路径是为了和锁屏共用一套提权审计/日志。
+    /// 参数：无。
+    case sleepDisplay
+
+    /// 立刻锁屏。
+    /// 走「关屏 + 让系统已有的"立即要求密码"接管」。不写 `com.apple.screensaver`
+    /// 偏好，调用方必须先确认系统设置已开启「立即」。
+    /// 参数：无。
+    case lockScreen
+
+    // MARK: - 进程优先级（v1.6 起）
+
+    /// 读一组进程的 nice 值。参数 `pids` 为逗号分隔 pid 列表。
+    /// 返回 payload 里 `nice:<pid>=<value>` 一行一项；读不到的进程记成 `missing`。
+    case getProcessNice
+
+    /// 改一个进程的 nice 值。参数 `pid` 单进程 + `value` ∈ [-20, 19]。
+    /// 助手会先复用 `ProcessGuard.niceRefusalReason` 判定「能否改」，
+    /// 不允许系统进程、bundle id 在保护名单里的应用。
+    case setProcessNice
 }
 
 // MARK: - 请求

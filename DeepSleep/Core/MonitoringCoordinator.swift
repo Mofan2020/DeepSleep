@@ -33,10 +33,18 @@ final class MonitoringCoordinator {
         SystemNotifier.shared.requestAuthorization()
     }
 
+    /// 服务器模式期间：只走 notify（若有），跳过 AlertWindow 的「冻结 / 终结」按钮。
+    /// 这是用户原话：「系统监控若开启，则不允许自动处理，仅允许告警（若开启）」。
     private func handle(_ event: MonitorEvent) {
+        let serverMode = SleepController.shared.isServerModeActive
         switch event {
         case .overload(let overload):
             SystemNotifier.shared.notifyOverload(overload)
+            if serverMode {
+                // 仅通知，不弹「冻结 / 终结」对话框。
+                // 服务器模式期间冻结/终结可能影响后台服务进程，不应自作主张。
+                break
+            }
             AlertWindowController.shared.presentOverload(
                 event: overload,
                 onSuspend: { pids in
@@ -48,6 +56,9 @@ final class MonitoringCoordinator {
             )
         case .singleProcessRAM(let ram):
             SystemNotifier.shared.notifySingleProcessRAM(ram)
+            if serverMode {
+                break
+            }
             AlertWindowController.shared.presentSingleProcessRAM(
                 event: ram,
                 onSuspend: { pid in
@@ -58,8 +69,7 @@ final class MonitoringCoordinator {
                 }
             )
         case .cpuTemp(let temp):
-            // CPU 温度场景只告警,不冻结进程——冻结不降温,且系统会自动调频,
-            // 用户需要的不是「帮我杀进程」而是「提醒我机器热」。
+            // CPU 温度场景只告警，不冻结进程 —— 服务器模式与非服务器模式一致。
             SystemNotifier.shared.notifyCPUTemperature(temp)
             AlertWindowController.shared.presentCPUTemperature(event: temp)
         }
