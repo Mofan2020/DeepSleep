@@ -317,6 +317,9 @@ final class SleepController: ObservableObject {
         }
         remoteHeld.removeAll()
         releaseLocalAssertions()
+        // v1.6.2：服务器模式若开着，释放 CGEvent tap + 关闭对账层。
+        await ServerModeController.shared.setEnabled(false, controller: self)
+        await setSleepDisabled(false)
         appendLog("Deep Sleep 退出，已释放全部 assertion")
     }
 

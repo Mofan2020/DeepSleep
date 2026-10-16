@@ -609,23 +609,59 @@ Deep Sleep 的现有解决（沿用「完全禁止睡眠」的对账）：
 
 ---
 
-## 17. `NSEvent.addGlobalMonitorForEvents` 需要 Accessibility 授权才能回调
+## 17. 「系统空闲时间」到底怎么读 + v1.6.2 现实
 
-v1.6.0 早期版本在「服务器模式」里用 `NSEvent.addGlobalMonitorForEvents` 监听
-全局鼠标 / 键盘事件回调来识别「用户在操作」。
+想读「距离用户上次键盘 / 鼠标输入多久」有三条路，按可靠性排：
 
-Apple 文档说得非常清楚：该 API 必须有 Accessibility 授权才会真正回调；
-没授权时回调根本不来 —— 表现为「用户在操作却仍被判为空闲」。
+### (1) 应用层时间戳 + CGEvent tap —— Deep Sleep v1.6.2 起实际用这条
 
-所以「想读系统空闲时间」应直接读内核，而**不是**靠事件回调：
+```swift
+// CGEvent.tapCreate(.listenOnly, .headInsertEventTap, ...)
+// 监听 HID 层所有键盘 / 鼠标事件，不拦截、不修改
+// 每次事件来时把 lastActivityAt = Date()
+// 空闲 = Date().timeIntervalSince(lastActivityAt)
+```
 
-- 推荐：`IORegistryEntryFromPath(kIOMainPortDefault, "IOService:/IOResources/IOHIDSystem")`
-  + `IORegistryEntryCreateCFProperties` 读 `HIDIdleTime`（单位：纳秒）。
-  这是 `pmset -g` 内部用的同一来源，公开 API、无需权限。
-- 不推荐：CGEventSource.secondsSinceLastEventType（macOS 26 上签名变了，
-  可用但返回的是 CFTimeInterval 类型需转换；不是首选路径）。
+需要 **Accessibility 授权**（`AXIsProcessTrusted`）。没授权时 tap 不 fire，
+事件永远不来 —— 所以启用服务器模式前必须先确认授权。
 
-Deep Sleep 在 v1.6.1 起改用 IOKit registry 直读，详见 `Shared/IdleTime.swift`。
+这条路径**不依赖 powerd / IOHIDSystem**，完全在 DeepSleep 进程内运行，
+因此「DeepSleep 自己持 noidle 断言」对它的准确性没有任何影响。
+
+### (2) `IORegistryEntryFromPath(...)` 读 `IOHIDSystem.HIDIdleTime`
+
+```swift
+IORegistryEntryFromPath(kIOMainPortDefault, "IOService:/IOResources/IOHIDSystem")
++ IORegistryEntryCreateCFProperties
++ dict["HIDIdleTime"] as? UInt64  // 纳秒
+```
+
+公开 API、**无需权限**。这是 `pmset` 内部用的同一来源。
+
+**但是 —— 当任意进程持有 `PreventUserIdleSystemSleep` 类型的 noidle 断言时
+powerd 会停止累加 `HIDIdleTime`**。实测 30 秒不动机器，值在 0~1.5 秒之间
+反复跳（powerd 偶尔处理别的 I/O 时短暂刷新一次），**不会**单调递增到阈值。
+
+也就是说，在「DeepSleep 助手 + 主进程 + UURemote 同时持 noidle 断言」的
+服务器模式核心使用场景下，路径 (2) 不可信。Deep Sleep v1.6.1 用了这条
+路径，导致「倒计时永远不动 / 到点也不息屏」。
+
+### (3) `CGEventSourceSecondsSinceLastEventType(.hidSystemState, kAny)`
+
+macOS 26 上签名变了（Swift 枚举 / `kCGAnyInputEventType = 0xFFFFFFFF`
+需要 `CGEventType(rawValue:)` 构造），表现跟 (2) 一样：在持有 noidle
+断言时不维护。
+
+### Deep Sleep 自身的演化
+
+- **v1.6.0**：用 `NSEvent.addGlobalMonitorForEvents` 监听回调 —— 没授权
+  时回调根本不来，假阴性。
+- **v1.6.1**：切到路径 (2)，避开了 (1) 的授权问题 —— 但碰上 powerd 不维护
+  的边界 bug，「倒计时永远不动」。
+- **v1.6.2**：切到路径 (1)，重新引入 Accessibility 授权要求，但每次授权
+  一次后续不再问（macOS TCC 持久化）。服务器模式开启前先调
+  `AXIsProcessTrustedWithOptions(prompt: true)` 弹系统对话框引导授权，
+  未授权直接拒绝开启（不允许「开了但倒计时不动」的退化态）。
 
 ---
 

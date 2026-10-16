@@ -86,7 +86,7 @@ struct ServerModeView: View {
                         mode.idleThresholdSeconds = TimeInterval(v * 60)
                     }
 
-                    Text("空闲计时从最后一次鼠标 / 键盘活动开始算。")
+                    Text("解锁后空闲计时：CGEvent tap 监听全局键盘 / 鼠标事件，事件一来就重置；阈值到点自动再次关屏。需要「系统设置 → 隐私与安全性 → 辅助功能」里勾选 Deep Sleep。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
