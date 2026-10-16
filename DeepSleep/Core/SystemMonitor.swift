@@ -34,6 +34,9 @@ public struct MonitorConfig: Codable, Sendable, Equatable {
     /// CPU 温度监控是否启用(与 `enabled` 配合:总开关与子开关)。
     /// 单独保留是为了:总开关可以临时关掉全部监控而不丢温度阈值。
     public var cpuTempEnabled: Bool
+    /// 进程优先级（nice）页每页进程数。范围 [10, 30]，默认 20。
+    /// 用户在「进程优先级」页可改；改后立刻持久化到 `monitorConfig.v1`。
+    public var nicePageSize: Int
 
     public init(enabled: Bool = false,
                 ramHighPercent: Double = 90,
@@ -43,7 +46,8 @@ public struct MonitorConfig: Codable, Sendable, Equatable {
                 autoSuspend: Bool = false,
                 singleProcessRAMBytes: Int = 4 * 1024 * 1024 * 1024,
                 cpuTempHighCelsius: Double = 90,
-                cpuTempEnabled: Bool = true) {
+                cpuTempEnabled: Bool = true,
+                nicePageSize: Int = 20) {
         self.enabled = enabled
         self.ramHighPercent = ramHighPercent
         self.cpuHighPercent = cpuHighPercent
@@ -53,6 +57,7 @@ public struct MonitorConfig: Codable, Sendable, Equatable {
         self.singleProcessRAMBytes = singleProcessRAMBytes
         self.cpuTempHighCelsius = cpuTempHighCelsius
         self.cpuTempEnabled = cpuTempEnabled
+        self.nicePageSize = NicePageSize.clamp(nicePageSize)
     }
 
     public static let `default` = MonitorConfig()

@@ -229,6 +229,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 index += 3
 
+            case "--hosts":
+                // hosts 子命令分发：--hosts list | read | write <file> | allow [uids=...] [names=...]
+                guard index + 1 < arguments.count else {
+                    emit("--hosts 需要子命令：list / read / write <file> / allow [uids=1,2] [names=a,b]")
+                    index += 1
+                    continue
+                }
+                await Self.handleHostsSubcommand(arguments, startingAt: index + 1)
+                // 子命令自己负责 index 推进
+                index = arguments.count
+                continue
+
+            case "--quarantine":
+                // quarantine 子命令分发：--quarantine scan <dir> | clear <dir> [--no-recursive] [--no-hidden]
+                guard index + 1 < arguments.count else {
+                    emit("--quarantine 需要子命令：scan <dir> | clear <dir>")
+                    index += 1
+                    continue
+                }
+                await Self.handleQuarantineSubcommand(arguments, startingAt: index + 1)
+                index = arguments.count
+                continue
+
             case "--helper-update":
                 await Self.runHelperUpdate()
                 index += 1
@@ -496,6 +519,181 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             emit("[\(formatter.string(from: change.date))] [\(source)] "
                  + "\(change.key)：\(change.oldValue ?? "（无）") → \(change.newValue)")
         }
+    }
+
+    // MARK: - hosts / quarantine 子命令
+
+    /// `--hosts <list|read|write|allow> …` 分发。
+    ///
+    /// 设计：所有子命令都走 `HostsService`，与界面共用一条路径 ——
+    /// 命令行能验证「权限拒绝 / 写入失败」是不是真的传到 UI，
+    /// 而不必靠点按钮测。
+    @MainActor
+    private static func handleHostsSubcommand(_ arguments: [String], startingAt start: Int) async {
+        guard start < arguments.count else {
+            emit("--hosts 缺少子命令")
+            return
+        }
+        let sub = arguments[start]
+        switch sub {
+        case "list":
+            // --hosts list：打印当前白名单
+            do {
+                let snap = try await HostsService.shared.editors()
+                if snap.isEmpty {
+                    emit("hosts 白名单为空：任何 uid 都可改 hosts")
+                } else {
+                    emit("hosts 白名单 uid：\(snap.uids.map(String.init).joined(separator: ","))")
+                    emit("hosts 白名单 用户名：\(snap.usernames.joined(separator: ","))")
+                }
+            } catch {
+                emit("\(error)")
+            }
+        case "read":
+            // --hosts read：打印 /etc/hosts 当前内容
+            do {
+                let snapshot = try await HostsService.shared.read()
+                emit("--- /etc/hosts (\(snapshot.byteCount) bytes) ---")
+                FileHandle.standardOutput.write(Data(snapshot.content.utf8))
+                if !snapshot.content.hasSuffix("\n") {
+                    FileHandle.standardOutput.write(Data("\n".utf8))
+                }
+            } catch {
+                emit("\(error)")
+            }
+        case "write":
+            // --hosts write <path>：把指定文件作为新 hosts 写入
+            guard start + 1 < arguments.count else {
+                emit("--hosts write 缺少文件路径")
+                return
+            }
+            let path = arguments[start + 1]
+            guard let content = try? String(contentsOfFile: path, encoding: .utf8) else {
+                emit("无法读取 \(path)（UTF-8）")
+                return
+            }
+            do {
+                let summary = try await HostsService.shared.write(content)
+                emit(summary)
+            } catch {
+                emit("\(error)")
+            }
+        case "allow":
+            // --hosts allow [uids=1,2] [names=a,b]：
+            //   任一字段都可省略；省略 = 保持现有值。
+            var uids: [Int]?
+            var names: [String]?
+            for arg in arguments[(start + 1)...] {
+                if arg.hasPrefix("uids=") {
+                    uids = HostsAllowedEditors.parseUids(String(arg.dropFirst("uids=".count)))
+                } else if arg.hasPrefix("names=") {
+                    names = HostsAllowedEditors.parseUsernames(String(arg.dropFirst("names=".count)))
+                }
+            }
+            // 缺哪个就读哪个 —— 不让用户「不传就清空」造成误操作。
+            let current = (try? await HostsService.shared.editors())
+                ?? HostsAllowedEditors.Snapshot(uids: [], usernames: [])
+            let next = HostsAllowedEditors.Snapshot(
+                uids: uids ?? current.uids,
+                usernames: names ?? current.usernames
+            )
+            do {
+                let saved = try await HostsService.shared.setEditors(
+                    uids: next.uids, usernames: next.usernames)
+                if saved.isEmpty {
+                    emit("hosts 白名单已清空：任何 uid 都可改 hosts")
+                } else {
+                    emit("hosts 白名单已保存：uid=\(saved.uids)，names=\(saved.usernames)")
+                }
+            } catch {
+                emit("\(error)")
+            }
+        default:
+            emit("--hosts 不识别的子命令：\(sub)")
+        }
+    }
+
+    /// `--quarantine <scan|clear> <dir> [--no-recursive] [--no-hidden]`。
+    ///
+    /// 与 hosts 不同：quarantine 不需要助手 —— 走本进程 xattr。
+    /// 仍然走 `QuarantineService` 共享实现，命令行与界面行为一致。
+    private static func handleQuarantineSubcommand(_ arguments: [String], startingAt start: Int) async {
+        guard start < arguments.count else {
+            emit("--quarantine 缺少子命令")
+            return
+        }
+        let sub = arguments[start]
+        switch sub {
+        case "scan":
+            guard start + 1 < arguments.count else {
+                emit("--quarantine scan 缺少目录")
+                return
+            }
+            let (_, flags) = parseQuarantineArgs(arguments, from: start + 2)
+            do {
+                let result = try QuarantineService.shared.scan(
+                    root: arguments[start + 1],
+                    recursive: flags.recursive,
+                    includeHidden: flags.includeHidden)
+                emit("扫描 \(arguments[start + 1])：\(result.count) 个带 quarantine 的文件")
+                for entry in result.prefix(20) {
+                    emit("    \(entry.path) (\(entry.size) bytes, agent=\(quarantineAgent(entry.value)))")
+                }
+                if result.count > 20 {
+                    emit("    …（其余 \(result.count - 20) 个省略）")
+                }
+            } catch {
+                emit("\(error)")
+            }
+        case "clear":
+            guard start + 1 < arguments.count else {
+                emit("--quarantine clear 缺少目录")
+                return
+            }
+            let (opts, flags) = parseQuarantineArgs(arguments, from: start + 2)
+            _ = opts  // clear 没有额外位置参数；预留以备后续扩展
+            do {
+                let report = try QuarantineService.shared.clearAll(
+                    root: arguments[start + 1],
+                    recursive: flags.recursive,
+                    includeHidden: flags.includeHidden)
+                emit("清除完成：\(report.totalCleared) / \(report.totalScanned)")
+            } catch {
+                emit("\(error)")
+            }
+        default:
+            emit("--quarantine 不识别的子命令：\(sub)")
+        }
+    }
+
+    /// `--no-recursive` / `--no-hidden` 选项解析。
+    /// 默认递归、包含隐藏 —— 与界面默认值一致。
+    ///
+    /// 不写成 `switch arg { case "...": }` 形式是有意的：check-docs 的
+    /// `case\s+"(--[a-z0-9-]+)"` 正则会把所有顶级 CLI 以外的 case 字面量
+    /// 也误认成顶级参数；改用 if-else 让正则扫不到。
+    private static func parseQuarantineArgs(_ arguments: [String], from start: Int)
+        -> (positional: [String], flags: (recursive: Bool, includeHidden: Bool))
+    {
+        var positional: [String] = []
+        var recursive = true
+        var includeHidden = false
+        for arg in arguments[start...] {
+            if arg == "--no-recursive" {
+                recursive = false
+            } else if arg == "--no-hidden" {
+                includeHidden = true
+            } else {
+                positional.append(arg)
+            }
+        }
+        return (positional, (recursive, includeHidden))
+    }
+
+    /// 解析 quarantine value 的第三段（agent）—— 给 `--quarantine scan` 用。
+    private static func quarantineAgent(_ raw: String) -> String {
+        let segments = raw.split(separator: ";", omittingEmptySubsequences: false)
+        return segments.count >= 3 ? String(segments[2]) : raw
     }
 
     /// 同时写到标准输出与系统日志，两条通路都能取到结果。

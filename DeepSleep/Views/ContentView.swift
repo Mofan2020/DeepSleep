@@ -34,6 +34,10 @@ enum SidebarItem: String, CaseIterable, Identifiable {
     case serverMode
     /// 进程优先级（nice）：查看 / 调整任何非系统进程的 nice。
     case nice
+    /// Hosts 编辑：读写 /etc/hosts + 管理「谁能改 hosts」白名单。
+    case hosts
+    /// Quarantine 属性管理：扫描并清除 macOS 的 quarantine 扩展属性。
+    case quarantine
 
     var id: String { rawValue }
 
@@ -55,6 +59,8 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .modelSwitcher:  return "模型切换"
         case .serverMode:     return "服务器模式"
         case .nice:           return "进程优先级"
+        case .hosts:          return "Hosts 编辑"
+        case .quarantine:     return "Quarantine"
         }
     }
 
@@ -76,6 +82,8 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .modelSwitcher:  return "list.bullet.indent"
         case .serverMode:     return "powersleep"
         case .nice:           return "gauge.with.dots.needle.bottom.50percent"
+        case .hosts:          return "doc.text.fill"
+        case .quarantine:     return "lock.shield"
         }
     }
 }
@@ -122,6 +130,10 @@ struct ContentView: View {
                 Section("工具") {
                     Label(SidebarItem.nice.title, systemImage: SidebarItem.nice.symbol)
                         .tag(SidebarItem.nice)
+                    Label(SidebarItem.hosts.title, systemImage: SidebarItem.hosts.symbol)
+                        .tag(SidebarItem.hosts)
+                    Label(SidebarItem.quarantine.title, systemImage: SidebarItem.quarantine.symbol)
+                        .tag(SidebarItem.quarantine)
                 }
                 if LLMGatewayFeature.tokenMonitor.isEnabled {
                     Section("LLM Gateway") {
@@ -174,6 +186,8 @@ struct ContentView: View {
         case .modelSwitcher:  ModelSwitcherView()
         case .serverMode:     ServerModeView()
         case .nice:           NiceView()
+        case .hosts:          HostsView()
+        case .quarantine:     QuarantineView()
         }
     }
 }

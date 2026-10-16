@@ -433,6 +433,18 @@ private final class CommandHandler {
         case .setProcessNice:
             return setProcessNice(request)
 
+        case .readHosts:
+            return readHosts(request)
+
+        case .writeHosts:
+            return writeHosts(request)
+
+        case .listHostsEditors:
+            return listHostsEditors(request)
+
+        case .setHostsEditors:
+            return setHostsEditors(request)
+
         case .uninstall:
             logLine("uninstall requested")
             uninstallSelf()
@@ -767,6 +779,141 @@ private final class CommandHandler {
             exit(0)
         }
     }
+
+    // MARK: - /etc/hosts（v1.7 起）
+
+    /// `/etc/hosts` 的路径。SIP 保护到只允许 root 写入；
+    /// macOS 上即便 root 写入，路径也由 launchd 缓存，`dscacheutil -flushcache`
+    /// 不是助手的工作 —— 调用方在写入后会自行决定要不要 flush。
+    private static let hostsPath = "/etc/hosts"
+
+    /// 同目录的备份路径。命名固定，方便用户排查时找到最近一次改之前的原文。
+    private static let hostsBackupPath = "/etc/hosts.deepsleep.bak"
+
+    /// 读取 hosts。任何 uid 都能读（读取不做白名单 —— 否则 root 装的本工具
+    /// 自己读 hosts 也会被自己写的白名单挡掉，没有意义）。
+    private func readHosts(_ request: HelperRequest) -> HelperResponse {
+        guard let content = try? String(contentsOfFile: Self.hostsPath, encoding: .utf8) else {
+            logLine("readHosts 失败")
+            return .failure("无法读取 \(Self.hostsPath)（编码必须是 UTF-8）")
+        }
+        return .ok("hosts read", payload: [
+            "content": content,
+            "length": "\(content.utf8.count)"
+        ])
+    }
+
+    /// 写入 hosts。**关键安全检查**：调用方 uid 必须在 hosts 白名单内
+    /// （空白名单 → 放行任何 uid）。先备份原文，再写新内容，最后强制恢复
+    /// `root:wheel` + `0644`，避免被任意调用方改成可执行。
+    private func writeHosts(_ request: HelperRequest) -> HelperResponse {
+        guard let callerUID = request.callerUID else {
+            return .failure("助手内部错误：callerUID 未填写")
+        }
+        let snapshot = HostsAllowedEditors.load()
+        guard HostsAllowedEditors.isAllowed(uid: Int(callerUID), snapshot: snapshot) else {
+            logLine("writeHosts 拒绝 uid=\(callerUID)：不在白名单")
+            return .failure("uid \(callerUID) 不在 hosts 编辑白名单内，请先在「Hosts 编辑」页加入白名单")
+        }
+        guard let raw = request.arguments["content"], !raw.isEmpty else {
+            return .failure("缺少或为空的 content 参数")
+        }
+        guard raw.data(using: .utf8) != nil else {
+            return .failure("content 必须是合法的 UTF-8 字符串")
+        }
+        // 内容大小上限：避免调用方塞超大字符串。
+        // 64 KB 对 hosts 已经远超正常（系统默认 < 1 KB）。
+        guard raw.utf8.count <= 64 * 1024 else {
+            return .failure("content 超过 64 KB 上限")
+        }
+
+        // 备份当前文件 —— 写失败时手动回滚；写成功时也保留一份以便排查。
+        do {
+            if FileManager.default.fileExists(atPath: Self.hostsBackupPath) {
+                try? FileManager.default.removeItem(atPath: Self.hostsBackupPath)
+            }
+            try FileManager.default.copyItem(
+                atPath: Self.hostsPath, toPath: Self.hostsBackupPath)
+        } catch {
+            logLine("writeHosts 备份失败：\(error.localizedDescription)")
+            return .failure("备份 \(Self.hostsPath) 失败：\(error.localizedDescription)")
+        }
+
+        // 写新内容。用临时文件 + atomic rename 是惯用做法：
+        // rename 在同一文件系统内是原子的，不会出现「半截写入」状态。
+        let tempPath = "/tmp/deepsleep.hosts.tmp.\(getpid())"
+        do {
+            try raw.write(toFile: tempPath, atomically: true, encoding: .utf8)
+        } catch {
+            logLine("writeHosts 写临时文件失败：\(error.localizedDescription)")
+            return .failure("写入临时文件失败：\(error.localizedDescription)")
+        }
+        // 复制到 /etc/hosts：cp 比 mv 跨设备时更可靠；
+        // mv 跨设备会复制 + 删除原文件，留下微秒级窗口期 hosts 不存在。
+        let cp = runProcess("/bin/cp", [tempPath, Self.hostsPath])
+        try? FileManager.default.removeItem(atPath: tempPath)
+        guard cp.status == 0 else {
+            logLine("writeHosts cp 失败：\(cp.output.trimmingCharacters(in: .whitespacesAndNewlines))")
+            return .failure("写入 \(Self.hostsPath) 失败：\(cp.output.trimmingCharacters(in: .whitespacesAndNewlines))")
+        }
+
+        // 强制恢复 owner + mode：调用方不能把 hosts 变成可执行。
+        let chown = runProcess("/usr/sbin/chown", ["root:wheel", Self.hostsPath])
+        guard chown.status == 0 else {
+            logLine("writeHosts chown 失败：\(chown.output.trimmingCharacters(in: .whitespacesAndNewlines))")
+            return .failure("恢复 owner 失败：\(chown.output.trimmingCharacters(in: .whitespacesAndNewlines))")
+        }
+        let chmod = runProcess("/bin/chmod", ["0644", Self.hostsPath])
+        guard chmod.status == 0 else {
+            logLine("writeHosts chmod 失败：\(chmod.output.trimmingCharacters(in: .whitespacesAndNewlines))")
+            return .failure("恢复 mode 失败：\(chmod.output.trimmingCharacters(in: .whitespacesAndNewlines))")
+        }
+
+        logLine("writeHosts ok caller=\(callerUID) bytes=\(raw.utf8.count)")
+        return .ok("已写入 \(Self.hostsPath)，原文件备份在 \(Self.hostsBackupPath)")
+    }
+
+    /// 读白名单。读取不需要白名单 —— 否则应用想显示白名单都得先被自己允许。
+    private func listHostsEditors(_ request: HelperRequest) -> HelperResponse {
+        let snapshot = HostsAllowedEditors.load()
+        return .ok("hosts editors", payload: [
+            "uids": snapshot.uids.map(String.init).joined(separator: ","),
+            "usernames": snapshot.usernames.joined(separator: ",")
+        ])
+    }
+
+    /// 改白名单。改白名单的权限 = 当前白名单：空白名单时任何人能改（默认）；
+    /// 非空白名单时调用方必须在白名单内（防止普通 uid 把自己加进去）。
+    private func setHostsEditors(_ request: HelperRequest) -> HelperResponse {
+        guard let callerUID = request.callerUID else {
+            return .failure("助手内部错误：callerUID 未填写")
+        }
+        let current = HostsAllowedEditors.load()
+        guard HostsAllowedEditors.isAllowed(uid: Int(callerUID), snapshot: current) else {
+            logLine("setHostsEditors 拒绝 uid=\(callerUID)")
+            return .failure("uid \(callerUID) 当前不在白名单内，无法修改白名单")
+        }
+
+        let rawUids = request.arguments["uids"] ?? ""
+        let rawUsernames = request.arguments["usernames"] ?? ""
+        let newSnapshot = HostsAllowedEditors.Snapshot(
+            uids: HostsAllowedEditors.parseUids(rawUids),
+            usernames: HostsAllowedEditors.parseUsernames(rawUsernames)
+        )
+
+        switch HostsAllowedEditors.save(newSnapshot) {
+        case .success:
+            logLine("setHostsEditors ok caller=\(callerUID) uids=\(newSnapshot.uids) names=\(newSnapshot.usernames)")
+            return .ok("白名单已保存",
+                       payload: [
+                           "uids": newSnapshot.uids.map(String.init).joined(separator: ","),
+                           "usernames": newSnapshot.usernames.joined(separator: ",")
+                       ])
+        case .failure(let reason):
+            logLine("setHostsEditors 失败：\(reason)")
+            return .failure("\(reason)")
+        }
+    }
 }
 
 // MARK: - 服务器
@@ -887,8 +1034,10 @@ private final class HelperServer {
 
         do {
             let request = try UnixSocket.readFrame(client, as: HelperRequest.self)
+            var requestWithCaller = request
+            requestWithCaller.callerUID = credentials.uid
             logLine("← \(request.command.rawValue) \(request.arguments.isEmpty ? "" : "\(request.arguments)")")
-            let response = handler.handle(request)
+            let response = handler.handle(requestWithCaller)
             try UnixSocket.sendFrame(client, response)
         } catch {
             logLine("处理连接出错：\(error.localizedDescription)")

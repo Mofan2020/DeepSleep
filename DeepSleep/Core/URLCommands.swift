@@ -66,7 +66,22 @@ enum DeepSleepURL {
                 summary: "开启（value=1）或关闭（value=0）服务器模式，需要完全控制"),
         Command(name: "nice",
                 example: "deepsleep://nice?pid=1234&value=5",
-                summary: "把 pid 的 nice 设为 value（[-20, 19]）；系统进程会被助手拒绝")
+                summary: "把 pid 的 nice 设为 value（[-20, 19]）；系统进程会被助手拒绝"),
+        Command(name: "hosts-read",
+                example: "deepsleep://hosts-read",
+                summary: "读取 /etc/hosts 当前内容，助手操作需要先启用完全控制"),
+        Command(name: "hosts-write",
+                example: "deepsleep://hosts-write?content=...（需 URL 编码）",
+                summary: "用 content 覆盖 /etc/hosts；调用方必须在 hosts 编辑白名单内"),
+        Command(name: "hosts-editors",
+                example: "deepsleep://hosts-editors?uids=501,502&names=mofan",
+                summary: "替换「谁能改 hosts」白名单；空白名单 = 任何 uid 可改"),
+        Command(name: "quarantine-scan",
+                example: "deepsleep://quarantine-scan?path=~/Downloads",
+                summary: "扫描目录下所有带 quarantine 属性的文件"),
+        Command(name: "quarantine-clear",
+                example: "deepsleep://quarantine-clear?path=~/Downloads",
+                summary: "清除目录下所有文件的 quarantine 属性")
     ]
 
     /// 处理一个 URL。
@@ -198,9 +213,88 @@ enum DeepSleepURL {
                 return "改 nice 失败：\(error)"
             }
 
+        case "hosts-read":
+            do {
+                let snapshot = try await HostsService.shared.read()
+                return "/etc/hosts（\(snapshot.byteCount) 字节）：\n\(snapshot.content)"
+            } catch {
+                return "读取 hosts 失败：\(error)"
+            }
+
+        case "hosts-write":
+            // content 必须 URL 解码后传入；空内容视为非法。
+            guard let raw = value("content"), !raw.isEmpty else {
+                return "缺少或为空的 content 参数"
+            }
+            do {
+                return try await HostsService.shared.write(raw)
+            } catch {
+                return "写入 hosts 失败：\(error)"
+            }
+
+        case "hosts-editors":
+            let rawUids = value("uids") ?? ""
+            let rawNames = value("names") ?? ""
+            let uids = HostsAllowedEditors.parseUids(rawUids)
+            let usernames = HostsAllowedEditors.parseUsernames(rawNames)
+            do {
+                let saved = try await HostsService.shared.setEditors(
+                    uids: uids, usernames: usernames)
+                return saved.isEmpty
+                    ? "hosts 白名单已清空：任何 uid 都可改 hosts"
+                    : "hosts 白名单已保存：uid=\(saved.uids)，names=\(saved.usernames)"
+            } catch {
+                return "设置 hosts 白名单失败：\(error)"
+            }
+
+        case "quarantine-scan":
+            guard let path = expandPath(value("path")) else {
+                return "缺少或非法的 path 参数"
+            }
+            do {
+                let entries = try QuarantineService.shared.scan(
+                    root: path, recursive: true, includeHidden: false)
+                if entries.isEmpty {
+                    return "扫描 \(path)：没有带 quarantine 属性的文件"
+                }
+                let sample = entries.prefix(10)
+                    .map { "    \($0.path)" }
+                    .joined(separator: "\n")
+                let suffix = entries.count > 10
+                    ? "\n    …（其余 \(entries.count - 10) 个省略）" : ""
+                return "扫描 \(path)：\(entries.count) 个带 quarantine 的文件\n\(sample)\(suffix)"
+            } catch {
+                return "扫描 quarantine 失败：\(error)"
+            }
+
+        case "quarantine-clear":
+            guard let path = expandPath(value("path")) else {
+                return "缺少或非法的 path 参数"
+            }
+            do {
+                let report = try QuarantineService.shared.clearAll(
+                    root: path, recursive: true, includeHidden: false)
+                return "清除 \(path)：\(report.totalCleared) / \(report.totalScanned) 个文件"
+            } catch {
+                return "清除 quarantine 失败：\(error)"
+            }
+
         default:
             return "无法识别的命令「\(name)」，可用命令见 --automation"
         }
+    }
+
+    /// `~` 与 `$HOME` 展开。`~/Downloads` 在 URL 里直接写就行。
+    private static func expandPath(_ raw: String?) -> String? {
+        guard let raw, !raw.isEmpty else { return nil }
+        var path = raw
+        if path.hasPrefix("~/") {
+            path = (NSHomeDirectory() as NSString).appendingPathComponent(
+                String(path.dropFirst(2)))
+        } else if path == "~" {
+            path = NSHomeDirectory()
+        }
+        return FileManager.default.fileExists(atPath: path) ? path : nil
     }
 
     /// `kind=all` / `lid` / `clamshell` 这类写法要落到「连合盖也不睡」，

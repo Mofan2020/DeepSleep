@@ -83,6 +83,36 @@ public enum HelperCommand: String, Codable, CaseIterable, Sendable {
     /// 助手会先复用 `ProcessGuard.niceRefusalReason` 判定「能否改」，
     /// 不允许系统进程、bundle id 在保护名单里的应用。
     case setProcessNice
+
+    // MARK: - Hosts 文件（v1.7 起）
+
+    /// 读取 `/etc/hosts` 的当前内容。返回 payload `content=<原文>`。
+    /// 无参数。
+    case readHosts
+
+    /// 写入 `/etc/hosts`。
+    ///
+    /// 写入前会做三件事：
+    ///   1. 校验调用方 uid 在 hosts 编辑白名单内（白名单为空时放行任何 uid）；
+    ///   2. 调用方给的内容是**完整文件原文**（不是 diff/patch），先备份再写；
+    ///   3. 写完后把 owner 设回 `root:wheel`、mode `0644`，
+    ///      防止任何调用方让 hosts 变成可执行。
+    ///
+    /// 参数 `content=<新内容>`。`content` 必须 UTF-8 合法、且非空。
+    case writeHosts
+
+    /// 读取当前的「谁能改 hosts」白名单。
+    /// payload `uids=<逗号分隔>`、`usernames=<逗号分隔>`。
+    /// 无参数。
+    case listHostsEditors
+
+    /// 替换「谁能改 hosts」白名单。
+    ///
+    /// 白名单本身是宿主 hosts 的钥匙：调用方必须在 hosts 编辑白名单内
+    /// 才能修改白名单（防止普通 uid 加自己）。
+    /// 参数 `uids=<逗号分隔>` 与 `usernames=<逗号分隔>`。两者皆可空表示
+    /// 「清空白名单 = 任何人都能改」（恢复默认）。
+    case setHostsEditors
 }
 
 // MARK: - 请求
@@ -94,6 +124,16 @@ public struct HelperRequest: Codable, Sendable {
     public init(command: HelperCommand, arguments: [String: String] = [:]) {
         self.command = command
         self.arguments = arguments
+    }
+
+    /// 调用方 uid。仅 helper 进程在收到 socket 请求后填上，序列化时**忽略**。
+    /// 这是「不能信任调用方」原则下的本地记账 —— 协议 JSON 里没有这个字段，
+    /// 但 handler 在调度时已经能看见它，所以 hosts 白名单、niceRefusal
+    /// 这类「按调用方身份决定」的命令能直接拿到。
+    public var callerUID: uid_t?
+
+    private enum CodingKeys: String, CodingKey {
+        case command, arguments
     }
 }
 
@@ -145,12 +185,22 @@ public enum HelperConstants {
     ///         （应用侧用 ProtocolVersion=2 仍能跑现有功能），新助手支持；
     ///         `ProcessStatsProvider.fetchCPUTemperature()` 会用协议版本门禁
     ///         探测能力。
+    ///   - v1.7 起追加 `readHosts` / `writeHosts` / `listHostsEditors` /
+    ///     `setHostsEditors`，仍跑在 v2 协议上 —— 旧助手遇这些命令会回
+    ///     `unknown command`，新应用会探测能力并提示。
     ///
     /// 升级路径：用户启动新版 app 后，app 探测到旧助手（v=2 不含 CPU 温度），
     /// 主动触发 `updateSelf` —— docs/release.md 已说明助手能自我更新。
     /// 旧助手对 `getCPUTemperature` 会回 `unknown command`；应用侧必须探测协议版本
     /// 并提示「助手需要更新才能支持 CPU 温度」。
     public static let protocolVersion = 2
+
+    /// hosts 编辑白名单文件路径。
+    /// 由助手以 root 写入；应用只能读。
+    /// 放在 `/Library/Application Support` 而不是 `/etc`，是因为
+    /// `/etc/hosts` 受 SIP 保护但 `/Library/Application Support/com.skyc8266.deepsleep/`
+    /// 不受 —— 我们要写的是「白名单文件」，而不是 hosts 本体。
+    public static let hostsEditorsPath = "/Library/Application Support/com.skyc8266.deepsleep/hosts-editors.plist"
 }
 
 // MARK: - 助手进程侧需 root 的断言类型

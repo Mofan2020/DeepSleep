@@ -17,6 +17,8 @@ helper-probe.py — 直接与 Deep Sleep 特权助手对话的诊断工具。
     python3 scripts/helper-probe.py set-disablesleep 1
     python3 scripts/helper-probe.py write-setting sleep 0
     python3 scripts/helper-probe.py release-assertion preventSystemSleep
+    python3 scripts/helper-probe.py read-hosts             # 读 /etc/hosts 全文
+    python3 scripts/helper-probe.py list-hosts-editors     # 读 hosts 白名单
 """
 
 import json
@@ -91,6 +93,10 @@ def main() -> None:
         if not value:
             raise SystemExit("用法: release-assertion <kind>")
         response = call("releaseAssertion", kind=value)
+    elif action == "read-hosts":
+        response = call("readHosts")
+    elif action == "list-hosts-editors":
+        response = call("listHostsEditors")
     else:
         raise SystemExit(f"未知命令：{action}\n\n{__doc__}")
 
@@ -99,7 +105,15 @@ def main() -> None:
     payload = response.get("payload") or {}
     if payload:
         for key in sorted(payload):
-            print(f"  {key} = {payload[key]}")
+            value_repr = payload[key]
+            # hosts content 可能很长（含换行），单独处理可读性。
+            if key == "content" and len(value_repr) > 200:
+                print(f"  {key} = ({len(value_repr)} bytes)")
+                print("--- /etc/hosts ---")
+                print(value_repr)
+                print("--- end ---")
+            else:
+                print(f"  {key} = {value_repr}")
     raise SystemExit(0 if ok else 1)
 
 

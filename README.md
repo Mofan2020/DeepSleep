@@ -6,7 +6,7 @@
 - **应用名**：Deep Sleep
 - **最低系统**：macOS 26.0
 - **语言 / 框架**：Swift 5、SwiftUI + AppKit、IOKit、LocalAuthentication
-- **当前版本**：1.6.3
+- **当前版本**：1.7.0
 
 ## 安装
 
@@ -122,6 +122,8 @@ open -a "Deep Sleep" --args --status
 | `--autostart` | 由 LaunchAgent 自启动时传的参数：不抢主窗口焦点，仅跑菜单栏与监控 |
 | `--server-mode <0\|1>` | 开启或关闭服务器模式（系统永不睡眠 + 定时关屏锁屏） |
 | `--nice <pid> <value>` | 把 pid 的 nice 设为 value（[-20, 19]）；系统进程会被助手拒绝 |
+| `--hosts <sub>` | Hosts 编辑：list（白名单）/ read（打印原文）/ write <file>（用文件覆盖）/ allow [uids=...] [names=...]（更新白名单） |
+| `--quarantine <sub>` | Quarantine 属性：scan <dir>（列出带属性的文件）/ clear <dir>（清除），支持 `--no-recursive` / `--no-hidden` |
 
 > `--hold` 与 `--release` 作用于启动它的那个实例。macOS 是单实例机制，
 > 对已经在运行的实例再传参不会生效。需要脚本持续控制时，请用下面的 URL 或自动化规则。
@@ -174,7 +176,7 @@ open "deepsleep://nice?pid=1234&value=5"
 
 nice 是 POSIX 的 CPU 调度建议值：`-20` 最优先，`+19` 最让权，`0` 是默认。
 
-- **正值（>0）也必须走 root** —— 这是 POSIX 的硬约束，应用层无特权也不能调高。
+- **正值（>0）也必须走 root**：POSIX 的硬约束，应用层无特权也不能调高。
 - **改错值会让系统变卡**：负值会跟系统进程抢 CPU；系统进程一律被 Deep Sleep 拒绝。
 - **极端值（≤ -10 或 ≥ +15）需要二级确认**：给一句"仍然继续"才生效，由用户自己拍板。负值会让进程跟系统抢资源、正值会让进程几乎拿不到 CPU 时间片。
 - 本工具等价于 `sudo renice <value> <pid>`。
@@ -186,6 +188,46 @@ bundle id 在保护名单里的 Apple 应用、可执行文件落在 `/System/Li
 可用入口：侧边栏「工具 → 进程优先级」、`deepsleep://nice?pid=<pid>&value=<v>`、
 Siri「用 Deep Sleep 调整进程优先级」（提供 pid + value 两个参数）、
 `--nice <pid> <value>`。
+
+页面分页：默认每页 20 个进程，可在顶部 / 底部 Stepper 调 10–30。改后落到 `monitorConfig.v1`，下次打开自动恢复。
+
+## Hosts 编辑
+
+读写 `/etc/hosts`，管理「谁能改 hosts」白名单。
+
+写 hosts 必须 root，所以这条路径走特权助手：
+
+- 助手收到 `writeHosts` 后会先检查调用方 uid 是否在 `hosts.editors` 白名单内（白名单为空时放行任何 uid）；
+- 写之前备份原文到 `/etc/hosts.deepsleep.bak`；
+- 写完后强制把 owner 设回 `root:wheel`、mode `0644`，不让任何调用方把 hosts 变成可执行。
+
+白名单改动本身也走助手（`setHostsEditors`），且只有当前白名单内的 uid 才能改它 —— 避免普通 uid 加自己。
+
+```sh
+open "deepsleep://hosts-read"           # 读全文
+open "deepsleep://hosts-editors?uids=501,502&names=mofan"  # 改白名单
+```
+
+可用入口：侧边栏「工具 → Hosts 编辑」、`deepsleep://hosts-read|hosts-write|hosts-editors`、
+`--hosts list|read|write <file>|allow [uids=...] [names=...]`。
+
+## Quarantine 属性管理
+
+macOS 给下载下来的文件打 `com.apple.quarantine` 扩展属性，双击时 Gatekeeper 会弹「未知开发者」提示。本工具扫目录、批量去掉这个属性，让文件下次双击走「非隔离」分支（不绕过签名校验、不绕过公证）。
+
+- 不动 symlink：源文件的隔离标记属于它真正的来源，不是当前扫描目录的判定范围；
+- 只删 `com.apple.quarantine`，不动其他扩展属性；
+- 单个属性删除是 libc 级原子操作，不存在「删了一半」状态；
+- 整个流程走本进程 xattr，不需要完全控制。
+
+```sh
+open "deepsleep://quarantine-scan?path=~/Downloads"
+open "deepsleep://quarantine-clear?path=~/Downloads"
+```
+
+可用入口：侧边栏「工具 → Quarantine」、
+`deepsleep://quarantine-scan|quarantine-clear`、
+`--quarantine scan|clear <dir> [--no-recursive] [--no-hidden]`。
 
 ## 外部活动
 

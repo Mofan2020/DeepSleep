@@ -70,6 +70,10 @@
 | `lockScreen` | 与 `sleepDisplay` 同一实现（`pmset displaysleepnow`）。是否等效锁屏取决于系统设置里的「立即要求密码」 |
 | `getProcessNice` | 读一组 pid 的 nice（payload `nice:<pid>=<value>` / `missing:<pid>=1`） |
 | `setProcessNice` | 改一个进程的 nice；助手独立重算 `ProcessGuard.niceRefusalReason` 拒绝系统进程 |
+| `readHosts` | 读 `/etc/hosts` 当前内容（payload `content=<原文>`、`length=<字节数>`）。无白名单检查 |
+| `writeHosts` | 写 `/etc/hosts`：先备份原文到 `/etc/hosts.deepsleep.bak`，再原子写入，最后强制 `root:wheel` + `0644`。调用方 uid 必须在 hosts 编辑白名单内（空白名单放行） |
+| `listHostsEditors` | 读「谁能改 hosts」白名单（payload `uids=...` / `usernames=...`）。无白名单检查 |
+| `setHostsEditors` | 替换「谁能改 hosts」白名单。同样的白名单约束：调用方必须在当前白名单内才能改它 |
 
 ## 二、权限模型：管理员密码只输一次
 
@@ -459,6 +463,11 @@ Bundle ID：`com.skyc8266.deepsleep`。
 | `show` | 打开主界面 |
 | `server-mode` | 开启（`value=1`）或关闭（`value=0`）服务器模式，需要完全控制 |
 | `nice` | 把 pid 的 nice 设为 `value`（[-20, 19]）；系统进程会被助手拒绝 |
+| `hosts-read` | 读取 `/etc/hosts` 当前内容并把全文塞进日志（需先启用完全控制） |
+| `hosts-write` | 用 `content=` 整体覆盖 `/etc/hosts`；调用方必须在 hosts 编辑白名单内 |
+| `hosts-editors` | 替换「谁能改 hosts」白名单；`uids=1,2`、`names=a,b`（任一可省，省略 = 保留现有值） |
+| `quarantine-scan` | 扫描 `path=~/Downloads` 下所有带 quarantine 属性的文件（递归、不含隐藏） |
+| `quarantine-clear` | 清除 `path=~/Downloads` 下所有文件的 quarantine 属性 |
 
 无法识别的命令会被拒绝并提示「可用命令见 `--automation`」，不会静默忽略。
 
