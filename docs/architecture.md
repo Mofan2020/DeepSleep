@@ -67,7 +67,7 @@
 | `killProcesses` | 用 SIGKILL 杀掉一组 pid（监控场景；仍走保护名单） |
 | `getCPUTemperature` | 读 Apple SMC（`TCMz` / `TCMb` / `TCDX`）拿 CPU Die Max / Average / Aggregate °C。算法借鉴自 dkorunic/iSMC（GPL-3.0），见 `DeepSleepHelper/SMCTemperature.swift` 顶部借鉴声明；DeepSleep 仍是 MIT，未复制 iSMC Go 源码。**仅 helper 能在 root 下连 SMC**，普通进程会失败 |
 | `sleepDisplay` | 立刻关显示器（`pmset displaysleepnow`）；供服务器模式用 |
-| `lockScreen` | 关屏 + 启动 ScreenSaverEngine（系统设置需开启「立即要求密码」才等效锁屏） |
+| `lockScreen` | 与 `sleepDisplay` 同一实现（`pmset displaysleepnow`）。是否等效锁屏取决于系统设置里的「立即要求密码」 |
 | `getProcessNice` | 读一组 pid 的 nice（payload `nice:<pid>=<value>` / `missing:<pid>=1`） |
 | `setProcessNice` | 改一个进程的 nice；助手独立重算 `ProcessGuard.niceRefusalReason` 拒绝系统进程 |
 
@@ -305,6 +305,45 @@ Deep Sleep 自己的断言也会列出并标记「本应用」，方便对照。
 助手日志原本超过 1 MB 就整个删掉，那等于在出问题的时候把最该看的最近几行一起丢掉；
 现在改成保留尾部、并在换行处切割，不留半行乱码。
 
+### 3.8 服务器模式
+
+目标只有一句话：**系统始终清醒 + 显示器关掉省电**，让 Mac 24 小时跑服务程序。
+不碰用户的网络、服务、守护进程 —— 那些由用户自己管。
+
+状态机（判定逻辑在 `Shared/ServerModeIdlePolicy.swift`，纯函数，可单测）：
+
+```
+off
+ │ 开启
+ ▼
+starting ──(initialSleepDelaySeconds 后)──▶ 关屏 ──▶ locked
+                                                      ▲
+              ┌───────────────────────────────────────┘
+              │ 用户操作（idle 归零）
+              ▼
+        waitingForIdle ──(idle ≥ 阈值)──▶ 关屏 ──┘
+```
+
+几个不能动的约定：
+
+| 约定 | 原因 |
+| --- | --- |
+| `locked` 阶段保持归零、**不**重复关屏 | 屏幕已经关着，再发 `pmset displaysleepnow` 只是噪声 |
+| 全程 5 秒 tick 从开启跑到关闭，**不**在关屏时停 | 停掉就没人监听「用户回来」，界面会永远停在归零（v1.6.2 的 bug） |
+| 「用户回来了」的判据 = idle **掉回阈值以下** | 两种检测方式都提供这个语义，tick 不需要区分模式 |
+| 首次关屏与超时关屏**共用**一个函数 | 早期版本给首次路径加了 `guard phase == .starting`，超时路径直接被挡回（v1.6.2 的 bug） |
+
+空闲检测有两种方式，共用同一个判据「距离用户上次操作过去多久」：
+
+| 方式 | 实现 | 授权 |
+| --- | --- | --- |
+| `kernelIdle`（默认） | `IdleTime.systemIdleSeconds()` 读 `IOHIDSystem.HIDIdleTime` | 不需要 |
+| `eventTap`（实验） | `CGEvent.tapCreate(.listenOnly)` 监听全局键盘 / 鼠标事件，重置应用层时间戳 | 需要辅助功能授权 |
+
+默认 `kernelIdle` 是因为它不需要授权。`eventTap` 保留作为备选 ——
+`kernelIdle` 依赖内核计数器，而本进程持有 noidle 断言时 powerd 是否维护
+该计数器存在不确定性（见 `docs/gotchas.md` 第 17 节）。
+
 ---
 
 ## 四、模块职责
@@ -318,6 +357,9 @@ Deep Sleep 自己的断言也会列出并标记「本应用」，方便对照。
 | `Shared/ProcessInventory.swift` | 进程枚举与进程树 | **app 与助手共用一份**；普通权限读不到别的用户（含 root）的进程，见第六节 |
 | `Shared/ProcessGuard.swift` | 强杀保护名单与「该杀谁」的裁决 | 全项目第二危险的代码；名单只许硬编码，不接受任何参数覆盖 |
 | `Shared/TerminationReport.swift` | 强杀结果的结构与编解码 | 协议 payload 是 `[String:String]`，中文与分隔符都要能往返 |
+| `Shared/ServerModeIdlePolicy.swift` | 服务器模式空闲判定的纯逻辑（阶段 + 判定） | 抽出来是为了能单测；改语义要同步 `scripts/test-servermode-fsm.swift` |
+| `Shared/IdleTime.swift` | 读内核空闲时间（`IOHIDSystem.HIDIdleTime`） | 持有 noidle 断言时 powerd 可能不累加该计数器，见 `docs/gotchas.md` 第 17 节 |
+| `DeepSleep/Core/ServerModeController.swift` | 服务器模式状态机：首次 / 超时关屏、全程 tick、双模式空闲检测 | 首次与超时关屏共用 `performSleepAndLock`；tick 全程不停 |
 | `DeepSleep/Core/SleepController.swift` | 核心状态机：意图合并、对账、日志、CLI 状态输出 | 全项目最核心的文件，改动前先读本节 3.1–3.3 |
 | `DeepSleep/Core/PowerWatcher.swift` | 电源事件监听（睡前拦截 + 唤醒后对账） | 拦截窗口里有兜底超时，别去掉 |
 | `DeepSleep/Core/PowerActivityMonitor.swift` | 外部活动：断言持有者、设置改动、抢控制权程序 | 抢控制权检测宁可漏报不误报 |

@@ -6,7 +6,7 @@
 - **应用名**：Deep Sleep
 - **最低系统**：macOS 26.0
 - **语言 / 框架**：Swift 5、SwiftUI + AppKit、IOKit、LocalAuthentication
-- **当前版本**：1.6.2
+- **当前版本**：1.6.3
 
 ## 安装
 
@@ -141,7 +141,8 @@ AppleScript 用 `open location "deepsleep://release"`，自动操作用「打开
 ## 服务器模式
 
 让一台 Mac 当服务器用：系统永不睡眠，开启后 5 秒自动关屏 + 锁屏，
-用户解锁后空闲 10 分钟再重复一次。
+空闲 10 分钟再重复一次。屏幕关掉之后倒计时停在零，不再反复关屏；
+你回来操作后重新开始计。
 
 ```sh
 open "deepsleep://server-mode?value=1"
@@ -157,7 +158,8 @@ open "deepsleep://server-mode?value=1"
 参数：
 
 - 首次关屏延迟：默认 5 秒，UI 可调 0–60 秒。
-- 解锁后空闲阈值：默认 10 分钟，UI 可调 1–60 分钟。
+- 空闲阈值：默认 10 分钟，UI 可调 1–60 分钟。
+- 空闲检测方式：默认「内核空闲计时」，不需要任何系统授权；另有「事件监听」可切换，那条路需要「辅助功能」授权。
 
 可用入口：侧边栏「系统控制 → 服务器模式」、`deepsleep://server-mode?value=1|0`、
 Siri「用 Deep Sleep 开启/关闭服务器模式」、`--server-mode 0|1`。

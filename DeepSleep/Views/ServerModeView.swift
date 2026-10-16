@@ -16,6 +16,7 @@ struct ServerModeView: View {
     @ObservedObject private var mode = ServerModeController.shared
     @State private var idleMinutes: Int = 10
     @State private var initialSleepSeconds: Int = 5
+    @State private var detectionMode: IdleDetectionMode = .kernelIdle
     @State private var enablingError: String?
 
     private var isActive: Bool { mode.phase != .off }
@@ -25,7 +26,7 @@ struct ServerModeView: View {
             SectionCard(
                 title: "服务器模式",
                 subtitle: controller.helperState.isReady
-                    ? "开启后系统永不睡眠，\(initialSleepSeconds) 秒后关屏锁屏；解锁后空闲 \(idleMinutes) 分钟再重复。"
+                    ? "开启后系统永不睡眠，\(initialSleepSeconds) 秒后关屏锁屏；空闲 \(idleMinutes) 分钟再重复。"
                     : "请先在「完全控制」页安装助手。",
                 symbol: "server.rack",
                 accent: isActive ? .orange : .accentColor
@@ -67,6 +68,31 @@ struct ServerModeView: View {
             }
 
             SectionCard(
+                title: "空闲检测方式",
+                subtitle: "两种方式都判断「距离你上次操作过去多久」；开启后不能切换，需先关闭服务器模式。",
+                symbol: "clock.arrow.circlepath"
+            ) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Picker("", selection: $detectionMode) {
+                        ForEach(IdleDetectionMode.allCases) { m in
+                            Text(m.displayName).tag(m)
+                        }
+                    }
+                    .pickerStyle(.radioGroup)
+                    .labelsHidden()
+                    .disabled(isActive)
+                    .onChange(of: detectionMode) { _, v in
+                        mode.idleDetectionMode = v
+                    }
+
+                    Text(detectionMode.summary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            SectionCard(
                 title: "参数",
                 subtitle: "关闭后参数仍保留；下次开启沿用同一组值。",
                 symbol: "slider.horizontal.3"
@@ -80,15 +106,16 @@ struct ServerModeView: View {
                     }
 
                     Stepper(value: $idleMinutes, in: 1...60, step: 1) {
-                        Text("解锁后空闲 \(idleMinutes) 分钟再次关屏")
+                        Text("空闲 \(idleMinutes) 分钟再次关屏")
                     }
                     .onChange(of: idleMinutes) { _, v in
                         mode.idleThresholdSeconds = TimeInterval(v * 60)
                     }
 
-                    Text("解锁后空闲计时：CGEvent tap 监听全局键盘 / 鼠标事件，事件一来就重置；阈值到点自动再次关屏。需要「系统设置 → 隐私与安全性 → 辅助功能」里勾选 Deep Sleep。")
+                    Text("空闲计时从你最后一次键盘 / 鼠标操作开始算。屏幕关掉之后计时停在零；你回来操作后重新从 \(idleMinutes) 分钟开始计。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
 
@@ -107,9 +134,10 @@ struct ServerModeView: View {
             }
         }
         .onAppear {
-            // 把 controller 当前值同步到 Stepper 初值。
+            // 把 controller 当前值同步到控件初值。
             idleMinutes = Int(mode.idleThresholdSeconds / 60)
             initialSleepSeconds = Int(mode.initialSleepDelaySeconds)
+            detectionMode = mode.idleDetectionMode
         }
     }
 
@@ -117,7 +145,7 @@ struct ServerModeView: View {
         switch mode.phase {
         case .off:                 return "未开启"
         case .starting:            return "开启中…"
-        case .locked:              return "已锁屏"
+        case .locked:              return "已熄屏锁定"
         case .waitingForIdle:      return "空闲倒计时中"
         }
     }

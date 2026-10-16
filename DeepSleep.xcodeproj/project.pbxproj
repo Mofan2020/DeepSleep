@@ -60,6 +60,7 @@
 		73ACAA59B7A7FB882CB55A50 /* AutomationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65EE86101EAC650FBB5F0CBB /* AutomationEngine.swift */; };
 		74D8061FE3512F42C2C759F2 /* HealthCheck.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43D825A6BA75907B7DD06AC5 /* HealthCheck.swift */; };
 		75D81C8CFC7E50AD5E6B7028 /* DoubaoProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32B39BDE0FC9297C00AF7FF6 /* DoubaoProvider.swift */; };
+		77AC54EAF737FDB032DEB3FA /* ServerModeIdlePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27F7A85603F8F24BB4412911 /* ServerModeIdlePolicy.swift */; };
 		78C8D80159F6941DC10F7B3B /* GatewaySettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A25FDB3DB6694381D64FA08 /* GatewaySettingsView.swift */; };
 		78D179B4ACE0E28FB61B6555 /* AlertWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B527587ED1D0F7A77206BE2C /* AlertWindowController.swift */; };
 		7D762698B84BA6B332447BE2 /* OllamaProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92EF1071AC0D679288095A56 /* OllamaProvider.swift */; };
@@ -111,6 +112,7 @@
 		E648F9B8460CA4DC6467A511 /* ProcessGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09942C2FCA248432F203B05D /* ProcessGuard.swift */; };
 		E6C4A69F284E10EA08CCD502 /* ModelSwitcherView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CAB6C859E1D48ADADA0CC3A /* ModelSwitcherView.swift */; };
 		EDD6AC5A315B659622797185 /* UpdateManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03B58135C030FD6D97DD7D84 /* UpdateManager.swift */; };
+		EE3890A1A4901BA8921BC74E /* ServerModeIdlePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27F7A85603F8F24BB4412911 /* ServerModeIdlePolicy.swift */; };
 		EE8F090E23622184B5D04D17 /* UnixSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58014010D89130A9A194BE3F /* UnixSocket.swift */; };
 		F46459160672CE1350637D97 /* Version.swift in Sources */ = {isa = PBXBuildFile; fileRef = F67CFF72B57B6842BFE84727 /* Version.swift */; };
 		F9C83EB7C255F958694CAE61 /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 571B5897312541D688A35CB1 /* DashboardView.swift */; };
@@ -149,6 +151,7 @@
 		20A8AB2E6BA1323064CCCBFB /* QuotaPoller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuotaPoller.swift; sourceTree = "<group>"; };
 		214A9E90F394CC9723FD747F /* ProcessSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessSnapshot.swift; sourceTree = "<group>"; };
 		24CCCD6A29A4801A877E9A5B /* GrokProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrokProvider.swift; sourceTree = "<group>"; };
+		27F7A85603F8F24BB4412911 /* ServerModeIdlePolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerModeIdlePolicy.swift; sourceTree = "<group>"; };
 		2955F2519DCC800EC189D9EA /* WindowCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowCoordinator.swift; sourceTree = "<group>"; };
 		32B39BDE0FC9297C00AF7FF6 /* DoubaoProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoubaoProvider.swift; sourceTree = "<group>"; };
 		3A5BE14C77A2F80A3C558EF5 /* CohereProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CohereProvider.swift; sourceTree = "<group>"; };
@@ -403,6 +406,7 @@
 				DBB5D215E2943FDD3FC7BEDB /* ProcessPriority.swift */,
 				214A9E90F394CC9723FD747F /* ProcessSnapshot.swift */,
 				9280BE0F52069F606CA7D220 /* ProcessStats.swift */,
+				27F7A85603F8F24BB4412911 /* ServerModeIdlePolicy.swift */,
 				4977ACA618E906FAE14B97C0 /* TerminationReport.swift */,
 				58014010D89130A9A194BE3F /* UnixSocket.swift */,
 				F67CFF72B57B6842BFE84727 /* Version.swift */,
@@ -662,6 +666,7 @@
 				67DC9D76825580F163519BF6 /* QuotaPoller.swift in Sources */,
 				9429A1EB6266F9702E9D9158 /* ScheduleView.swift in Sources */,
 				017E43688EF7300FD313BCA4 /* ServerModeController.swift in Sources */,
+				EE3890A1A4901BA8921BC74E /* ServerModeIdlePolicy.swift in Sources */,
 				C9B76A5A6E3BC83B1DA8F016 /* ServerModeView.swift in Sources */,
 				43965B2CAF6676C308E55526 /* SleepController.swift in Sources */,
 				279C699FC5D14667029F652C /* StreamForwarder.swift in Sources */,
@@ -698,6 +703,7 @@
 				89098C875F9DF3595B4F80F5 /* ProcessStats.swift in Sources */,
 				CB745D9E5F4E7E41B2ACE70C /* SMCTemperature.swift in Sources */,
 				A6FDF63D0FF8D8386787E0F5 /* SelfUpdate.swift in Sources */,
+				77AC54EAF737FDB032DEB3FA /* ServerModeIdlePolicy.swift in Sources */,
 				5CBBFE252FA1FF06D00A3222 /* TerminationReport.swift in Sources */,
 				EE8F090E23622184B5D04D17 /* UnixSocket.swift in Sources */,
 				46F0FD7486AF2AD5E745E69A /* Version.swift in Sources */,
@@ -891,11 +897,11 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 9;
+				CURRENT_PROJECT_VERSION = 10;
 				INFOPLIST_FILE = DeepSleep/Resources/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
-				MARKETING_VERSION = 1.6.2;
+				MARKETING_VERSION = 1.6.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.skyc8266.deepsleep;
 				PRODUCT_NAME = "Deep Sleep";
 				SDKROOT = macosx;
@@ -908,11 +914,11 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 9;
+				CURRENT_PROJECT_VERSION = 10;
 				INFOPLIST_FILE = DeepSleep/Resources/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
-				MARKETING_VERSION = 1.6.2;
+				MARKETING_VERSION = 1.6.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.skyc8266.deepsleep;
 				PRODUCT_NAME = "Deep Sleep";
 				SDKROOT = macosx;

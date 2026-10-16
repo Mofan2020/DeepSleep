@@ -11,42 +11,49 @@
 //      「阻止系统睡眠」这一层（既有 disablesleep + PreventSystemSleep）。
 //      服务器模式只是把它们的组合「升级」到「开机就不撤」。
 //    - 但「关屏 + 锁屏 + 空闲倒计时 + 解锁后重置」这一串行为，
-//      涉及到 NSEvent 监听、定时器、跨进程通讯给助手发命令，
+//      涉及到事件监听、定时器、跨进程通讯给助手发命令，
 //      放进 SleepController 会把它从「对账核心」变成「多功能管家」，
 //      反而破坏现有 macOS 行为（参见 2026-10-06 的边界约定）。
 //    - 抽出来独立 controller，SleepController 仅通过
 //      `setServerMode(_:)` 钩入；任何时候关闭这个 controller，
 //      SleepController 仍然跑自己的对账。
 //
-//  安全边界：
-//    - 「空闲」v1.6.1 路径用 IOHIDSystem 的 `HIDIdleTime` 读内核 HID idle time。
-//      **这条路径在服务器模式下不可信**（v1.6.2 已弃用）：服务器模式开启后
-//      DeepSleep 助手 + UURemote + 主进程自己持有 `PreventUserIdleSystemSleep`
-//      断言，powerd 会停止累加 `HIDIdleTime`，实测 30 秒不动机器它只在
-//      0~1.5 秒之间反复跳，永远不会增长到阈值 → 「倒计时永远不动 / 到点
-//      也不息屏」。详见 `Shared/IdleTime.swift` 注释。
+//  ## 状态机（v1.6.3）
 //
-//    - v1.6.2 起改用「应用层时间戳 + CGEvent tap」：
-//        * 开启服务器模式时记 `lastActivityAt = Date()`
-//        * 用 `CGEvent.tapCreate(.listenOnly, .headInsertEventTap)` 监听
-//          全局键盘 / 鼠标事件；每次事件来时把 `lastActivityAt` 重置为 `Date()`
-//        * 5 秒一 tick 的 watchdog 直接比较 `now - lastActivityAt`
-//          是否 ≥ `idleThresholdSeconds`
+//      off
+//       │ setEnabled(true)
+//       ▼
+//      starting ──(initialSleepDelaySeconds 后)──▶ 关屏 ──▶ locked
+//                                                            ▲
+//                         ┌──────────────────────────────────┘
+//                         │ 用户操作（idle 掉回阈值以下）
+//                         ▼
+//                   waitingForIdle ──(idle ≥ 阈值)──▶ 关屏 ──┘
 //
-//    - CGEvent tap 需要 **Accessibility 授权**（`AXIsProcessTrusted`）。
-//      没授权时 tap 不会被 fire，事件永远不来 —— 启用服务器模式前必须
-//      先确认授权（调用 `AXIsProcessTrustedWithOptions(prompt: true)`
-//      引导用户去系统设置）。未授权开启会直接拒绝并给出 banner 提示，
-//      不允许「开了但倒计时永远不动」的退化状态存在。
+//    `locked` 语义：屏幕已关、系统未睡，倒计时**保持归零**且不重复关屏；
+//    只有检测到用户操作（idle 归零）才回到 `waitingForIdle` 重新计时。
 //
-//    - 关闭服务器模式 / app 退出时，调用 `CGEvent.tapEnable(tap, false)` +
-//      `CFRelease(tap)` 彻底释放事件 tap。
+//  ## 空闲检测（双模式）
 //
-//    - 真要锁屏走助手（sleepDisplay 命令）：关屏后 macOS 按"系统设置 → 锁屏 → 立即
-//      要求密码"决定是否要求密码。**不**调用 ScreenSaverEngine —— 那是屏保动画，
-//      不是锁屏。
-//    - 关闭服务器模式时把缓存的 displaysleep 写回系统，
-//      避免「服务器模式期间临时改的 displaysleep」留下来。
+//  见 `IdleDetectionMode`。默认 `kernelIdle`（v1.6.1 方案，不需要授权）；
+//  `eventTap`（v1.6.2 方案）需要 Accessibility 授权，作为可选项保留。
+//
+//  两种模式共用同一个判据 `currentIdleSeconds()`，语义都是「距离用户上次
+//  操作过去多久」，所以 tick 不需要知道自己在哪个模式里跑：
+//
+//    - kernelIdle：`IdleTime.systemIdleSeconds()`（IOHIDSystem.HIDIdleTime）
+//    - eventTap：`Date().timeIntervalSince(lastActivityAt)`，由 CGEvent tap 重置
+//
+//  ## 安全边界
+//
+//    - 关屏走助手（`sleepDisplay` → `pmset displaysleepnow`）。
+//      **不**调用 ScreenSaverEngine —— 那是屏保动画，不是锁屏。
+//      关屏后 macOS 按「系统设置 → 锁屏 → 立即要求密码」决定是否要求密码。
+//    - 关闭服务器模式时把缓存的 displaysleep 写回系统。
+//    - `kernelIdle` 在服务器模式下是否可靠存在不确定性：本进程持 noidle
+//      断言时 powerd 可能停止累加 HIDIdleTime。因此保留双模式。
+//
+//  详见 `Shared/IdleTime.swift` 与 `docs/gotchas.md` 第 17 节。
 //
 
 import AppKit
@@ -54,22 +61,44 @@ import ApplicationServices
 import Combine
 import Foundation
 
+/// 空闲检测方式。
+enum IdleDetectionMode: String, CaseIterable, Identifiable {
+    /// 内核空闲计时（v1.6.1 方案）：轮询 `IOHIDSystem.HIDIdleTime`。
+    /// 不需要任何授权，因此作为默认。
+    case kernelIdle
+    /// 事件监听（v1.6.2 方案）：CGEvent tap 监听全局键盘 / 鼠标事件。
+    /// 需要「辅助功能」授权；未授权时 tap 不会 fire。
+    case eventTap
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .kernelIdle: return "内核空闲计时"
+        case .eventTap:   return "事件监听（实验）"
+        }
+    }
+
+    var summary: String {
+        switch self {
+        case .kernelIdle:
+            return "读系统内核维护的空闲时间，不需要任何授权。"
+        case .eventTap:
+            return "监听全局键盘 / 鼠标事件，需要「辅助功能」授权；未授权时不会生效。"
+        }
+    }
+}
+
 /// 服务器模式运行状态（公开给 UI + 日志）。
 @MainActor
 final class ServerModeController: ObservableObject {
 
     static let shared = ServerModeController()
 
-    enum Phase: Equatable {
-        /// 未开启
-        case off
-        /// 已开启，正在 5 秒内关屏 + 锁屏
-        case starting
-        /// 已锁屏 / 屏幕黑着，等待用户解锁
-        case locked
-        /// 解锁后等待用户活动；空闲达到阈值后再次关屏锁屏
-        case waitingForIdle
-    }
+    /// 运行阶段。判定逻辑与语义见 `Shared/ServerModeIdlePolicy.swift`。
+    typealias Phase = ServerModeIdlePolicy.Phase
+    /// 一次 tick 的判定结果。
+    typealias TickDecision = ServerModeIdlePolicy.Decision
 
     @Published private(set) var phase: Phase = .off
     @Published private(set) var lastEventDescription: String = ""
@@ -80,25 +109,65 @@ final class ServerModeController: ObservableObject {
     /// 「从开始到首次关屏」的延迟。默认 5 秒。
     @Published var initialSleepDelaySeconds: TimeInterval = 5
 
-    private var watchdog: Timer?
-    private var helperStateWhenStarted: HelperState = .unknown
+    /// 空闲检测方式。默认 `kernelIdle`（不需要授权）。
+    @Published var idleDetectionMode: IdleDetectionMode = .kernelIdle {
+        didSet {
+            guard oldValue != idleDetectionMode else { return }
+            UserDefaults.standard.set(idleDetectionMode.rawValue, forKey: Self.modeKey)
+        }
+    }
 
-    /// 应用层时间戳：上次侦听到的键盘 / 鼠标事件的时间。
-    /// 解锁后立即置为 Date()，CGEvent tap 每次 fire 也置为 Date()。
-    /// watchdog tick 比较 `Date().timeIntervalSince(lastActivityAt)`。
-    /// 这条路径不依赖 powerd 的 `HIDIdleTime`，即使本进程持有 noidle 断言
-    /// 也能正常工作（见 Shared/IdleTime.swift 注释）。
+    private static let modeKey = "ServerModeController.idleDetectionMode"
+
+    /// 全程 5 秒 tick。从 enable 起一直活到 disable。
+    ///
+    /// **不**在关屏时停掉：否则「用户回来了」就没人监听，界面会永远停在
+    /// 归零不动（v1.6.2 的 bug 之一）。
+    private var tickTimer: Timer?
+    /// 「首次关屏」的一次性定时器。
+    private var initialSleepTimer: Timer?
+    /// 关屏动作进行中 —— 防止 tick 与一次性定时器重入。
+    private var isPerformingSleep = false
+
+    /// 应用层时间戳：上次侦听到的键盘 / 鼠标事件的时间。仅 `eventTap` 模式用。
     private var lastActivityAt: Date = Date()
 
-    /// CGEvent tap 全局监听键盘 / 鼠标事件。需要 Accessibility 授权。
-    /// 未授权时 `tap` 为 nil，倒计时按"解锁后 5 秒 tick"粗粒度跑 —— 但
-    /// `enable` 已经拒绝未授权开启，所以 `tap` 永远非 nil（运行时）。
+    /// CGEvent tap 全局监听键盘 / 鼠标事件。仅 `eventTap` 模式用。
     private var activityTap: CFMachPort?
-
     /// 用于清理 CGEvent tap 关联的 run loop source。
     private var activityTapSource: CFRunLoopSource?
 
-    private init() {}
+    private init() {
+        if let raw = UserDefaults.standard.string(forKey: Self.modeKey),
+           let mode = IdleDetectionMode(rawValue: raw) {
+            idleDetectionMode = mode
+        }
+    }
+
+    // MARK: - 空闲判据
+
+    /// 当前空闲秒数 —— 两种模式在这里统一。
+    ///
+    /// 语义是「距离用户上次操作过去多久」：
+    ///   - `kernelIdle`：直接问系统
+    ///   - `eventTap`：用事件 tap 重置过的时间戳自己算
+    func currentIdleSeconds() -> TimeInterval {
+        switch idleDetectionMode {
+        case .kernelIdle:
+            return IdleTime.systemIdleSeconds() ?? 0
+        case .eventTap:
+            return Date().timeIntervalSince(lastActivityAt)
+        }
+    }
+
+    // MARK: - 状态机（纯逻辑见 Shared/ServerModeIdlePolicy.swift）
+
+    /// 给定状态与空闲秒数，决定这一 tick 该做什么。
+    static func decide(phase: Phase,
+                       idle: TimeInterval,
+                       threshold: TimeInterval) -> TickDecision {
+        ServerModeIdlePolicy.decide(phase: phase, idle: idle, threshold: threshold)
+    }
 
     // MARK: - 开关
 
@@ -106,8 +175,9 @@ final class ServerModeController: ObservableObject {
     ///
     /// 开启依赖：
     ///   1. 助手已 ready（发命令需要它）
-    ///   2. 用户授权（沿用 SleepController 的 confirmPrivilegedAction）
-    ///   3. 已开启 disablesleep（最稳的「系统不睡」手段）
+    ///   2. `eventTap` 模式下需要辅助功能授权
+    ///   3. 用户授权（沿用 SleepController 的 confirmPrivilegedAction）
+    ///   4. 已开启 disablesleep（最稳的「系统不睡」手段）
     func setEnabled(_ enabled: Bool, controller: SleepController) async {
         if enabled {
             await enable(on: controller)
@@ -125,182 +195,201 @@ final class ServerModeController: ObservableObject {
             controller.appendLog("服务器模式已在运行中")
             return
         }
-        // CGEvent tap 需要 Accessibility 授权；未授权直接拒绝，
-        // 不允许「开了但倒计时永远不动」的退化状态。`prompt: true` 会
-        // 顺带弹一个 macOS 系统对话框让用户去设置授权。
-        guard await ensureAccessibilityAuthorized(controller: controller) else {
-            return
+        // 只有事件监听模式需要辅助功能授权。未授权时明确拒绝，不静默降级 ——
+        // 用户选了哪个模式就该跑哪个模式。
+        if idleDetectionMode == .eventTap {
+            let authorized = await ensureAccessibilityAuthorized(controller: controller)
+            guard authorized else { return }
         }
         guard await controller.confirmPrivilegedAction(reason: "允许 Deep Sleep 开启服务器模式") else {
             return
         }
 
-        helperStateWhenStarted = controller.helperState
         phase = .starting
-        controller.appendLog("服务器模式已开启：\(initialSleepDelaySeconds) 秒后关屏锁屏")
+        controller.appendLog("服务器模式已开启（空闲检测：\(idleDetectionMode.displayName)）："
+                             + "\(initialSleepDelaySeconds) 秒后关屏锁屏")
         lastEventDescription = "开启中……"
 
         // 1. 先把 disablesleep 打开 —— 这是「系统不睡」的兜底层。
         await controller.setSleepDisabled(true)
-        // 2. 启动 5 秒后「关屏 + 锁屏」一次性动作。
-        scheduleInitialSleepAndLock()
 
-        // 3. 启动 CGEvent tap 监听用户活动（用于解锁后的空闲判定）。
-        //    没装成功（理论上 enable 已经过授权检查，所以不太可能）就
-        //    直接拒绝开启 —— 倒计时不能多也不能少。
-        guard installUserActivityMonitor() else {
+        // 2. 事件监听模式才装 tap；失败即回滚（不留下跑不动的模式）。
+        if idleDetectionMode == .eventTap, !installUserActivityMonitor() {
             controller.appendLog("服务器模式：CGEvent tap 启动失败，已回滚", isError: true)
-            controller.banner = Banner(level: .error, text: "服务器模式启动失败：CGEvent tap 创建失败")
+            controller.banner = Banner(
+                level: .error,
+                text: "事件监听模式启动失败：无法创建 CGEvent tap。可改用「内核空闲计时」模式。")
             await controller.setSleepDisabled(false)
             phase = .off
             lastEventDescription = "启动失败"
             return
         }
+
+        // 3. 首次关屏：一次性定时器。
+        scheduleInitialSleepAndLock()
+        // 4. 全程 5 秒 tick：负责「用户回来 → 重新计时 → 再次关屏」。
+        startTickTimer()
     }
 
-    /// 检查 Accessibility 授权。已授权返回 true；未授权时调用
-    /// `AXIsProcessTrustedWithOptions(prompt: true)` 弹出系统对话框引导
-    /// 用户去设置授权，然后等 1.5 秒看用户是否已经操作过。
-    ///
-    /// 返回 false 表示「未授权且用户也没在系统设置里勾上」。
-    /// 内部用 banner 告知用户去「系统设置 → 隐私与安全性 → 辅助功能」勾选 DeepSleep。
+    /// 检查辅助功能授权。已授权返回 true；未授权时调
+    /// `AXIsProcessTrustedWithOptions(prompt: true)` 弹系统对话框引导用户
+    /// 去设置，然后最多等 30 秒重检。
     private func ensureAccessibilityAuthorized(controller: SleepController) async -> Bool {
         if isAccessibilityTrusted() { return true }
 
         // prompt: true 让系统弹一次授权对话框（用户可点「打开系统设置」）。
-        _ = AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary)
+        _ = AXIsProcessTrustedWithOptions(
+            [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
+        )
 
         controller.banner = Banner(
             level: .info,
-            text: "服务器模式需要在「系统设置 → 隐私与安全性 → 辅助功能」里勾选 Deep Sleep；勾完后重新点「开启」。"
+            text: "「事件监听」模式需要在「系统设置 → 隐私与安全性 → 辅助功能」里勾选 Deep Sleep，"
+                + "勾完后重新点「开启」。不想授权可改用「内核空闲计时」模式。"
         )
-        controller.appendLog("服务器模式：等待用户在系统设置里授予 Accessibility 权限……", isError: false)
+        controller.appendLog("服务器模式：等待用户在系统设置里授予辅助功能权限……")
 
-        // 给用户一点时间完成授权操作。最多等 30 秒，期间每 1 秒重检。
         for _ in 0..<30 {
             try? await Task.sleep(nanoseconds: 1_000_000_000)
             if isAccessibilityTrusted() {
-                controller.appendLog("服务器模式：Accessibility 授权已获得")
+                controller.appendLog("服务器模式：辅助功能授权已获得")
                 controller.banner = nil
                 return true
             }
         }
-        controller.appendLog("服务器模式：Accessibility 授权未授予，已取消开启", isError: true)
+        controller.appendLog("服务器模式：未获得辅助功能授权，已取消开启", isError: true)
         return false
     }
 
     private func isAccessibilityTrusted() -> Bool {
-        // 不带 prompt 的纯查询；返回 Bool。
-        return AXIsProcessTrusted()
+        AXIsProcessTrusted()
     }
 
     private func disable(on controller: SleepController) async {
-        guard phase.isActive || phase != .off else { return }
+        guard phase.isActive else { return }
         controller.appendLog("正在退出服务器模式……")
         uninstallUserActivityMonitor()
-        watchdog?.invalidate()
-        watchdog = nil
+        initialSleepTimer?.invalidate()
+        initialSleepTimer = nil
+        tickTimer?.invalidate()
+        tickTimer = nil
+        isPerformingSleep = false
         phase = .off
         lastEventDescription = "已关闭"
         controller.appendLog("服务器模式已关闭")
     }
 
-    // MARK: - 首次关屏 + 锁屏
+    // MARK: - 关屏 + 锁屏
 
-    private func scheduleInitialSleepAndLock() {
-        let delay = initialSleepDelaySeconds
-        watchdog = Timer.scheduledTimer(withTimeInterval: max(0, delay), repeats: false) { [weak self] _ in
-            Task { @MainActor in
-                await self?.performSleepAndLock()
-            }
-        }
-        if let watchdog {
-            RunLoop.main.add(watchdog, forMode: .common)
-        }
+    private enum SleepTrigger {
+        /// 开启后的首次关屏
+        case initial
+        /// 空闲倒计时到点后的关屏
+        case idleTimeout
     }
 
-    /// 一次性动作：5 秒（或者用户配置的初始延迟）到点 → 关屏。
-    /// 关屏即等同"锁屏"，前提是用户在系统设置 → 锁屏里启用了"立即要求密码"。
-    /// 助手侧 `lockScreen` 与 `sleepDisplay` 是同一实现，所以这里只发一次。
-    /// 之后进 `locked` 状态，等用户活动唤醒。
-    private func performSleepAndLock() async {
-        guard phase == .starting else { return }
-        let controller = SleepController.shared
+    /// 首次关屏：`initialSleepDelaySeconds` 后执行一次。
+    private func scheduleInitialSleepAndLock() {
+        initialSleepTimer?.invalidate()
+        let delay = max(0, initialSleepDelaySeconds)
+        let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                await self?.performSleepAndLock(reason: .initial)
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        initialSleepTimer = timer
+    }
 
+    /// 关屏（等同锁屏，前提是系统设置勾了「立即要求密码」）。
+    ///
+    /// v1.6.3 修掉了 v1.6.2 的阻塞 bug：旧实现开头是
+    /// `guard phase == .starting else { return }`，而倒计时到点时
+    /// phase 已是 `.waitingForIdle` —— 于是直接被挡回，屏幕不关。
+    /// 表现为「首次 5 秒关屏正常，但倒计时归零后没反应」。
+    /// 现在两条路径都能进来。
+    private func performSleepAndLock(reason: SleepTrigger) async {
+        guard !isPerformingSleep else { return }
+        switch reason {
+        case .initial:
+            guard phase == .starting else { return }
+        case .idleTimeout:
+            guard phase == .waitingForIdle else { return }
+        }
+
+        isPerformingSleep = true
+        defer { isPerformingSleep = false }
+
+        let controller = SleepController.shared
         do {
             let sleep = try await HelperClient.shared.send(.init(command: .sleepDisplay))
             if !sleep.success {
                 controller.appendLog("服务器模式：关屏失败 \(sleep.message)", isError: true)
                 lastEventDescription = "关屏失败：\(sleep.message)"
-            } else {
-                lastEventDescription = "屏幕已关；macOS 会按系统设置决定是否要求密码"
-                controller.appendLog("服务器模式：已关屏，等待用户唤醒")
+                return
+            }
+            if reason == .initial {
+                initialSleepTimer?.invalidate()
+                initialSleepTimer = nil
             }
             phase = .locked
-            startIdleWatchdogAfterUnlock()
+            lastEventDescription = "已熄屏锁定；倒计时保持归零，你回来操作后重新计时"
+            controller.appendLog(reason == .initial
+                                 ? "服务器模式：已关屏，等待用户唤醒"
+                                 : "服务器模式：空闲到点，已再次关屏")
         } catch {
-            controller.appendLog("服务器模式：与助手通信失败 \(error.localizedDescription)", isError: true)
+            controller.appendLog("服务器模式：与助手通信失败 \(error.localizedDescription)",
+                                 isError: true)
             lastEventDescription = "与助手通信失败：\(error.localizedDescription)"
         }
     }
 
-    // MARK: - 解锁后倒计时
+    // MARK: - 全程 tick
 
-    /// 解锁后启动空闲检测 —— 用户连续 `idleThresholdSeconds` 没动，
-    /// 就再走一次「关屏 + 锁屏」。
-    private func startIdleWatchdogAfterUnlock() {
-        watchdog?.invalidate()
-        // 解锁这一瞬视为"刚刚用户操作过" —— 倒计时从这里开始算。
-        lastActivityAt = Date()
-        let interval: TimeInterval = 5
-        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
+    /// 每 5 秒读一次空闲秒数，交给 `decide` 决定下一步。
+    private func startTickTimer() {
+        tickTimer?.invalidate()
+        let timer = Timer(timeInterval: 5, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                self?.tickIdleWatchdog()
+                self?.tick()
             }
         }
         RunLoop.main.add(timer, forMode: .common)
-        watchdog = timer
-        phase = .waitingForIdle
-        let remaining = Int(idleThresholdSeconds)
-        lastEventDescription = "空闲倒计时：\(remaining) 秒后再次关屏"
+        tickTimer = timer
     }
 
-    private func tickIdleWatchdog() {
-        guard phase == .waitingForIdle else { return }
-
-        // 应用层时间戳：直接读 `lastActivityAt`，由 CGEvent tap 在每次
-        // 键盘 / 鼠标事件来时重置为 `Date()`。这条路径不依赖 powerd 的
-        // `HIDIdleTime`，因此即使本进程持有 noidle 断言（disablesleep +
-        // Helper 的 PreventSystemSleep）也能正常累加空闲时间。
-        let idle = Date().timeIntervalSince(lastActivityAt)
-
-        if idle >= idleThresholdSeconds {
-            watchdog?.invalidate()
-            watchdog = nil
-            Task { @MainActor in
-                await performSleepAndLock()
+    private func tick() {
+        let idle = currentIdleSeconds()
+        switch Self.decide(phase: phase, idle: idle, threshold: idleThresholdSeconds) {
+        case .idle:
+            return
+        case .countdown(let remaining):
+            if phase == .locked {
+                // 用户回来了（idle 已掉回阈值以下）—— 从此刻重新计时。
+                phase = .waitingForIdle
             }
-        } else {
-            let remaining = max(0, Int(idleThresholdSeconds - idle))
             lastEventDescription = "空闲倒计时：\(remaining) 秒后再次关屏"
+        case .sleepNow:
+            lastEventDescription = "空闲到点，正在关屏……"
+            Task { @MainActor in
+                await performSleepAndLock(reason: .idleTimeout)
+            }
+        case .holdAtZero:
+            lastEventDescription = "已熄屏锁定；倒计时保持归零，你回来操作后重新计时"
         }
     }
 
-    // MARK: - CGEvent tap（监听用户键盘 / 鼠标活动）
+    // MARK: - CGEvent tap（仅 eventTap 模式）
 
     /// 用 `CGEvent.tapCreate(.listenOnly, .headInsertEventTap, ...)` 监听
     /// 全局键盘 / 鼠标事件；每次事件来时把 `lastActivityAt` 重置为 `Date()`。
-    /// 需要 Accessibility 授权（`enable` 已检查）。
-    ///
-    /// 返回 true 表示 tap 装上、run loop source 装上、tap 已 enable；
-    /// 返回 false 表示 tap 创建失败（极少见，可能是系统资源耗尽 / 沙盒限制）。
+    /// 需要辅助功能授权（`enable` 已检查）。
     @discardableResult
     private func installUserActivityMonitor() -> Bool {
-        // 已经装上就认为成功。
         if activityTap != nil { return true }
 
-        // kCGHIDEventTap + kCGHeadInsertEventTap + kCGEventTapOptionListenOnly
-        // = 监听 HID 层所有键盘 / 鼠标事件，不拦截、不修改，不影响其他 app。
+        // kCGSessionEventTap + kCGHeadInsertEventTap + kCGEventTapOptionListenOnly
+        // = 监听所有键盘 / 鼠标事件，不拦截、不修改，不影响其他 app。
         let eventMask: CGEventMask =
             (1 << CGEventType.keyDown.rawValue) |
             (1 << CGEventType.keyUp.rawValue) |
@@ -315,9 +404,8 @@ final class ServerModeController: ObservableObject {
             (1 << CGEventType.tabletPointer.rawValue) |
             (1 << CGEventType.tabletProximity.rawValue)
 
-        // callback 必须用 @convention(c)，不能捕获 Swift 上下文，所以通过
-        // userInfo 指针回传 `ServerModeController.shared`（它在 init 内
-        // 设置一次，全进程唯一）。
+        // callback 必须是 @convention(c)，不能捕获 Swift 上下文 —— 通过
+        // userInfo 指针回传单例。
         let proxy = Unmanaged.passUnretained(ServerModeController.shared).toOpaque()
 
         guard let tap = CGEvent.tapCreate(
@@ -327,7 +415,8 @@ final class ServerModeController: ObservableObject {
             eventsOfInterest: eventMask,
             callback: { (_, _, _, userInfo) -> Unmanaged<CGEvent>? in
                 guard let userInfo else { return nil }
-                let controller = Unmanaged<ServerModeController>.fromOpaque(userInfo).takeUnretainedValue()
+                let controller = Unmanaged<ServerModeController>
+                    .fromOpaque(userInfo).takeUnretainedValue()
                 DispatchQueue.main.async {
                     controller.handleUserActivity()
                 }
@@ -340,7 +429,7 @@ final class ServerModeController: ObservableObject {
         }
 
         guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0) else {
-            // tap 已经创建但 source 没创建 —— 释放 tap 避免泄漏。
+            // tap 已创建但 source 没创建 —— 释放 tap 避免泄漏。
             CFMachPortInvalidate(tap)
             return false
         }
@@ -353,11 +442,14 @@ final class ServerModeController: ObservableObject {
         return true
     }
 
-    /// CGEvent tap 回调（运行在 CoreFoundation 线程）。通过 DispatchQueue
-    /// 跳回主线程改 `lastActivityAt`。`lastActivityAt` 是 MainActor 隔离的
-    /// mutable 状态，必须在主线程改。
+    /// CGEvent tap 回调。跳回主线程改 `lastActivityAt`（MainActor 隔离）。
     private func handleUserActivity() {
         lastActivityAt = Date()
+        // 已熄屏时用户回来了 —— 立刻切回倒计时，不等下一个 tick。
+        if phase == .locked {
+            phase = .waitingForIdle
+            lastEventDescription = "空闲倒计时：\(Int(idleThresholdSeconds)) 秒后再次关屏"
+        }
     }
 
     private func uninstallUserActivityMonitor() {
@@ -370,14 +462,5 @@ final class ServerModeController: ObservableObject {
         }
         activityTap = nil
         activityTapSource = nil
-    }
-}
-
-private extension ServerModeController.Phase {
-    var isActive: Bool {
-        switch self {
-        case .off: return false
-        default:   return true
-        }
     }
 }
