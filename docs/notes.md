@@ -873,3 +873,48 @@ Debug 与 Release 两个产物内置的助手摘要不同，正好互为「不�
 - **`setpriority` 任何方向**：实测普通进程被 EPERM 拒绝，所以 UI 上"调整 nice"按钮在助手未就绪时一定禁用。
 - **NSEvent `addGlobalMonitorForEvents`**：服务器模式监听用户活动用这个 API，仅观察不消费，不需要 Accessibility 权限。`tapCreate` 才需要权限 —— 这里专门避开。
 - **didEnableSleepDisabled 副作用**：服务器模式退出时主动关 disablesleep，会把用户此前手动开的 disablesleep 一并撤销。日志已记；想要更精细语义需拆分两层状态（见 gotchas.md 第 16 条）。
+
+## v1.7.1：Nice 弹窗无反应 + 进程名截断 + 分页副作用（2026-10-18）
+
+### 用户反馈
+
+「Nice 进程优先级调整 点击调整按钮时没有任何可用的对话框供输入/选择等级」——
+只看到按钮按下去没反应。除此之外还点了进程名被截断 + 进程数多时滚动卡顿。
+
+### 根因
+
+1. **「调整…」按钮无弹窗**：v1.6.1/v1.7 用 `.alert(_:isPresented:actions:)` 弹窗，
+   `actions` 闭包里塞了 `Stepper`。SwiftUI alert 在 macOS 上的 `actions` **只接受
+   Button 系控件**（Cancel/Default/Destructive），放 Stepper / Slider / TextField
+   会被静默丢弃，整个 alert 不弹。表象就是「按钮按了，没反应」。
+
+   修法：改用 `.sheet` 弹独立的 `NiceAdjustSheet`，原生支持任意 SwiftUI 视图。
+   Sheet 没有 title 参数，自己组 HStack + 关闭按钮当 header。
+
+2. **进程名截断**：旧 `ProcessRow` 把名字塞进 HStack，旁边 nice 数字（width 40）
+   + 「默认」/「调整…」两个 Button + Spacer 把可显示宽度挤掉，长名字直接被截掉
+   且不可换行。修法：改成三行布局 —— 名字（`.lineLimit(nil)` + `.fixedSize`
+   允许多行撑开）/ 路径副标题（`.lineLimit(1) + .truncationMode(.middle)`，
+   整行可复制）/ nice + 按钮（右对齐）。
+
+3. **分页副作用**（v1.7 留下）：旧 `pagedEntries` 是 computed property，
+   内部直接写 `currentPage = 1` 做钳制。SwiftUI 每次 body 求值都会触发 setter。
+   高频重绘时 = 大量无谓写。修法：钳制逻辑只在 `refresh()` / `query.onChange` /
+   `pageSize.onChange` 三个明确时机调用，computed property 退化为纯计算；
+   `PageBar` 翻页通过 `onPageChange` 回调写状态，加 `if newValue != currentPage` 防抖。
+
+### Sheet 内附加：文本框直接输入
+
+Stepper 一次一格，从 -20 点到 +19 要点 39 次。同步附一个 TextField（受控双向绑
+定到 `value`），用户直接敲 `-10` / `+5` 回车。合法性检查走 `NiceLevel.parse`，
+非法就禁用「用这个值」按钮，文本框本身不阻拦敲错。
+
+### 没动的与原因
+
+- **没把分页条放到 List 上**：当前 ScrollView + LazyVStack 是直接换在 v1.7 的
+  上面的最小改动；要换 `List` 性能更好但行为有微妙差异（点击高亮、键盘导航、
+  macOS 的 toolbar 集成），留给下次专门做。
+- **没做「按 nice 值排序」**：当前按名字排，nice 值只是展示字段。要做排序得
+  重新组织 filter + sort 逻辑、状态需要更复杂，收益不确定，先不做。
+- **没动 `processRow` 的选中态样式**：现在选中只显示 bundle id 一行，没有
+  背景色变化。视觉强化可后续加；本次只解三个真 bug，不顺手扩。
