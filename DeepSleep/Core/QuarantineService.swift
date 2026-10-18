@@ -56,6 +56,10 @@ final class QuarantineService {
     }
 
     /// 一条记录：哪个文件有 quarantine 属性。
+    ///
+    /// v1.7.2 起 `.app` 文件折叠显示：本条只代表 `.app` 包本身，
+    /// `appContentsQuarantined` 统计包内（不含 symlink）带 quarantine 的文件数。
+    /// 清除时如果 `isAppBundle` 为 true，会递归清包内所有 quarantine。
     struct Entry: Identifiable, Equatable {
         /// 完整路径。
         let path: String
@@ -66,7 +70,28 @@ final class QuarantineService {
         /// quarantine 属性的值。保留下来给 UI 显示 / 给调试看：
         /// 形如 `0083;61ab35f5;Chrome;…` —— 4 段：`flag;timestamp;agent;UUID`。
         let value: String
+        /// 该路径是否是 `.app` 包。
+        let isAppBundle: Bool
+        /// 该 `.app` 包内（不含 symlink）带 quarantine 的文件数；非 .app 时为 0。
+        /// UI 上用「包内另有 N 个文件被隔离」提示用户清除时一并处理。
+        let appContentsQuarantined: Int
+        /// 解析后的 4 段：flag / timestamp / agent / UUID。
+        /// 解析失败时为空数组（value 整体保留在 `value`）。
+        let valueSegments: [String]
         var id: String { path }
+
+        /// 「完整隔离状态」单行描述，给 UI「详情」展开用。
+        var detailDescription: String {
+            if valueSegments.count >= 4 {
+                return [
+                    "flag=\(valueSegments[0])",
+                    "time=\(valueSegments[1])",
+                    "agent=\(valueSegments[2])",
+                    "uuid=\(valueSegments[3])"
+                ].joined(separator: " · ")
+            }
+            return value.isEmpty ? "(空)" : value
+        }
     }
 
     /// 一次扫描结果。
@@ -112,6 +137,27 @@ final class QuarantineService {
         return (cleared, failed)
     }
 
+    /// 清除一个 `.app` 包及其**内部所有文件**的 quarantine 属性。
+    ///
+    /// 只清 `com.apple.quarantine`，不动其他 xattr；不动 symlink。
+    /// 返回 (app 本体是否被清, 包内清掉的内部文件数, 失败列表)。
+    @discardableResult
+    func clearAppBundle(at path: String) -> (clearedApp: Bool, clearedInside: Int, failed: [(String, String)]) {
+        var clearedApp = false
+        do {
+            clearedApp = try removeQuarantine(at: path)
+        } catch {
+            return (false, 0, [(path, error.localizedDescription)])
+        }
+        var inner: [Entry] = []
+        let url = URL(fileURLWithPath: path)
+        // 仅扫描包内（递归、非 .app 折叠 —— 这里要拿到全部内部文件条目）
+        try? walk(url, recursive: true, includeHidden: false, into: &inner)
+        let innerPaths = inner.map(\.path).filter { $0 != path }
+        let result = clear(paths: innerPaths)
+        return (clearedApp, result.cleared, result.failed)
+    }
+
     /// 批量清除指定目录下所有 quarantine 文件（递归选项同 `scan`）。
     @discardableResult
     func clearAll(root: String, recursive: Bool, includeHidden: Bool) throws -> Report {
@@ -126,9 +172,101 @@ final class QuarantineService {
         )
     }
 
+    // MARK: - 快速修复（损坏 .app 的多方案）
+
+    /// 一条修复方案的结果。
+    struct RepairOutcome: Equatable {
+        let step: String         // 方案名
+        let success: Bool
+        let detail: String       // 给 UI 看的一句话结果
+    }
+
+    /// 对「.app 损坏」的多方案修复，按可靠性递增。
+    ///
+    /// 用户原话：「对于部分提示已损坏的.app文件，也应当提供快捷解决方案（多方案，保证成功）」。
+    /// macOS 的「损坏」提示通常由 quarantine 引起（最常见），其次是签名失效，
+    /// 最后是用户对系统 Gatekeeper 的信任设置。**任何方案前都自动先 1)**。
+    ///
+    /// 顺序：
+    ///   1. 清除 quarantine（这一步几乎 90% 的「损坏」提示能消掉）
+    ///   2. ad-hoc 重签（`codesign --force --deep --sign -`）—— 处理签名缺失/失效
+    ///   3. 全清 xattr（`xattr -cr`）—— 兜底任何 xattr 异常
+    ///   4. 引导用户到「系统设置 → 隐私与安全」手动「仍要打开」（最差兜底）
+    @discardableResult
+    func repairDamagedApp(at path: String) -> [RepairOutcome] {
+        var outcomes: [RepairOutcome] = []
+
+        // 1) 清除 quarantine（包本身 + 包内）
+        let appClear = clearAppBundle(at: path)
+        let appCleared = appClear.clearedApp || appClear.clearedInside > 0
+        outcomes.append(RepairOutcome(
+            step: "1. 清除 quarantine",
+            success: appCleared,
+            detail: appCleared
+                ? "包\(appClear.clearedApp ? "" : "本体未带") 已清；包内另有 \(appClear.clearedInside) 个文件被清"
+                : "未发现 quarantine 属性"
+        ))
+        if appClear.failed.isEmpty && appCleared {
+            // 90% 的场景到此为止
+            return outcomes
+        }
+
+        // 2) ad-hoc 重签
+        let signResult = runAndCapture("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", path])
+        outcomes.append(RepairOutcome(
+            step: "2. 自签名（ad-hoc）",
+            success: signResult.status == 0,
+            detail: signResult.status == 0
+                ? "已用临时签名重新签名"
+                : "失败：\(signResult.output.isEmpty ? "退出码 \(signResult.status)" : signResult.output)"
+        ))
+
+        // 3) 全清 xattr
+        let xattrResult = runAndCapture("/usr/bin/xattr", ["-cr", path])
+        outcomes.append(RepairOutcome(
+            step: "3. 清除所有 xattr",
+            success: xattrResult.status == 0,
+            detail: xattrResult.status == 0
+                ? "已清空全部扩展属性"
+                : "失败：\(xattrResult.output.isEmpty ? "退出码 \(xattrResult.status)" : xattrResult.output)"
+        ))
+
+        // 4) 系统设置指引（不真正执行，UI 上展示文字）
+        outcomes.append(RepairOutcome(
+            step: "4. 手动从「系统设置」打开",
+            success: false,
+            detail: "打开后按提示在「仍要打开」按钮上点确认。这是 Gatekeeper 拒绝任何修复方案时的最后兜底。"
+        ))
+
+        return outcomes
+    }
+
+    private func runAndCapture(_ executable: String, _ arguments: [String]) -> (status: Int32, output: String) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        do {
+            try process.run()
+        } catch {
+            return (-1, "\(error.localizedDescription)")
+        }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        let text = String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return (process.terminationStatus, text)
+    }
+
     // MARK: - 私有
 
     /// 递归扫描实现。
+    ///
+    /// v1.7.2 起：`.app` 文件**折叠**显示 —— 不递归遍历 .app 内部所有被隔离文件，
+    /// 只产生 1 条 `.app` 记录，`appContentsQuarantined` 统计包内文件数。
+    /// 清除时按这条记录处理（单独走 `clearAppBundle`）。
     private func walk(_ url: URL,
                       recursive: Bool,
                       includeHidden: Bool,
@@ -153,6 +291,24 @@ final class QuarantineService {
             // 不是当前扫描目录的判定范围。
             if isSymlink { continue }
 
+            // .app 文件：折叠成一条记录 + 统计包内被隔离文件数（不再递归深入子目录）。
+            if isDirectory && name.hasSuffix(".app") {
+                if let entry = readQuarantine(at: path, resourceValues: resourceValues) {
+                    let inner = try? countQuarantined(in: child)
+                    entries.append(Entry(
+                        path: entry.path,
+                        size: entry.size,
+                        modifiedAt: entry.modifiedAt,
+                        value: entry.value,
+                        isAppBundle: true,
+                        appContentsQuarantined: inner ?? 0,
+                        valueSegments: entry.valueSegments
+                    ))
+                }
+                // 不递归 .app 内部（折叠语义）
+                continue
+            }
+
             if let entry = readQuarantine(at: path, resourceValues: resourceValues) {
                 entries.append(entry)
             }
@@ -161,6 +317,16 @@ final class QuarantineService {
                 try walk(child, recursive: recursive, includeHidden: includeHidden, into: &entries)
             }
         }
+    }
+
+    /// 递归统计一个目录（含子目录、不含 symlink）下带 quarantine 的文件数。
+    /// 仅用于 `.app` 包内统计；非 .app 目录不调它。
+    private func countQuarantined(in url: URL) throws -> Int {
+        var count = 0
+        var inner: [Entry] = []
+        try walk(url, recursive: true, includeHidden: false, into: &inner)
+        count = inner.count
+        return count
     }
 
     /// 读一个文件的 quarantine 属性；无则返回 nil。
@@ -179,7 +345,26 @@ final class QuarantineService {
             size = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
             modified = attrs?[.modificationDate] as? Date
         }
-        return Entry(path: path, size: size, modifiedAt: modified, value: value)
+        let segments = Self.parseQuarantineValue(value)
+        return Entry(
+            path: path,
+            size: size,
+            modifiedAt: modified,
+            value: value,
+            isAppBundle: false,           // walk() 在 .app 分支里覆盖
+            appContentsQuarantined: 0,
+            valueSegments: segments
+        )
+    }
+
+    /// 把 `"0083;61ab35f5;Chrome;xxxx-xxxx"` 拆成 4 段。
+    /// 段数不匹配时返回空数组（保留原始 value 让 UI 兜底显示）。
+    private static func parseQuarantineValue(_ raw: String) -> [String] {
+        let segments = raw
+            .split(separator: ";", omittingEmptySubsequences: false)
+            .map(String.init)
+        guard segments.count >= 4 else { return [] }
+        return Array(segments.prefix(4))
     }
 
     /// 调 libc 读 quarantine 属性。返回空字符串 = 无此属性。

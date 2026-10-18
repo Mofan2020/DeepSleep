@@ -36,6 +36,11 @@ struct QuarantineView: View {
 
     @State private var showFileImporter = false
 
+    /// 快速修复：当前被修复的 .app 路径与结果。
+    @State private var repairingPath: String?
+    @State private var repairOutcomes: [QuarantineService.RepairOutcome] = []
+    @State private var showRepairSheet = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             SectionCard(
@@ -172,7 +177,10 @@ struct QuarantineView: View {
                                                 } else {
                                                     selection.insert(entry.path)
                                                 }
-                                            }
+                                            },
+                                            onRepair: entry.isAppBundle ? {
+                                                Task { await runRepair(for: entry.path) }
+                                            } : nil
                                         )
                                         if entry != entries.last { Divider() }
                                     }
@@ -217,6 +225,20 @@ struct QuarantineView: View {
                 Task { await scan() }
             case .failure(let error):
                 lastError = "选择目录失败：\(error.localizedDescription)"
+            }
+        }
+        .sheet(isPresented: $showRepairSheet) {
+            if let path = repairingPath {
+                RepairResultSheet(
+                    path: path,
+                    outcomes: repairOutcomes,
+                    onDone: {
+                        repairingPath = nil
+                        repairOutcomes = []
+                        showRepairSheet = false
+                        Task { await scan() }
+                    }
+                )
             }
         }
     }
@@ -284,17 +306,27 @@ struct QuarantineView: View {
     }
 
     private func clearSelected() async {
-        let paths = entries.map(\.path).filter { selection.contains($0) }
-        guard !paths.isEmpty else { return }
+        let targets = entries.filter { selection.contains($0.path) }
+        guard !targets.isEmpty else { return }
         lastError = nil
         isClearing = true
         defer { isClearing = false }
         let result = await Task.detached(priority: .utility) {
-            QuarantineService.shared.clear(paths: paths)
+            // 区分 .app / 普通文件：
+            //   - 普通文件 → removexattr 单条
+            //   - .app → 还要清包内所有文件
+            var totalCleared = 0
+            var failed: [(String, String)] = []
+            for entry in targets {
+                let result = QuarantineService.shared.clearAppBundle(at: entry.path)
+                totalCleared += (result.clearedApp ? 1 : 0) + result.clearedInside
+                failed.append(contentsOf: result.failed)
+            }
+            return (cleared: totalCleared, failed: failed)
         }.value
         let cleared = result.cleared
         let failed = result.failed
-        entries.removeAll { paths.contains($0.path) }
+        entries.removeAll { targets.map(\.path).contains($0.path) }
         selection.removeAll()
         if failed.isEmpty {
             lastSummary = "已清除 \(cleared) 个文件的 quarantine 属性"
@@ -313,10 +345,26 @@ struct QuarantineView: View {
         let capturedRecursive = recursive
         let capturedHidden = includeHidden
         let report = await Task.detached(priority: .utility) {
-            try? QuarantineService.shared.clearAll(
+            let entries: [QuarantineService.Entry]
+            do {
+                entries = try QuarantineService.shared.scan(
+                    root: capturedRoot,
+                    recursive: capturedRecursive,
+                    includeHidden: capturedHidden
+                )
+            } catch {
+                return nil as QuarantineService.Report?
+            }
+            var totalCleared = 0
+            for entry in entries {
+                let r = QuarantineService.shared.clearAppBundle(at: entry.path)
+                totalCleared += (r.clearedApp ? 1 : 0) + r.clearedInside
+            }
+            return QuarantineService.Report(
                 root: capturedRoot,
-                recursive: capturedRecursive,
-                includeHidden: capturedHidden
+                entries: entries,
+                totalScanned: entries.count,
+                totalCleared: totalCleared
             )
         }.value
         if let report {
@@ -330,37 +378,90 @@ struct QuarantineView: View {
             controller.appendLog("清除 quarantine 失败：扫描过程中出错", isError: true)
         }
     }
+
+    /// 跑对一个 .app 的多方案修复，结果用 sheet 展示。
+    private func runRepair(for path: String) async {
+        let outcomes = await Task.detached(priority: .userInitiated) {
+            QuarantineService.shared.repairDamagedApp(at: path)
+        }.value
+        await MainActor.run {
+            self.repairingPath = path
+            self.repairOutcomes = outcomes
+            self.showRepairSheet = true
+            self.controller.appendLog("已对 \(path) 跑多方案修复，共 \(outcomes.count) 步")
+        }
+    }
 }
 
 private struct EntryRow: View {
     let entry: QuarantineService.Entry
     let selected: Bool
     let onToggle: () -> Void
+    let onRepair: (() -> Void)?
+
+    init(entry: QuarantineService.Entry,
+         selected: Bool,
+         onToggle: @escaping () -> Void,
+         onRepair: (() -> Void)? = nil) {
+        self.entry = entry
+        self.selected = selected
+        self.onToggle = onToggle
+        self.onRepair = onRepair
+    }
 
     var body: some View {
-        HStack(alignment: .center, spacing: 10) {
-            Toggle("", isOn: Binding(
-                get: { selected },
-                set: { _ in onToggle() }
-            ))
-            .toggleStyle(.checkbox)
-            .labelsHidden()
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .center, spacing: 10) {
+                Toggle("", isOn: Binding(
+                    get: { selected },
+                    set: { _ in onToggle() }
+                ))
+                .toggleStyle(.checkbox)
+                .labelsHidden()
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text((entry.path as NSString).lastPathComponent)
-                    .font(.system(.body, design: .monospaced))
-                Text(subtitle)
-                    .font(.caption)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 4) {
+                        Text((entry.path as NSString).lastPathComponent)
+                            .font(.system(.body, design: .monospaced))
+                        if entry.isAppBundle {
+                            Tag(text: ".app", color: .accentColor)
+                        }
+                        if entry.isAppBundle, entry.appContentsQuarantined > 0 {
+                            Text("包内另有 \(entry.appContentsQuarantined) 个")
+                                .font(.caption2)
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    if entry.isAppBundle {
+                        Text(entry.detailDescription)
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(2)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                    }
+                }
+                Spacer(minLength: 8)
+
+                if entry.isAppBundle, let onRepair {
+                    Button {
+                        onRepair()
+                    } label: {
+                        Label("快速修复", systemImage: "wrench.and.screwdriver")
+                    }
+                    .controlSize(.small)
+                }
+
+                Text(byteString)
+                    .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                    .frame(minWidth: 64, alignment: .trailing)
             }
-            Spacer(minLength: 8)
-
-            Text(byteString)
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
-                .frame(minWidth: 64, alignment: .trailing)
         }
         .padding(.vertical, 4)
         .contentShape(Rectangle())
@@ -403,5 +504,57 @@ private struct EntryRow: View {
         guard segments.count >= 3 else { return raw }
         // 第 3 段（agent）是给 UI 看的关键：哪个应用打上的隔离标记。
         return "agent=\(segments[2])"
+    }
+}
+
+// MARK: - 修复结果 sheet
+
+struct RepairResultSheet: View {
+
+    let path: String
+    let outcomes: [QuarantineService.RepairOutcome]
+    let onDone: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("修复「.app 损坏」")
+                    .font(.title3.weight(.semibold))
+                Text(path)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(Array(outcomes.enumerated()), id: \.offset) { _, outcome in
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: outcome.success ? "checkmark.circle.fill" : "circle.dashed")
+                            .foregroundStyle(outcome.success ? Color.green : Color.secondary)
+                            .frame(width: 18)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(outcome.step).font(.body.weight(.medium))
+                            Text(outcome.detail)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
+
+            HStack {
+                Spacer()
+                Button("完成") { onDone() }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(22)
+        .frame(width: 520)
     }
 }

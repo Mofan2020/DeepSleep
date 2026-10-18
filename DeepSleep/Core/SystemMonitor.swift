@@ -37,6 +37,13 @@ public struct MonitorConfig: Codable, Sendable, Equatable {
     /// 进程优先级（nice）页每页进程数。范围 [10, 30]，默认 20。
     /// 用户在「进程优先级」页可改；改后立刻持久化到 `monitorConfig.v1`。
     public var nicePageSize: Int
+    /// 是否启用邮件告警渠道（独立于系统通知）。启用后监控的过载 / 单进程
+    /// RAM / CPU 温度事件会同时发一封邮件给用户在「邮件告警」页配的收件人。
+    public var emailAlertEnabled: Bool
+    /// 邮件告警的冷却时间（秒）：相同事件在窗口内只发一封。
+    /// 默认 300（5 分钟）。冷却是按事件种类 + 阈值各自独立计算的，
+    /// 与 SystemMonitor 内部的 5 分钟冷却是同源信息但**不再二次去重**。
+    public var emailCooldownSeconds: Int
 
     public init(enabled: Bool = false,
                 ramHighPercent: Double = 90,
@@ -47,7 +54,9 @@ public struct MonitorConfig: Codable, Sendable, Equatable {
                 singleProcessRAMBytes: Int = 4 * 1024 * 1024 * 1024,
                 cpuTempHighCelsius: Double = 90,
                 cpuTempEnabled: Bool = true,
-                nicePageSize: Int = 20) {
+                nicePageSize: Int = 20,
+                emailAlertEnabled: Bool = false,
+                emailCooldownSeconds: Int = 300) {
         self.enabled = enabled
         self.ramHighPercent = ramHighPercent
         self.cpuHighPercent = cpuHighPercent
@@ -58,6 +67,8 @@ public struct MonitorConfig: Codable, Sendable, Equatable {
         self.cpuTempHighCelsius = cpuTempHighCelsius
         self.cpuTempEnabled = cpuTempEnabled
         self.nicePageSize = NicePageSize.clamp(nicePageSize)
+        self.emailAlertEnabled = emailAlertEnabled
+        self.emailCooldownSeconds = max(0, min(emailCooldownSeconds, 24 * 60 * 60))
     }
 
     public static let `default` = MonitorConfig()

@@ -21,6 +21,7 @@
 		1C970D88D66C4F43D8AD1DAC /* PowerWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2DD20BF1CBB3194597701CA /* PowerWatcher.swift */; };
 		26571AA4DE570C41581C688A /* MoonshotProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3ED7FD6F0AE18E1B2B79BE17 /* MoonshotProvider.swift */; };
 		279C699FC5D14667029F652C /* StreamForwarder.swift in Sources */ = {isa = PBXBuildFile; fileRef = DADB9CFE5B4494102431F2A3 /* StreamForwarder.swift */; };
+		293AAE69A3F01595AF98272F /* ScheduledCommand.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE95755CD1A5144551AD6774 /* ScheduledCommand.swift */; };
 		2CF3383D939893655F3DD14A /* QuickQuitView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69AD70CC1E39560226333763 /* QuickQuitView.swift */; };
 		2E04E5FA5A3F0EE1C6D77B07 /* MonitoringCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = E75BB13FF2F018F746DC727B /* MonitoringCoordinator.swift */; };
 		313486F9C714E8AC1436BE78 /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = 178D52B0BEF95859AB8B6D88 /* Components.swift */; };
@@ -38,6 +39,7 @@
 		48A8411A91BC1725A62EAE46 /* HelperInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64A44533D85F54CB2BC70D48 /* HelperInstaller.swift */; };
 		49BA4D1FF2BB3180D79AA7D5 /* uninstall-helper.sh in Resources */ = {isa = PBXBuildFile; fileRef = 5C4F13990352AAC1FC42479A /* uninstall-helper.sh */; };
 		4CC529F69FC171A6A59CD5E3 /* AssertionKind.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0322343BBDEB6A664F907E5 /* AssertionKind.swift */; };
+		4FB227FEAF25239D85D96593 /* EmailThrottleStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC22A1E420A2DE3FB800D6F0 /* EmailThrottleStore.swift */; };
 		4FCF72BA3A4B673DEBC24AD5 /* GlobalHotkey.swift in Sources */ = {isa = PBXBuildFile; fileRef = 566F4ACAAB91680B697CC74D /* GlobalHotkey.swift */; };
 		51800B0D1F850DC8C96B1B71 /* ProcessNiceService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 584DF06C95A2B1C65C62BDDB /* ProcessNiceService.swift */; };
 		51B6C48355C4201E39EE0FD3 /* DeepSleepApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0343C5752D94A72187E5078B /* DeepSleepApp.swift */; };
@@ -49,6 +51,7 @@
 		5E8C2C5C7356AE760C7CBF15 /* MenuBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13BD008C8B73D8005C11EFAC /* MenuBarController.swift */; };
 		62404108B725BBFBFE76C583 /* UpdateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BBF3FF9C3B4A0AA3E5A2493 /* UpdateView.swift */; };
 		629AF9961611BE5DEBCFE641 /* IdleTime.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFD43F8F82DD114B7424CF91 /* IdleTime.swift */; };
+		62DD5A6CBDF34B77F0875289 /* WeeklyRestartManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A765E484E4DB325FDDA6E62 /* WeeklyRestartManager.swift */; };
 		6659B6122A8EEA38871C4070 /* ProcessPriority.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBB5D215E2943FDD3FC7BEDB /* ProcessPriority.swift */; };
 		67DC9D76825580F163519BF6 /* QuotaPoller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20A8AB2E6BA1323064CCCBFB /* QuotaPoller.swift */; };
 		683EF363E4F084BEF59CD0EB /* BiometricAuth.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BE799E3FF01373354EC7D76 /* BiometricAuth.swift */; };
@@ -62,6 +65,7 @@
 		73ACAA59B7A7FB882CB55A50 /* AutomationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65EE86101EAC650FBB5F0CBB /* AutomationEngine.swift */; };
 		74D8061FE3512F42C2C759F2 /* HealthCheck.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43D825A6BA75907B7DD06AC5 /* HealthCheck.swift */; };
 		75D81C8CFC7E50AD5E6B7028 /* DoubaoProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32B39BDE0FC9297C00AF7FF6 /* DoubaoProvider.swift */; };
+		777A351396E1CB2C231820FD /* EmailChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B977BD301346F61F48D15CDB /* EmailChannel.swift */; };
 		77AC54EAF737FDB032DEB3FA /* ServerModeIdlePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27F7A85603F8F24BB4412911 /* ServerModeIdlePolicy.swift */; };
 		78C8D80159F6941DC10F7B3B /* GatewaySettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A25FDB3DB6694381D64FA08 /* GatewaySettingsView.swift */; };
 		78D179B4ACE0E28FB61B6555 /* AlertWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B527587ED1D0F7A77206BE2C /* AlertWindowController.swift */; };
@@ -108,6 +112,7 @@
 		D0CC2A42F432A1A7D0DEEEE4 /* Uninstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF2BAA4DC2FE609833A597C3 /* Uninstaller.swift */; };
 		D50B72FD4279D758A75E2B7B /* IdleTime.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFD43F8F82DD114B7424CF91 /* IdleTime.swift */; };
 		D7E65A81D878D63E6911C6B7 /* DashScopeProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A190F2CB6DDCAF4571545882 /* DashScopeProvider.swift */; };
+		DD316DAE16D1AA3E9438FA15 /* AppRestartWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 599B624893AFA02A93639FAE /* AppRestartWatcher.swift */; };
 		DD4E960A423AD43036E88DBA /* QuarantineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD00E9A548D69A57CA1D30D5 /* QuarantineView.swift */; };
 		E13C254EECD3A93910A4C073 /* MiniMaxProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77631F86441FAAE4E63F378D /* MiniMaxProvider.swift */; };
 		E147974598A796B15B1C1069 /* ProcessStats.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9280BE0F52069F606CA7D220 /* ProcessStats.swift */; };
@@ -182,6 +187,7 @@
 		58014010D89130A9A194BE3F /* UnixSocket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnixSocket.swift; sourceTree = "<group>"; };
 		584DF06C95A2B1C65C62BDDB /* ProcessNiceService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessNiceService.swift; sourceTree = "<group>"; };
 		596F4304321F89BFF2BEC9DB /* ExternalActivityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExternalActivityView.swift; sourceTree = "<group>"; };
+		599B624893AFA02A93639FAE /* AppRestartWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRestartWatcher.swift; sourceTree = "<group>"; };
 		5A25FDB3DB6694381D64FA08 /* GatewaySettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GatewaySettingsView.swift; sourceTree = "<group>"; };
 		5BBF3FF9C3B4A0AA3E5A2493 /* UpdateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateView.swift; sourceTree = "<group>"; };
 		5BE799E3FF01373354EC7D76 /* BiometricAuth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BiometricAuth.swift; sourceTree = "<group>"; };
@@ -210,6 +216,7 @@
 		960F8920CB0412CB44C5FB31 /* install-helper.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = "install-helper.sh"; sourceTree = "<group>"; };
 		96ED86613A6A98B3C2D18307 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		9984708438247E1D6DD0C2DF /* ServerModeController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerModeController.swift; sourceTree = "<group>"; };
+		9A765E484E4DB325FDDA6E62 /* WeeklyRestartManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeeklyRestartManager.swift; sourceTree = "<group>"; };
 		9CAB6C859E1D48ADADA0CC3A /* ModelSwitcherView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelSwitcherView.swift; sourceTree = "<group>"; };
 		A190F2CB6DDCAF4571545882 /* DashScopeProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashScopeProvider.swift; sourceTree = "<group>"; };
 		A2DD20BF1CBB3194597701CA /* PowerWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerWatcher.swift; sourceTree = "<group>"; };
@@ -222,12 +229,14 @@
 		B20EF4F84074F785EE30C16A /* QuarantineService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuarantineService.swift; sourceTree = "<group>"; };
 		B4F0B4163E1F57C80031517F /* UninstallView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UninstallView.swift; sourceTree = "<group>"; };
 		B527587ED1D0F7A77206BE2C /* AlertWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertWindowController.swift; sourceTree = "<group>"; };
+		B977BD301346F61F48D15CDB /* EmailChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmailChannel.swift; sourceTree = "<group>"; };
 		BD00E9A548D69A57CA1D30D5 /* QuarantineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuarantineView.swift; sourceTree = "<group>"; };
 		C0322343BBDEB6A664F907E5 /* AssertionKind.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssertionKind.swift; sourceTree = "<group>"; };
 		C1AD0F5909E2F038DFBE9160 /* ProviderRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderRegistry.swift; sourceTree = "<group>"; };
 		C621046B4A0FEBDD66540895 /* DeepSleep.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DeepSleep.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C993F30605CB3C3BB8F0EC18 /* PowerActivityMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerActivityMonitor.swift; sourceTree = "<group>"; };
 		CAB733FD825537CF3DA93F8A /* AutomationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationView.swift; sourceTree = "<group>"; };
+		CC22A1E420A2DE3FB800D6F0 /* EmailThrottleStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmailThrottleStore.swift; sourceTree = "<group>"; };
 		CF2BAA4DC2FE609833A597C3 /* Uninstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Uninstaller.swift; sourceTree = "<group>"; };
 		CFD43F8F82DD114B7424CF91 /* IdleTime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdleTime.swift; sourceTree = "<group>"; };
 		D6B81675C2A48027F8DF140A /* DeepSleepHelper */ = {isa = PBXFileReference; includeInIndex = 0; path = DeepSleepHelper; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -235,6 +244,7 @@
 		DADB9CFE5B4494102431F2A3 /* StreamForwarder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamForwarder.swift; sourceTree = "<group>"; };
 		DBB5D215E2943FDD3FC7BEDB /* ProcessPriority.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessPriority.swift; sourceTree = "<group>"; };
 		DE3295E35F8D28B69A629A8F /* HelperProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelperProtocol.swift; sourceTree = "<group>"; };
+		DE95755CD1A5144551AD6774 /* ScheduledCommand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduledCommand.swift; sourceTree = "<group>"; };
 		E0CCA93C48A647DA76B5DF42 /* ServerModeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerModeView.swift; sourceTree = "<group>"; };
 		E0E2DA26DEFB4FB3396D7063 /* PowerSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerSettingsView.swift; sourceTree = "<group>"; };
 		E13408104C16C642713945FC /* SystemMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemMonitor.swift; sourceTree = "<group>"; };
@@ -353,6 +363,7 @@
 			isa = PBXGroup;
 			children = (
 				B527587ED1D0F7A77206BE2C /* AlertWindowController.swift */,
+				599B624893AFA02A93639FAE /* AppRestartWatcher.swift */,
 				C0322343BBDEB6A664F907E5 /* AssertionKind.swift */,
 				65EE86101EAC650FBB5F0CBB /* AutomationEngine.swift */,
 				A4120515887C376197CCE7F9 /* AutomationRule.swift */,
@@ -368,6 +379,7 @@
 				ED60BFA7B2D37DD4613795ED /* ProcessStatsProvider.swift */,
 				B20EF4F84074F785EE30C16A /* QuarantineService.swift */,
 				1DAFF6F4654DCF7056F1BA67 /* QuickQuit.swift */,
+				DE95755CD1A5144551AD6774 /* ScheduledCommand.swift */,
 				9984708438247E1D6DD0C2DF /* ServerModeController.swift */,
 				93C5E4B4358BF400FACC53DC /* SleepController.swift */,
 				E13408104C16C642713945FC /* SystemMonitor.swift */,
@@ -375,6 +387,7 @@
 				CF2BAA4DC2FE609833A597C3 /* Uninstaller.swift */,
 				03B58135C030FD6D97DD7D84 /* UpdateManager.swift */,
 				1DFE7EA8FCC931540BB46584 /* URLCommands.swift */,
+				9A765E484E4DB325FDDA6E62 /* WeeklyRestartManager.swift */,
 			);
 			path = Core;
 			sourceTree = "<group>";
@@ -440,6 +453,15 @@
 			path = Auth;
 			sourceTree = "<group>";
 		};
+		BAE58949D1C3AFEE5A6EA400 /* Notifications */ = {
+			isa = PBXGroup;
+			children = (
+				B977BD301346F61F48D15CDB /* EmailChannel.swift */,
+				CC22A1E420A2DE3FB800D6F0 /* EmailThrottleStore.swift */,
+			);
+			path = Notifications;
+			sourceTree = "<group>";
+		};
 		D5EBEFBEB0B48688AB35EA1C /* Resources */ = {
 			isa = PBXGroup;
 			children = (
@@ -458,6 +480,7 @@
 				87CE46D332B4F3AF2889D27E /* Core */,
 				9DDC46D7513272EAF61242C3 /* Intents */,
 				6CE03C93968A56BD1804F35F /* LLMGateway */,
+				BAE58949D1C3AFEE5A6EA400 /* Notifications */,
 				A54D53C12E646CA216412D4B /* Privileged */,
 				D5EBEFBEB0B48688AB35EA1C /* Resources */,
 				FC4B385FCF1AA271879C9157 /* Views */,
@@ -615,6 +638,7 @@
 				78D179B4ACE0E28FB61B6555 /* AlertWindowController.swift in Sources */,
 				E61FC9D01C3106726AE07AF3 /* AnthropicProvider.swift in Sources */,
 				5CF047FA11D64F6D5A7CF6FB /* AppDelegate.swift in Sources */,
+				DD316DAE16D1AA3E9438FA15 /* AppRestartWatcher.swift in Sources */,
 				4CC529F69FC171A6A59CD5E3 /* AssertionKind.swift in Sources */,
 				CDC0DB341A0DB1C90C51A258 /* AutoStartManager.swift in Sources */,
 				A2488626DD99D32998AFF92B /* AutoStartSettings.swift in Sources */,
@@ -634,6 +658,8 @@
 				BB3A3C58E54678870163A762 /* DeepSleepAppShortcuts.swift in Sources */,
 				9551EFBCD9BC4F0B0C324544 /* DeepSleepIntents.swift in Sources */,
 				75D81C8CFC7E50AD5E6B7028 /* DoubaoProvider.swift in Sources */,
+				777A351396E1CB2C231820FD /* EmailChannel.swift in Sources */,
+				4FB227FEAF25239D85D96593 /* EmailThrottleStore.swift in Sources */,
 				7E9BB0ED0884AB7842D45981 /* ExternalActivityView.swift in Sources */,
 				91966FD68A4D35624E1C2D24 /* FeatureToggle.swift in Sources */,
 				89D2C26F0A1DC08627D965D5 /* FormatConverter.swift in Sources */,
@@ -691,6 +717,7 @@
 				E548FEB8A4112BA32DFC16D2 /* QuotaModels.swift in Sources */,
 				67DC9D76825580F163519BF6 /* QuotaPoller.swift in Sources */,
 				9429A1EB6266F9702E9D9158 /* ScheduleView.swift in Sources */,
+				293AAE69A3F01595AF98272F /* ScheduledCommand.swift in Sources */,
 				017E43688EF7300FD313BCA4 /* ServerModeController.swift in Sources */,
 				EE3890A1A4901BA8921BC74E /* ServerModeIdlePolicy.swift in Sources */,
 				C9B76A5A6E3BC83B1DA8F016 /* ServerModeView.swift in Sources */,
@@ -709,6 +736,7 @@
 				32D4F6F5657871D8EF98E8A6 /* UsageDetailView.swift in Sources */,
 				07803842C0973881DBE08D51 /* UsageRecorder.swift in Sources */,
 				F46459160672CE1350637D97 /* Version.swift in Sources */,
+				62DD5A6CBDF34B77F0875289 /* WeeklyRestartManager.swift in Sources */,
 				C7CAF9096B3F0A12F35B8126 /* WindowCoordinator.swift in Sources */,
 				C7C03F475DB111D08F04F1D8 /* ZhipuProvider.swift in Sources */,
 			);
@@ -925,11 +953,11 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 12;
+				CURRENT_PROJECT_VERSION = 13;
 				INFOPLIST_FILE = DeepSleep/Resources/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
-				MARKETING_VERSION = 1.7.1;
+				MARKETING_VERSION = 1.7.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.skyc8266.deepsleep;
 				PRODUCT_NAME = "Deep Sleep";
 				SDKROOT = macosx;
@@ -942,11 +970,11 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 12;
+				CURRENT_PROJECT_VERSION = 13;
 				INFOPLIST_FILE = DeepSleep/Resources/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
-				MARKETING_VERSION = 1.7.1;
+				MARKETING_VERSION = 1.7.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.skyc8266.deepsleep;
 				PRODUCT_NAME = "Deep Sleep";
 				SDKROOT = macosx;

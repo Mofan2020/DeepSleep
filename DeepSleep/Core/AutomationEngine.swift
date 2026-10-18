@@ -75,10 +75,45 @@ final class AutomationEngine: ObservableObject {
             }
         }
 
+        // 检测「未满足 → 满足」的边沿：仅在 notifyOnSatisfied=true 的规则上触发邮件。
+        let newlySatisfied = satisfied.subtracting(satisfiedRuleIDs)
+        if !newlySatisfied.isEmpty {
+            sendSatisfiedEmails(for: newlySatisfied)
+        }
+
         if satisfied != satisfiedRuleIDs {
             satisfiedRuleIDs = satisfied
         }
         publishDesired(desired)
+    }
+
+    /// 给一组「刚被满足」的规则发邮件。失败只记日志。
+    private func sendSatisfiedEmails(for ids: Set<UUID>) {
+        let matched = rules.filter { ids.contains($0.id) && $0.notifyOnSatisfied }
+        guard !matched.isEmpty else { return }
+        Task { @MainActor in
+            for rule in matched {
+                let subject = "自动化规则触发：\(rule.name)"
+                let body = """
+                Deep Sleep 的自动化规则刚刚被触发：
+
+                • 名称：\(rule.name)
+                • 触发条件：\(rule.trigger.displayName)
+                • 动作：\(rule.summary)
+
+                时间：\(ISO8601DateFormatter().string(from: Date()))
+                """
+                let result = await EmailChannel.shared.send(subject: subject, body: body)
+                switch result {
+                case .success:
+                    SleepController.shared.appendLog("自动化触发邮件已发：\(rule.name)")
+                case .failure(let reason):
+                    SleepController.shared.appendLog(
+                        "自动化触发邮件发送失败（\(rule.name)）：\(reason)", isError: true
+                    )
+                }
+            }
+        }
     }
 
     private func publishDesired(_ desired: Set<AssertionKind>) {

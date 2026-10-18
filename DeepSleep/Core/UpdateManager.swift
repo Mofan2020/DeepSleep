@@ -41,6 +41,10 @@ final class UpdateManager: ObservableObject {
     private static let autoCheckKey = "com.skyc8266.deepsleep.autoCheckUpdates"
     private static let askKey = "com.skyc8266.deepsleep.askBeforeInstalling"
     private static let lastCheckKey = "com.skyc8266.deepsleep.lastUpdateCheckAt"
+    private static let skipPrereleaseKey = "com.skyc8266.deepsleep.skipPrereleaseUpdates"
+    /// 自动重试退避：网络 / 临时错误按指数退避（5s / 30s / 5min），非临时错误不再试。
+    private static let retryDelays: [TimeInterval] = [5, 30, 5 * 60]
+    private var retryCount = 0
 
     /// 自动检查的间隔。GitHub 对匿名 API 有 60 次/小时的限额，
     /// 一天一次既够用又不会撞限额。
@@ -53,7 +57,7 @@ final class UpdateManager: ObservableObject {
         case checking
         case upToDate(current: String)
         case available(version: String)
-        case downloading(version: String)
+        case downloading(version: String, progress: Double)
         case ready(version: String)
         case failed(String)
 
@@ -63,7 +67,8 @@ final class UpdateManager: ObservableObject {
             case .checking:                  return "正在检查…"
             case .upToDate(let current):     return "已是最新版本（\(current)）"
             case .available(let version):    return "发现新版本 \(version)"
-            case .downloading(let version):  return "正在下载 \(version)…"
+            case .downloading(let version, let progress):
+                return "正在下载 \(version)（\(Int(progress * 100))%）"
             case .ready(let version):        return "\(version) 已就绪，可立即安装"
             case .failed(let reason):        return "检查失败：\(reason)"
             }
@@ -94,6 +99,14 @@ final class UpdateManager: ObservableObject {
         }
     }
 
+    /// 跳过预发布版本（仅装正式版）。默认 true —— 仓库的发布习惯是标 Pre-release，
+    /// 不勾这个开关就会一直装 prerelease。
+    @Published var skipPrereleaseUpdates: Bool {
+        didSet {
+            UserDefaults.standard.set(skipPrereleaseUpdates, forKey: Self.skipPrereleaseKey)
+        }
+    }
+
     /// 已下载并校验通过、等待安装的新版本。
     private var prepared: (version: String, appPath: String, workDirectory: String)?
 
@@ -105,6 +118,7 @@ final class UpdateManager: ObservableObject {
     private init() {
         automaticallyChecks = UserDefaults.standard.object(forKey: Self.autoCheckKey) as? Bool ?? true
         asksBeforeInstalling = UserDefaults.standard.object(forKey: Self.askKey) as? Bool ?? true
+        skipPrereleaseUpdates = UserDefaults.standard.object(forKey: Self.skipPrereleaseKey) as? Bool ?? true
     }
 
     // MARK: - 检查
@@ -125,7 +139,9 @@ final class UpdateManager: ObservableObject {
         UserDefaults.standard.set(Date(), forKey: Self.lastCheckKey)
 
         do {
-            let release = try await fetchLatestRelease()
+            let release = try await fetchLatestRelease(
+                skipPrerelease: skipPrereleaseUpdates
+            )
 
             // 版本判断全压在 isUpgrade 上：它只在「严格更新」时返回 true，
             // 版本号解析不了时返回 false。这样即使 GitHub 那边 tag 写错了，
@@ -136,14 +152,32 @@ final class UpdateManager: ObservableObject {
                     : "已是最新版本（\(currentVersion)）"
                 phase = .upToDate(current: currentVersion)
                 updateLog(note)
+                retryCount = 0  // 「无更新」也是成功路径，重置退避计数
                 return
             }
 
             phase = .available(version: release.version)
             updateLog("发现新版本 \(release.version)（当前 \(currentVersion)）")
+            retryCount = 0
 
             guard automaticallyInstall || !asksBeforeInstalling else { return }
             await downloadAndPrepare(release)
+        } catch let error as UpdateError {
+            // 分类：可重试 vs 永久
+            if error.isRetryable, retryCount < Self.retryDelays.count {
+                let delay = Self.retryDelays[retryCount]
+                retryCount += 1
+                let detail = error.errorDescription ?? "未知"
+                phase = .failed("\(detail)（\(Int(delay))s 后重试）")
+                updateLog("检查更新失败：\(detail)。\(Int(delay))s 后自动重试。")
+                Task {
+                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                    await checkForUpdates(automaticallyInstall: automaticallyInstall)
+                }
+            } else {
+                phase = .failed(error.errorDescription ?? "未知错误")
+                updateLog("检查更新失败：\(error.errorDescription ?? "未知错误")")
+            }
         } catch {
             phase = .failed(error.localizedDescription)
             updateLog("检查更新失败：\(error.localizedDescription)")
@@ -152,8 +186,12 @@ final class UpdateManager: ObservableObject {
 
     // MARK: - 下载与校验
 
-    private func downloadAndPrepare(_ release: ReleaseInfo) async {
-        phase = .downloading(version: release.version)
+    /// 拉取最新发布信息 + zip + sha256（顺序执行；sha256 用来校验）。
+    /// `onDownloadProgress` 接收 0.0–1.0，下载阶段 UI 用它显示进度条。
+    private func downloadAndPrepare(_ release: ReleaseInfo,
+                                     onDownloadProgress: @escaping (Double) -> Void = { _ in }
+    ) async {
+        phase = .downloading(version: release.version, progress: 0)
 
         var workDirectory: String?
         do {
@@ -163,8 +201,13 @@ final class UpdateManager: ObservableObject {
             try FileManager.default.createDirectory(
                 atPath: work, withIntermediateDirectories: true)
 
-            // 1) 下载 zip
-            let zipData = try await fetch(release.downloadURL)
+            // 1) 下载 zip（带进度）
+            let zipData = try await fetch(release.downloadURL, onProgress: { progress in
+                Task { @MainActor in
+                    self.phase = .downloading(version: release.version, progress: progress)
+                    onDownloadProgress(progress)
+                }
+            })
             guard zipData.count > 0 else { throw UpdateError.emptyDownload }
             let zipPath = work + "/\(Self.assetName)"
             try zipData.write(to: URL(fileURLWithPath: zipPath))
@@ -370,8 +413,9 @@ final class UpdateManager: ObservableObject {
     /// 因为这个接口少考虑了一层，把「有 Release 但都是预发布」误判成了「没有 Release」。
     ///
     /// 改为列出最近若干条，丢掉草稿（未发布的东西不该自动装给用户），
-    /// 保留预发布，再用版本号比较取最高的那条。
-    private func fetchLatestRelease() async throws -> ReleaseInfo {
+    /// 保留预发布（默认行为），再用版本号比较取最高的那条。
+    /// `skipPrerelease=true` 时进一步丢掉预发布，只装正式版。
+    private func fetchLatestRelease(skipPrerelease: Bool = false) async throws -> ReleaseInfo {
         let url = URL(string:
             "https://api.github.com/repos/\(Self.owner)/\(Self.repo)/releases?per_page=30")!
         let data = try await fetch(url)
@@ -387,6 +431,7 @@ final class UpdateManager: ObservableObject {
         // 而不是硬塞一个「版本 0」或「版本无限大」进去。
         let candidates = releases
             .filter { !$0.draft }
+            .filter { !skipPrerelease || !$0.prerelease }
             .filter { SemanticVersion.parse($0.tagName) != nil }
 
         guard let release = candidates.max(by: { lhs, rhs in
@@ -409,18 +454,49 @@ final class UpdateManager: ObservableObject {
     }
 
     private func fetch(_ url: URL) async throws -> Data {
+        try await fetch(url, onProgress: { _ in })
+    }
+
+    /// 带进度的下载：每收到 chunk 回调 `onProgress(0.0–1.0)`。
+    /// chunk 累计成单一 Data 返回 —— SHA-256 校验时一次性 hash 整个文件，
+    /// 比「边下边 hash」简单得多；下载几百 MB 不构成瓶颈。
+    private func fetch(_ url: URL, onProgress: @escaping (Double) -> Void) async throws -> Data {
         var request = URLRequest(url: url)
-        // GitHub API 要求带 User-Agent，否则直接 403。
+        // GitHub API / 资产下载都要求带 User-Agent。
         request.setValue("DeepSleep", forHTTPHeaderField: "User-Agent")
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-        request.timeoutInterval = 60
+        if url.path.hasPrefix("/repos/") {
+            // API 请求保持短超时；资产下载用更长超时。
+            request.timeoutInterval = 60
+        } else {
+            request.timeoutInterval = 5 * 60
+        }
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (asyncBytes, response) = try await URLSession.shared.bytes(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw UpdateError.network("没有收到 HTTP 响应")
         }
         guard (200..<300).contains(http.statusCode) else {
             throw UpdateError.network("HTTP \(http.statusCode)")
+        }
+
+        let expected = http.expectedContentLength
+        var data = Data()
+        data.reserveCapacity(expected > 0 ? Int(expected) : 0)
+        var lastReportedProgress: Double = 0
+        for try await byte in asyncBytes {
+            data.append(byte)
+            if expected > 0 {
+                let progress = Double(data.count) / Double(expected)
+                // 节流：变化 ≥ 1% 才上报，避免每字节更新一次 phase 触发 UI 重绘。
+                if progress - lastReportedProgress >= 0.01 || progress >= 1.0 {
+                    lastReportedProgress = progress
+                    onProgress(progress)
+                }
+            }
+        }
+        if expected > 0 {
+            onProgress(1.0)
         }
         return data
     }
@@ -499,7 +575,18 @@ final class UpdateManager: ObservableObject {
             case .commandFailed(let detail):
                 return detail
             case .network(let detail):
-                return detail
+                return "网络错误：\(detail)"
+            }
+        }
+
+        /// 「临时性」错误：网络抖动、5xx 等。按 retryDelays 退避重试。
+        /// 「永久性」错误（checksum mismatch / wrongBundleID）不重试。
+        var isRetryable: Bool {
+            switch self {
+            case .network: return true
+            case .emptyDownload: return true
+            case .malformedRelease: return true   // GitHub 临时返回脏数据也算
+            default: return false
             }
         }
     }

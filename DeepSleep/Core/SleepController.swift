@@ -139,6 +139,24 @@ final class SleepController: ObservableObject {
         }
     }
 
+    /// 退出 Deep Sleep 时是否保留 assertion 与 `pmset disablesleep` 状态。
+    ///
+    /// 用途：当本应用作为「驱动其他任务不进入睡眠」的临时前台时，
+    /// 关闭它仍希望 assertion 继续生效（例如后台跑下载 / 编译 / 渲染任务）。
+    /// 默认 false —— 与历史行为一致：退出即清理，避免后台默默耗电 / 阻止合盖睡眠。
+    ///
+    /// 风险：
+    ///   - assertion 跟随本进程生命周期，进程退出后 IOKit 会自动释放
+    ///     `localAssertionIDs` 持有的那些；但 helper 持有的不会自动释放
+    ///     —— 它们会一直保留到手动停用「完全控制」或下次重启。
+    ///   - `pmset disablesleep` 不会随进程退出，外部程序改回之前都会生效。
+    ///   - 由于本进程已退出，被外部改回时 Deep Sleep 无法纠正。
+    @Published var preservesStateOnExit: Bool {
+        didSet {
+            UserDefaults.standard.set(preservesStateOnExit, forKey: Self.preserveStateOnExitKey)
+        }
+    }
+
     /// 本应用是否开启了 `disablesleep`，用于退出时按需恢复。
     private var didEnableSleepDisabled = false
 
@@ -216,11 +234,13 @@ final class SleepController: ObservableObject {
     private static let confirmationKey = "com.skyc8266.deepsleep.confirmEachAction"
     private static let logCountKey = "com.skyc8266.deepsleep.logRetentionCount"
     private static let logDaysKey = "com.skyc8266.deepsleep.logRetentionDays"
+    private static let preserveStateOnExitKey = "com.skyc8266.deepsleep.preserveStateOnExit"
 
     private init() {
         requireConfirmationPerAction = UserDefaults.standard.object(forKey: Self.confirmationKey) as? Bool ?? true
         logRetentionCount = UserDefaults.standard.object(forKey: Self.logCountKey) as? Int ?? 500
         logRetentionDays = UserDefaults.standard.object(forKey: Self.logDaysKey) as? Int ?? 7
+        preservesStateOnExit = UserDefaults.standard.object(forKey: Self.preserveStateOnExitKey) as? Bool ?? false
         automation.onDesiredAssertionsChanged = { [weak self] desired in
             Task { @MainActor in
                 guard let self else { return }
@@ -284,6 +304,8 @@ final class SleepController: ObservableObject {
         await refreshPowerSettings()
         await refreshScheduledWake()
         automation.start()
+        AppRestartWatcher.shared.start()
+        ScheduledCommand.shared.start()
         PowerWatcher.shared.start()
         startRefreshLoop()
         if !PowerWatcher.shared.isRegistered {
@@ -299,6 +321,22 @@ final class SleepController: ObservableObject {
     }
 
     func shutdown() async {
+        // v1.7.2：保留退出态开关。开启时 assertion 与 disablesleep 都不释放，
+        // 进程退出后 helper 侧的 assertion 会保留到下次停用「完全控制」或重启；
+        // disablesleep 会一直生效到外部程序或系统重启改回 —— 那时 Deep Sleep 已无能为力。
+        if preservesStateOnExit {
+            appendLog("已启用「保留退出态」，跳过释放 assertion 与禁用 disablesleep（应用退出后 Deep Sleep 无法再纠正外部改动）", isError: true)
+            refreshTimer?.invalidate()
+            refreshTimer = nil
+            countdownTimer?.invalidate()
+            countdownTimer = nil
+            holdTimer?.invalidate()
+            holdTimer = nil
+            automation.stop()
+            PowerWatcher.shared.stop()
+            return
+        }
+
         refreshTimer?.invalidate()
         refreshTimer = nil
         countdownTimer?.invalidate()
@@ -306,6 +344,8 @@ final class SleepController: ObservableObject {
         holdTimer?.invalidate()
         holdTimer = nil
         automation.stop()
+        AppRestartWatcher.shared.stop()
+        ScheduledCommand.shared.stop()
         PowerWatcher.shared.stop()
 
         // 释放助手侧的 assertion，避免 app 退出后残留占用。
@@ -663,7 +703,11 @@ final class SleepController: ObservableObject {
     }
 
     /// 退出时若本应用开启过 disablesleep，则恢复系统默认行为。
+    ///
+    /// v1.7.2：保留退出态开关开启时直接跳过，让 disablesleep 在进程退出后继续生效。
+    /// 调用方（AppDelegate）必须先调 `shutdown()`，所以这里独立判断一次即可。
     func restoreSleepDisabledIfNeeded() async {
+        if preservesStateOnExit { return }
         guard didEnableSleepDisabled, helperState.isReady else { return }
         _ = try? await HelperClient.shared.send(.init(
             command: .setSleepDisabled,

@@ -68,6 +68,25 @@ struct UpdateView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
+                Toggle("跳过预发布版本（仅装正式版）", isOn: Binding(
+                    get: { updates.skipPrereleaseUpdates },
+                    set: { updates.skipPrereleaseUpdates = $0 }
+                ))
+                Text(updates.skipPrereleaseUpdates
+                     ? "只升级版本号严格更高且不是 Pre-release 的 Release。"
+                     : "包括 Pre-release 版本（仓库当前发布习惯是标 Pre-release）。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                // 下载进度：phase 是 downloading 时显示；其它阶段不显示。
+                if case .downloading(_, let progress) = updates.phase {
+                    ProgressView(value: progress)
+                        .progressViewStyle(.linear)
+                    Text(String(format: "%.0f%%", progress * 100))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+
                 HStack(spacing: 10) {
                     Button {
                         Task { await updates.checkForUpdates() }

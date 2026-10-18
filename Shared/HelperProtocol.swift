@@ -113,6 +113,18 @@ public enum HelperCommand: String, Codable, CaseIterable, Sendable {
     /// 参数 `uids=<逗号分隔>` 与 `usernames=<逗号分隔>`。两者皆可空表示
     /// 「清空白名单 = 任何人都能改」（恢复默认）。
     case setHostsEditors
+
+    // MARK: - 周重启（v1.7.2 起）
+
+    /// 写一个 launchd plist 到 `~/Library/LaunchAgents/com.skyc8266.deepsleep.weeklyrestart.plist`，
+    /// 同时配套写入 `/etc/sudoers.d/deepsleep-weeklyrestart` 给用户 NOPASSWD 权限跑
+    /// `shutdown -r now`。下次到点时系统会按用户身份跑这条命令，触发重启。
+    ///
+    /// 参数 `weekday=<0–6, 0=周日>`、`hour=<0–23>`、`minute=<0–59>`。
+    case installWeeklyRestart
+
+    /// 删除上述 plist + sudoers 配置。
+    case uninstallWeeklyRestart
 }
 
 // MARK: - 请求

@@ -187,6 +187,14 @@ private struct OperationFailure: Error {
 }
 
 /// 简化失败分支的书写。
+/// Resolve a uid's home directory. Helper runs as root so `HOME` env points
+/// to root's home — must use getpwuid to get the caller's actual home.
+private func homeDirectory(for uid: uid_t) -> String? {
+    guard let pwd = getpwuid(uid) else { return nil }
+    let ptr = pwd.pointee.pw_dir
+    return ptr.map { String(cString: $0) }
+}
+
 private func failure<T>(_ message: String) -> Result<T, OperationFailure> {
     .failure(OperationFailure(message: message))
 }
@@ -444,6 +452,12 @@ private final class CommandHandler {
 
         case .setHostsEditors:
             return setHostsEditors(request)
+
+        case .installWeeklyRestart:
+            return installWeeklyRestart(request)
+
+        case .uninstallWeeklyRestart:
+            return uninstallWeeklyRestart(request)
 
         case .uninstall:
             logLine("uninstall requested")
@@ -913,6 +927,158 @@ private final class CommandHandler {
             logLine("setHostsEditors 失败：\(reason)")
             return .failure("\(reason)")
         }
+    }
+
+    // MARK: - 周重启（v1.7.2 起）
+
+    /// 周重启 plist + sudoers 配置：launchd 在指定星期 / 时刻跑 `/usr/bin/sudo -n /sbin/shutdown -r now`。
+    ///
+    /// 三件东西：
+    ///   1. launchd plist 到用户的 `~/Library/LaunchAgents/`
+    ///   2. `/etc/sudoers.d/deepsleep-weeklyrestart` 给用户 NOPASSWD 跑 `shutdown -r now`
+    ///      （普通用户没有 root 权限直接重启）
+    ///   3. 用 `launchctl bootstrap gui/<uid>` 注册 plist
+    ///
+    /// 卸载：清三件东西。
+    private func installWeeklyRestart(_ request: HelperRequest) -> HelperResponse {
+        guard let callerUID = request.callerUID else {
+            return .failure("助手内部错误：callerUID 未填写")
+        }
+        guard let weekdayRaw = request.arguments["weekday"],
+              let weekday = Int(weekdayRaw),
+              (0...6).contains(weekday) else {
+            return .failure("weekday 必须是 0–6（0=周日）")
+        }
+        guard let hourRaw = request.arguments["hour"],
+              let hour = Int(hourRaw),
+              (0...23).contains(hour) else {
+            return .failure("hour 必须是 0–23")
+        }
+        guard let minuteRaw = request.arguments["minute"],
+              let minute = Int(minuteRaw),
+              (0...59).contains(minute) else {
+            return .failure("minute 必须是 0–59")
+        }
+
+        let username = request.arguments["username"] ?? ""
+
+        // 1. sudoers：允许该用户 NOPASSWD 跑 shutdown -r now
+        do {
+            let sudoersPath = "/etc/sudoers.d/deepsleep-weeklyrestart"
+            let body = "# 由 Deep Sleep 助手（v1.7.2 起）写入：仅允许本用户无密码跑 shutdown -r now。\n" +
+                "# 任何超出 shutdown -r now 的命令都会被 sudo 拒绝。\n" +
+                "\(username) ALL=(root) NOPASSWD: /sbin/shutdown -r now\n"
+            try body.write(toFile: sudoersPath, atomically: true, encoding: .utf8)
+            // sudoers 文件必须 mode 0440，owner root:root
+            let attrs: [FileAttributeKey: Any] = [
+                .posixPermissions: 0o440,
+                .ownerAccountID: 0
+            ]
+            try? FileManager.default.setAttributes(attrs, ofItemAtPath: sudoersPath)
+        } catch {
+            return .failure("写入 sudoers 失败：\(error.localizedDescription)")
+        }
+
+        // 2. launchd plist（写到用户自己的 LaunchAgents，不影响其他用户）
+        guard let home = homeDirectory(for: callerUID) else {
+            return .failure("无法解析用户家目录")
+        }
+        let agentsDir = "\(home)/Library/LaunchAgents"
+        let plistPath = "\(agentsDir)/com.skyc8266.deepsleep.weeklyrestart.plist"
+        let plistXML = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>Label</key>
+            <string>com.skyc8266.deepsleep.weeklyrestart</string>
+            <key>ProgramArguments</key>
+            <array>
+                <string>/bin/sh</string>
+                <string>-c</string>
+                <string>exec /usr/bin/sudo -n /sbin/shutdown -r now 'DeepSleep weekly restart'</string>
+            </array>
+            <key>StartCalendarInterval</key>
+            <dict>
+                <key>Weekday</key>
+                <integer>\(weekday)</integer>
+                <key>Hour</key>
+                <integer>\(hour)</integer>
+                <key>Minute</key>
+                <integer>\(minute)</integer>
+            </dict>
+            <key>RunAtLoad</key>
+            <false/>
+            <key>StandardOutPath</key>
+            <string>\(home)/Library/Logs/com.skyc8266.deepsleep.weeklyrestart.log</string>
+            <key>StandardErrorPath</key>
+            <string>\(home)/Library/Logs/com.skyc8266.deepsleep.weeklyrestart.log</string>
+        </dict>
+        </plist>
+        """
+        do {
+            try FileManager.default.createDirectory(
+                atPath: agentsDir, withIntermediateDirectories: true)
+            try plistXML.write(toFile: plistPath, atomically: true, encoding: .utf8)
+            // 改 owner 到该用户（plist 是用户自己的，否则 launchctl bootstrap 会拒）
+            try? FileManager.default.setAttributes(
+                [.ownerAccountID: callerUID], ofItemAtPath: plistPath)
+        } catch {
+            return .failure("写入 plist 失败：\(error.localizedDescription)")
+        }
+
+        // 3. launchctl bootstrap gui/<uid> 注册
+        let label = "gui/\(callerUID)/com.skyc8266.deepsleep.weeklyrestart"
+        let bootstrap = Process()
+        bootstrap.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        bootstrap.arguments = ["bootstrap", label, plistPath]
+        let pipe = Pipe()
+        bootstrap.standardOutput = pipe
+        bootstrap.standardError = pipe
+        do {
+            try bootstrap.run()
+            bootstrap.waitUntilExit()
+            if bootstrap.terminationStatus != 0 {
+                let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(),
+                                    encoding: .utf8) ?? ""
+                return .failure("launchctl bootstrap 失败：\(output)")
+            }
+        } catch {
+            return .failure("启动 launchctl 失败：\(error.localizedDescription)")
+        }
+
+        logLine("installWeeklyRestart ok weekday=\(weekday) hour=\(hour) minute=\(minute) user=\(username)")
+        return .ok("周重启已配置：每周\(weekday) \(hour):\(String(format: "%02d", minute))")
+    }
+
+    private func uninstallWeeklyRestart(_ request: HelperRequest) -> HelperResponse {
+        guard let callerUID = request.callerUID else {
+            return .failure("助手内部错误：callerUID 未填写")
+        }
+        let label = "gui/\(callerUID)/com.skyc8266.deepsleep.weeklyrestart"
+        let plistPath: String
+        if let home = homeDirectory(for: callerUID) {
+            plistPath = "\(home)/Library/LaunchAgents/com.skyc8266.deepsleep.weeklyrestart.plist"
+        } else {
+            plistPath = ""
+        }
+
+        // 先 bootout
+        let bootout = Process()
+        bootout.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        bootout.arguments = ["bootout", label]
+        bootout.standardOutput = Pipe()
+        bootout.standardError = Pipe()
+        try? bootout.run()
+        bootout.waitUntilExit()
+
+        if !plistPath.isEmpty {
+            try? FileManager.default.removeItem(atPath: plistPath)
+        }
+        try? FileManager.default.removeItem(atPath: "/etc/sudoers.d/deepsleep-weeklyrestart")
+
+        logLine("uninstallWeeklyRestart ok")
+        return .ok("周重启已取消")
     }
 }
 

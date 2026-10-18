@@ -66,6 +66,10 @@ struct AutomationRule: Identifiable, Codable, Equatable {
     var trigger: RuleTrigger
     /// 规则生效时要保持的 assertion 集合。
     var assertions: Set<AssertionKind>
+    /// 规则从「未满足」变为「满足」时是否发一封邮件通知。
+    /// 默认 false —— 「满足 / 触发」是高频率事件，不开邮件 = 不会被邮件轰炸。
+    /// 只有用户主动勾选才会发，且与邮件告警的全局开关独立。
+    var notifyOnSatisfied: Bool = false
 
     var summary: String {
         if assertions.isEmpty { return "未选择动作" }
