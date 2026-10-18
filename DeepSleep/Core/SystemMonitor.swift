@@ -138,6 +138,33 @@ public final class SystemMonitor {
     private var _lastEvent: MonitorEvent?
     private var _lastEventAt: Date?
 
+    // MARK: - 实时快照（给 UI「系统状态」卡用）
+    // 每次 tick 末尾更新。读端走 main-actor snapshot 函数。
+
+    /// 内存累计使用百分比（0–100）。
+    private var _latestRamPercent: Double = 0
+    /// 全机 CPU 累计使用百分比（0–100，whole-CPU）。
+    private var _latestCpuPercent: Double = 0
+    /// 最近一次 SMC 读到的 CPU 温度（°C）。SMC 失败时为 nil。
+    private var _latestCPUTempC: Double?
+    /// 最近一次更新的时间戳。
+    private var _latestUpdateAt: Date?
+    /// 最近一次过载事件里 Top 3 进程名（CPU 占用）。
+    private var _latestTopThree: [ProcessStats.Record] = []
+
+    /// UI 用的「实时状态快照」。
+    public struct LiveSnapshot: Sendable {
+        public let ramPercent: Double
+        public let cpuPercent: Double
+        public let cpuTempC: Double?
+        public let topThree: [ProcessStats.Record]
+        public let updatedAt: Date
+
+        public var isStale: Bool {
+            Date().timeIntervalSince(updatedAt) > 30
+        }
+    }
+
     public var onEvent: ((MonitorEvent) -> Void)?
 
     public init(config: MonitorConfig = .default) {
@@ -162,6 +189,21 @@ public final class SystemMonitor {
         queue.sync {
             guard let event = self._lastEvent, let at = self._lastEventAt else { return nil }
             return (Self.describe(event), at)
+        }
+    }
+
+    /// 实时系统状态快照。UI 「系统状态」卡读这个，每秒 Tick。
+    /// 内部走串行 queue 同步读，不会卡 UI。
+    /// 监控未启用 / 还来不及采样的 → updatedAt 为 nil → isStale=true。
+    public func liveSnapshot() -> LiveSnapshot {
+        queue.sync {
+            LiveSnapshot(
+                ramPercent: _latestRamPercent,
+                cpuPercent: _latestCpuPercent,
+                cpuTempC: _latestCPUTempC,
+                topThree: _latestTopThree,
+                updatedAt: _latestUpdateAt ?? .distantPast
+            )
         }
     }
 
@@ -281,6 +323,12 @@ public final class SystemMonitor {
                 await checkCPUTemperature(now: now)
             }
         }
+
+        // 实时快照：CPU 温度在 CPU 温度检测路径里更新；这里只填 RAM/CPU/Top3。
+        _latestRamPercent = ramPercent
+        _latestCpuPercent = totalCPU
+        _latestTopThree = Array(records.sorted { $0.cpuPercent > $1.cpuPercent }.prefix(3))
+        _latestUpdateAt = now
     }
 
     /// 单独抽出来的 CPU 温度检查。失败不报错（旧的 v2 助手没有这个命令,
@@ -310,10 +358,15 @@ public final class SystemMonitor {
         guard !candidates.isEmpty else { return }
         guard let observedMax = candidates.max() else { return }
         let threshold = config.cpuTempHighCelsius
-        guard observedMax >= threshold else { return }
+        guard observedMax >= threshold else {
+            // 不超阈也填缓存：UI 实时显示温度就算不告警也要刷新。
+            _latestCPUTempC = observedMax
+            return
+        }
         // cooldown:5 分钟内同阈值不重发
         if let last = lastCPUTempReportAt, now.timeIntervalSince(last) < 300 { return }
         lastCPUTempReportAt = now
+        _latestCPUTempC = observedMax
         let event = CPUTemperatureEvent(
             maxC: sample.maxC,
             averageC: sample.averageC,

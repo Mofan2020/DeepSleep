@@ -24,6 +24,7 @@
 		293AAE69A3F01595AF98272F /* ScheduledCommand.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE95755CD1A5144551AD6774 /* ScheduledCommand.swift */; };
 		2CF3383D939893655F3DD14A /* QuickQuitView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69AD70CC1E39560226333763 /* QuickQuitView.swift */; };
 		2E04E5FA5A3F0EE1C6D77B07 /* MonitoringCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = E75BB13FF2F018F746DC727B /* MonitoringCoordinator.swift */; };
+		30B151DC27ACB9ECBD8AFEA4 /* DiskUsage.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2908A142A34184EE666FF94 /* DiskUsage.swift */; };
 		313486F9C714E8AC1436BE78 /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = 178D52B0BEF95859AB8B6D88 /* Components.swift */; };
 		322D0B86CAE51F7F5E33304C /* GeminiProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7A12F0431AE2C51BDB21B62 /* GeminiProvider.swift */; };
 		32D4F6F5657871D8EF98E8A6 /* UsageDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16B41C82AC8DB4B1CFBF8B32 /* UsageDetailView.swift */; };
@@ -94,6 +95,7 @@
 		A9B75A8805237584AD22EC35 /* GrokProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24CCCD6A29A4801A877E9A5B /* GrokProvider.swift */; };
 		AB60111CE18B96059E1F1E2D /* ProcessSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 214A9E90F394CC9723FD747F /* ProcessSnapshot.swift */; };
 		B1999B502D8D7A6853A2703E /* TokenDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63E13E34F017F36D62166CD6 /* TokenDashboardView.swift */; };
+		B375FF39CCDF2A267D7E2192 /* DiskUsage.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2908A142A34184EE666FF94 /* DiskUsage.swift */; };
 		B49E2B674BE4C8DBA32A22F6 /* HelperProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE3295E35F8D28B69A629A8F /* HelperProtocol.swift */; };
 		B7D4743110F40679893F5BEB /* CohereProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A5BE14C77A2F80A3C558EF5 /* CohereProvider.swift */; };
 		BAC4E5A1DFB74C8783F99399 /* OpenAIProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C5D545A3D905F27FD74D302 /* OpenAIProvider.swift */; };
@@ -239,6 +241,7 @@
 		CC22A1E420A2DE3FB800D6F0 /* EmailThrottleStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmailThrottleStore.swift; sourceTree = "<group>"; };
 		CF2BAA4DC2FE609833A597C3 /* Uninstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Uninstaller.swift; sourceTree = "<group>"; };
 		CFD43F8F82DD114B7424CF91 /* IdleTime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdleTime.swift; sourceTree = "<group>"; };
+		D2908A142A34184EE666FF94 /* DiskUsage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiskUsage.swift; sourceTree = "<group>"; };
 		D6B81675C2A48027F8DF140A /* DeepSleepHelper */ = {isa = PBXFileReference; includeInIndex = 0; path = DeepSleepHelper; sourceTree = BUILT_PRODUCTS_DIR; };
 		DA7EDBC6464CD66EEAAC2519 /* MonitoringView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonitoringView.swift; sourceTree = "<group>"; };
 		DADB9CFE5B4494102431F2A3 /* StreamForwarder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamForwarder.swift; sourceTree = "<group>"; };
@@ -427,6 +430,7 @@
 			isa = PBXGroup;
 			children = (
 				16BB6D07F5EFD58141E50A48 /* CPUTemperatureSample.swift */,
+				D2908A142A34184EE666FF94 /* DiskUsage.swift */,
 				DE3295E35F8D28B69A629A8F /* HelperProtocol.swift */,
 				E6450BE748FD8543755017DE /* HostsAllowedEditors.swift */,
 				CFD43F8F82DD114B7424CF91 /* IdleTime.swift */,
@@ -657,6 +661,7 @@
 				51B6C48355C4201E39EE0FD3 /* DeepSleepApp.swift in Sources */,
 				BB3A3C58E54678870163A762 /* DeepSleepAppShortcuts.swift in Sources */,
 				9551EFBCD9BC4F0B0C324544 /* DeepSleepIntents.swift in Sources */,
+				B375FF39CCDF2A267D7E2192 /* DiskUsage.swift in Sources */,
 				75D81C8CFC7E50AD5E6B7028 /* DoubaoProvider.swift in Sources */,
 				777A351396E1CB2C231820FD /* EmailChannel.swift in Sources */,
 				4FB227FEAF25239D85D96593 /* EmailThrottleStore.swift in Sources */,
@@ -747,6 +752,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				68BBD23F6A82CF25F557453C /* CPUTemperatureSample.swift in Sources */,
+				30B151DC27ACB9ECBD8AFEA4 /* DiskUsage.swift in Sources */,
 				373014038B076AA90C1FA300 /* HelperProtocol.swift in Sources */,
 				7B5449CB86A23F58E0331611 /* HostsAllowedEditors.swift in Sources */,
 				629AF9961611BE5DEBCFE641 /* IdleTime.swift in Sources */,
@@ -953,11 +959,11 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 13;
+				CURRENT_PROJECT_VERSION = 14;
 				INFOPLIST_FILE = DeepSleep/Resources/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
-				MARKETING_VERSION = 1.7.2;
+				MARKETING_VERSION = 1.7.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.skyc8266.deepsleep;
 				PRODUCT_NAME = "Deep Sleep";
 				SDKROOT = macosx;
@@ -970,11 +976,11 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 13;
+				CURRENT_PROJECT_VERSION = 14;
 				INFOPLIST_FILE = DeepSleep/Resources/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
-				MARKETING_VERSION = 1.7.2;
+				MARKETING_VERSION = 1.7.3;
 				PRODUCT_BUNDLE_IDENTIFIER = com.skyc8266.deepsleep;
 				PRODUCT_NAME = "Deep Sleep";
 				SDKROOT = macosx;
