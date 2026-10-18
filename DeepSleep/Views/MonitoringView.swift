@@ -100,13 +100,9 @@ struct MonitoringView: View {
                     Divider().frame(height: 36)
                     metricBlock(
                         title: "CPU 温度",
-                        value: snapshot.cpuTempC.map { String(format: "%.1f°C", $0) } ?? "—",
-                        caption: snapshot.cpuTempC == nil
-                            ? "未启用 / 助手不可用"
-                            : (snapshot.cpuTempC ?? 0) >= config.cpuTempHighCelsius
-                                ? "已超阈"
-                                : "正常",
-                        tint: cpuTempColor
+                        value: "等待后续更新",
+                        caption: "等待后续更新",
+                        tint: .secondary
                     )
                     Divider().frame(height: 36)
                     metricBlock(
@@ -300,21 +296,22 @@ struct MonitoringView: View {
 
                 Divider()
 
-                Toggle("监控 CPU 温度", isOn: $config.cpuTempEnabled)
-                    .help("需要特权助手支持 getCPUTemperature 命令（v1.4.2+ 助手）"
-                          + "；旧助手会一次性静默关闭此开关")
+                Toggle("CPU 温度告警（等待后续更新）", isOn: .constant(false))
+                    .disabled(true)
+                    .help("CPU 温度读取功能正在重写，等下次更新放出。\n"
+                          + "在此之前开关被锁定为关闭，"
+                          + "不会触发误告警；其它监控项目不受影响。")
                 HStack {
                     Text("CPU 温度阈值")
                     Spacer()
-                    Text(config.cpuTempHighCelsius > 0
-                         ? String(format: "%.0f°C", config.cpuTempHighCelsius)
-                         : "已禁用")
+                    Text("等待后续更新")
                         .monospacedDigit()
+                        .foregroundStyle(.secondary)
                 }
-                Slider(value: $config.cpuTempHighCelsius, in: 0...105, step: 1)
-                Text("CPU 温度来自 SMC（TCMz/TCMb/TCDX），"
-                     + "每 5 个采样周期读一次；超过阈值时只告警，"
-                     + "不会自动冻结或结束进程。")
+                Slider(value: .constant(90), in: 0...105, step: 1)
+                    .disabled(true)
+                Text("CPU 温度功能暂时不可用 —— 系统监控本身（RAM、CPU 占用、"
+                     + "Top-N 进程）不受影响。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

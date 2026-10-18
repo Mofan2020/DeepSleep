@@ -918,3 +918,63 @@ Stepper 一次一格，从 -20 点到 +19 要点 39 次。同步附一个 TextFi
   重新组织 filter + sort 逻辑、状态需要更复杂，收益不确定，先不做。
 - **没动 `processRow` 的选中态样式**：现在选中只显示 bundle id 一行，没有
   背景色变化。视觉强化可后续加；本次只解三个真 bug，不顺手扩。
+
+
+---
+
+## v1.7.2-pre：CPU 温度告警功能暂时下架（2026-10-18）
+
+### 现象
+
+用户在 macOS 27.2 / M2 本机打开 DeepSleep 监控页，CPU 温度项始终不显示数字。
+
+### 根因
+
+1. **SMC 公开协议在 Apple Silicon + macOS 26/27 不通**。
+   `DeepSleepHelper/SMCTemperature.swift`（helper 端，root 进程）走
+   `IOServiceMatching("AppleSMC")` + `IOConnectCallStructMethod(selector-as-methodId)`
+   姿势（90 字节 `SMCParamStruct`，源自 Apple pmconfigd/PrivateLib.c），
+   与 AlDente legacy code 同源。`kr = KERN_SUCCESS`，
+   `output.result = 0` 表示无错，但 `output.keyInfo.dataType = 0` /
+   `dataSize = 0` —— firmware 没有填回任何 key 信息。
+2. **诊断脚本 `scripts/dump-smc-keys.swift` 跨姿势探针都返回同样结论**：
+   - 老姿势（`selector=0x2` + `data8` 子命令）→ `kIOReturnUnsupported`（0xE00002C2）
+   - AlDente 姿势（`selector=2/5/8/9` 作为 methodId）→ 所有 by-index 全 `kIOReturnNotFound`（0xE00002C7），
+     直接读 `#KEY` 也 `kIOReturnNotFound`
+   - `powermetrics --samplers smc` → `unrecognized sampler: smc`（macOS 26+ 移除）
+
+### 决定
+
+写请等待后续更新。等用户重写完再放出。本次 pre-release 把 UI 占位、helper 端保持当前
+实现（仍会读，但 sample 全 nil）、README 同步措辞。
+
+### 做了什么
+
+- **UI**：`DeepSleep/Views/MonitoringView.swift` 把 CPU 温度 metric 改成"等待后续更新"，
+  toggle 锁死关闭、slider 禁用、说明文字改"等待后续更新"。不再让用户去调阈值/启用。
+- **SystemMonitor**：`DeepSleep/Core/SystemMonitor.swift::checkCPUTemperature` 加
+  `sample.hasAnyReading` 早返回：helper 端拿到 sample 但三字段全为 nil 时，
+  跟 `unsupportedHelper` 一样把 `cpuTempEnabled = false` 落盘。
+  这样旧用户首次启动后自动一致地走"关闭"分支，不再每 15s 调一次白耗的 SMC read。
+- **helper 端**：`DeepSleepHelper/SMCTemperature.swift` 算法骨架仍按 AlDente 姿势保留
+  （stride = 80 验证通过），未删；下次直接扩 helper 实现即可，UI 不需要再动。
+- **共享数据模型**：`Shared/CPUTemperatureSample.swift` 不动。无 IOKit 依赖。
+- **README**：`README.md` / `README.zh-CN.md` 把 CPU 温度条目改成"暂不可用，
+  重构中，下次更新放出"，并指向 `docs/notes.md` 本段落了解详情。
+
+### 没动的与原因
+
+- **没改 helper 端 `SMCTemperature.swift` 算法**：直接换成 AlDente 姿势的 SMCParamStruct（stride
+  = 80 验证通过），下次重写时只用扩 helper，UI 不需要再动。
+- **没把 `cpuTempEnabled` 默认从 `true` 改 `false`**：`SystemMonitor` 自动关闭逻辑足够，
+  且保留 true 让升级后老用户配置不丢脸。
+- **没删 MCP/Helper 的 `getCPUTemperature` 协议命令**：当前 helper 仍能正确响应
+  `success=true + payload={}`，应用走"无数据"分支；保留命令对将来恢复有好处。
+
+### 自测覆盖
+
+- `scripts/test-cpu-temperature-decode.swift`：25/25 项解码断言 + round-trip 双项全过。
+- 端到端功能（无关 CPU 温度）：CPU/RAM/单进程 RSS 监控、告警弹窗与通知、helper
+  自身协议命令（ping / status / getProcessStats / getProcessNice / setProcessNice /
+  suspendProcesses / killProcesses / terminateProcesses / getCPUTemperature /
+  sleepDisplay / lockScreen / pmset 写入 / hosts 读写 / 周重启 install/uninstall）未回归。

@@ -353,6 +353,20 @@ public final class SystemMonitor {
             // 其它错误(助手不可用 / SMC 失败):不告警也不写盘,等下次 tick 再试。
             return
         }
+        // 若 helper 端成功但本次 sample 全是 nil(SMC firmware 当前读不到任何 key;
+        // 当前 macOS 26/27 + Apple Silicon 实测就是这样,见 docs/notes.md)。
+        // 这里也按"自动关闭子开关"处理,避免每 15s 重复 IO + 用户 UI 上 toggle 与
+        // 实际行为不一致(显示开启但永远拿不到温度)。
+        guard sample.hasAnyReading else {
+            Task { @MainActor in
+                guard self.config.cpuTempEnabled else { return }
+                var c = self.config
+                c.cpuTempEnabled = false
+                self.config = c
+                c.saveIfNotDefault()
+            }
+            return
+        }
         // 取三个读数的最大值,作为判定值
         let candidates: [Double] = [sample.maxC, sample.averageC, sample.aggregateC].compactMap { $0 }
         guard !candidates.isEmpty else { return }

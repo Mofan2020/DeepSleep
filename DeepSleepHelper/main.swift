@@ -1220,5 +1220,39 @@ guard geteuid() == 0 else {
     exit(1)
 }
 
+// 测试模式：--test-cputemp 触发一次 SMC 读并打印结果后退出。
+// 仅供 sudo 手工跑验证,不参与 launchd 启动路径。
+if CommandLine.arguments.contains("--test-cputemp") ||
+   CommandLine.arguments.contains("--trace-cputemp") {
+    let traceMode = CommandLine.arguments.contains("--trace-cputemp")
+    do {
+        let sample = try SMCTemperature().readSample()
+        let fmt: (Double?) -> String = { v in
+            if let v { return String(format: "%.2f°C", v) }
+            return "n/a"
+        }
+        print("max=\(fmt(sample.maxC)) avg=\(fmt(sample.averageC)) agg=\(fmt(sample.aggregateC))")
+        print("timestamp=\(sample.timestamp)")
+        if traceMode {
+            // 走 SMCTemperature 的私有 probe,看每个候选 key 的具体失败原因
+            let probe = SMCTemperatureProbe()
+            let keys = ["TCMz","TCMb","TCDX","TC0F","TC0P","TC0D","TC0c","TC1c","TC0E","TC0H","TC0G","TCAD"]
+            print("\n[trace 每个候选 key]")
+            print("key    | dataType | size | raw            | reason")
+            print("-------|----------|------|----------------|--------")
+            for k in keys {
+                let r = probe.singleKey(k)
+                let rawHex = r.rawBytes.prefix(8).map { String(format: "%02x", $0) }.joined(separator: " ")
+                let line = "\(k.padding(toLength: 6, withPad: " ", startingAt: 0)) | \(r.dataType.padding(toLength: 8, withPad: " ", startingAt: 0)) | \(String(r.dataSize).padding(toLength: 4, withPad: " ", startingAt: 0)) | \(rawHex.padding(toLength: 14, withPad: " ", startingAt: 0)) | \(r.reason)"
+                print(line)
+            }
+        }
+        exit(0)
+    } catch {
+        FileHandle.standardError.write(Data("test-cputemp 失败: \(error)\n".utf8))
+        exit(2)
+    }
+}
+
 logLine("=== deepsleep-helper 启动 (protocol v\(HelperConstants.protocolVersion)) ===")
 HelperServer().start()

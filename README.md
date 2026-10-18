@@ -24,7 +24,7 @@ macOS has never had a real answer to: *"I want my Mac to stay awake until this d
 - **Hosts editor** — read/write `/etc/hosts`, manage who is allowed to change it.
 - **Quarantine manager** — scan and clear `com.apple.quarantine` xattr from directories.
 - **External activity** — see who else is blocking sleep or changing power settings (`--blockers`, `--changes`, `--rivals`).
-- **System monitor** — CPU/RAM overload alerts, single-process RSS threshold, CPU die temperature via SMC.
+- **System monitor** — CPU/RAM overload alerts, single-process RSS threshold. CPU die temperature via SMC: temporarily unavailable on macOS 26/27 with Apple Silicon (the public SMC protocol returns `kIOReturnNotFound`/`Unsupported` or no data; rewrite is in progress, see [docs/notes.md](docs/notes.md) for the full diagnostic log); UI shows a "waiting for update" placeholder.
 - **Menubar resident** — left-click opens main window, right-click opens quick settings, hides Dock icon when no windows are open.
 - **Auto-update** — Sparkle-style with edDSA verification; the privileged helper updates itself in place.
 

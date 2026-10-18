@@ -69,5 +69,5 @@ jobs:
               build/release/DeepSleep.zip
               build/release/DeepSleep.zip.sha256
           draft: false
-          prerelease: false
+          prerelease: true
           generate_release_notes: false
