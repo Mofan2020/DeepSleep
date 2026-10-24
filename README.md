@@ -2,11 +2,17 @@
 
 > **A native macOS sleep and power manager, written in Swift.** Keep the system awake, schedule sleep and wake, lock the lid, manage `pmset` settings, monitor CPU/RAM/temperature, and edit `/etc/hosts` — all from a single menubar app.
 
+<p align="center">
+  <img src="./docs/images/icon.png" width="128" alt="Deep Sleep icon">
+</p>
+
 macOS has never had a real answer to: *"I want my Mac to stay awake until this download finishes, sleep at 2am, and wake me up at 7:30."* `pmset` works, but its CLI is hostile. `caffeinate` does half the job. AlDente owns one slice of it. Deep Sleep owns the whole shape of sleep, wake, and power — and it stays out of your way the rest of the time.
 
 ![Platform](https://img.shields.io/badge/Platform-macOS%2026%2B-blue.svg)
 ![Swift](https://img.shields.io/badge/Swift-5.9-orange.svg)
 ![License](https://img.shields.io/badge/License-MIT-yellow.svg)
+![Release](https://img.shields.io/github/v/release/Mofan2020/DeepSleep)
+![Downloads](https://img.shields.io/github/downloads/Mofan2020/DeepSleep/total)
 
 [中文文档](./README.zh-CN.md) · [Releases](https://github.com/Mofan2020/DeepSleep/releases)
 
@@ -41,7 +47,11 @@ macOS has never had a real answer to: *"I want my Mac to stay awake until this d
 
 ## Install
 
-Download `DeepSleep.zip` from [Releases](https://github.com/Mofan2020/DeepSleep/releases), unzip, and drag `Deep Sleep.app` into `/Applications`.
+```sh
+brew install mofan2020/tap/deepsleep
+```
+
+Or download `DeepSleep.zip` from [Releases](https://github.com/Mofan2020/DeepSleep/releases), unzip, and drag `Deep Sleep.app` into `/Applications`.
 
 The app is ad-hoc signed. If Gatekeeper blocks it on first launch, go to **System Settings → Privacy & Security** and click **Open Anyway**.
 

@@ -2,9 +2,15 @@
 
 > **[English README](./README.md)** | 中文
 
+<p align="center">
+  <img src="./docs/images/icon.png" width="128" alt="Deep Sleep 图标">
+</p>
+
 ![Platform](https://img.shields.io/badge/Platform-macOS%2026%2B-blue.svg)
 ![Swift](https://img.shields.io/badge/Swift-5.9-orange.svg)
 ![License](https://img.shields.io/badge/License-MIT-yellow.svg)
+![Release](https://img.shields.io/github/v/release/Mofan2020/DeepSleep)
+![Downloads](https://img.shields.io/github/downloads/Mofan2020/DeepSleep/total)
 
 原生 Swift 写的 macOS 睡眠管理器。用来保持清醒、彻底禁止休眠，也能定时睡眠与计划唤醒。
 
@@ -16,7 +22,11 @@
 
 ## 安装
 
-从 [Releases](https://github.com/Mofan2020/DeepSleep/releases) 下载 `DeepSleep.zip`，
+```sh
+brew install mofan2020/tap/deepsleep
+```
+
+或者从 [Releases](https://github.com/Mofan2020/DeepSleep/releases) 下载 `DeepSleep.zip`，
 解压后把 `Deep Sleep.app` 放进 `/Applications`。
 
 应用是 ad-hoc 签名，首次打开若被系统拦下，到「系统设置 → 隐私与安全性」里点「仍要打开」。
