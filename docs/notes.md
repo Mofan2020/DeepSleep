@@ -1060,6 +1060,33 @@ Stepper 一次一格，从 -20 点到 +19 要点 39 次。同步附一个 TextFi
 当前时间当基准的话冷却期会一直往后滑，永远等不到。失败时刻记在
 `lastFailureAt` 字典里。
 
+### 顺带修掉的一个旧 bug：MonitorConfig 的默认值判断
+
+v1.8.0 工具箱阶段做网关配置持久化时，发现 `GatewayConfigStore` 用
+`.sortedKeys` 而 `MonitorConfig`（v1.4.1 加的持久化）没用 —— 后者靠
+「和默认值逐字节比较」决定要不要删 key，而 JSONEncoder 对 struct 的键序
+不固定，比较会随机出错。
+
+实测（11 字段的 MonitorConfig，同一份数据连续 200 次比较）：
+**200 次全部误判为「不等于默认值」**。后果是用户把监控配置改回默认值时，
+`saveIfNotDefault()` 认为「不等于默认值」→ 该删的 key 删不掉，
+UserDefaults 里永远留着一份默认值副本。功能上无害（读回来还是默认值），
+但违反了这个方法「就默认值就不写盘」的本意。
+
+修法：`MonitorConfig` 的编码统一加 `.sortedKeys`（`defaultJSON` 与
+`saveIfNotDefault` 两处都要加）。
+
+**同时把 `MonitorConfig` 的结构体定义从 `SystemMonitor.swift` 搬到
+`MonitorConfig.swift`。** 它是纯数据 + 纯逻辑，不依赖 SystemMonitor 的
+任何东西；留在 SystemMonitor.swift 里会让 `scripts/test-monitor-config.swift`
+为了编译一个纯 struct 而拖进 ProcessStats / ProcessStatsProvider /
+CPUTemperatureSample / NicePageSize 一整套 IO 依赖。搬完之后
+`MonitorConfig.swift` 终于名副其实（之前文件名与内容是分裂的）。
+
+新增 `scripts/test-monitor-config.swift`（13 项断言）：
+默认值判断稳定性（200 次比较必须全一致）、落盘往返、写回默认值删 key
+（含反复写 20 次不残留）、数据损坏回落默认值。
+
 ### 有效性：未验证
 
 **5 小时滚动窗口的具体重置规则是服务端行为，本地无法验证。**
