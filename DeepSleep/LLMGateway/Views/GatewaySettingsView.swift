@@ -16,6 +16,8 @@ struct GatewaySettingsView: View {
     @State private var revealToken: Bool = false
     @State private var portError: String?
     @State private var healthResult: HealthResult?
+    /// 是否弹出 Provider 列表。
+    @State private var showProviders = false
 
     struct HealthResult: Identifiable {
         let id = UUID()
@@ -27,6 +29,7 @@ struct GatewaySettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 configCard
+                providerCard
                 controlCard
                 healthCard
             }
@@ -34,6 +37,15 @@ struct GatewaySettingsView: View {
         }
         .navigationTitle("LLM 网关")
         .onAppear { hydrate() }
+        // 以前 load() 从来没被调用过，Provider 列表永远是空的。
+        .task { await controller.ensureLoaded() }
+        .sheet(isPresented: $showProviders) {
+            // Provider 列表里有 NavigationLink（进 ProviderEditView），
+            // sheet 里没有 NavigationStack 的话那个 link 推不动。
+            NavigationStack {
+                ProviderListView()
+            }
+        }
         .onChange(of: controller.gatewayConfig) { _ in hydrate() }
         .alert("端口无效",
                isPresented: Binding(
@@ -134,6 +146,29 @@ struct GatewaySettingsView: View {
                     Text("记录请求日志")
                 }
                 .toggleStyle(.switch)
+            }
+        }
+    }
+
+    private var providerCard: some View {
+        SectionCard(
+            title: "Provider",
+            subtitle: controller.providers.isEmpty
+                ? "还没有配置 Provider，网关没有可转发的目标"
+                : "已配置 \(controller.providers.count) 个 Provider",
+            symbol: "server.rack"
+        ) {
+            HStack(spacing: 10) {
+                Button {
+                    showProviders = true
+                } label: {
+                    Label(
+                        "Provider（\(controller.providers.count) 个）",
+                        systemImage: "chevron.right"
+                    )
+                }
+                .buttonStyle(.bordered)
+                Spacer(minLength: 8)
             }
         }
     }

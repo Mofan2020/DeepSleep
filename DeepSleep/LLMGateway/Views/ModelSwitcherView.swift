@@ -111,6 +111,8 @@ struct ModelSwitcherView: View {
     // MARK: - Loading
 
     private func loadAll() async {
+        // 数据库得先读过一遍，否则 providers 是空的。
+        await controller.ensureLoaded()
         loading = true
         defer { loading = false }
         var result: [ProviderModels] = []

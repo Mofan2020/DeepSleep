@@ -978,3 +978,291 @@ Stepper 一次一格，从 -20 点到 +19 要点 39 次。同步附一个 TextFi
   自身协议命令（ping / status / getProcessStats / getProcessNice / setProcessNice /
   suspendProcesses / killProcesses / terminateProcesses / getCPUTemperature /
   sleepDisplay / lockScreen / pmset 写入 / hosts 读写 / 周重启 install/uninstall）未回归。
+
+---
+
+## AI 保活模块（DeepSleep/AIKeepAlive/，2026-10-24）
+
+### 做了什么
+
+新增独立模块 `DeepSleep/AIKeepAlive/`，5 个文件：
+
+- `KeepAliveModels.swift` —— 任务模型 `KeepAliveTask`（id / name / baseURL / format /
+  model / apiKeyRef / intervalMinutes / requestTemplate / isEnabled / lastRunAt /
+  lastResult / createdAt）、协议格式枚举 `KeepAliveFormat`（openai / anthropic）、
+  URL 拼接纯函数 `KeepAliveEndpoint`、默认模板常量 `KeepAliveDefaults`。
+- `KeepAliveStore.swift` —— UserDefaults JSON 持久化（key `keepAliveTasks.v1`），
+  负责 load / save / upsert / remove。Keychain account 名规则 `keepalive.<taskUUID>`。
+- `KeepAliveClient.swift` —— 两种协议各一套请求；复用 LLMGateway 的 `HTTPClient`。
+  `max_tokens` 固定 1。`redact(_:apiKey:)` 兜底抹掉可能出现在错误体里的 key。
+- `KeepAliveEngine.swift` —— `@MainActor` 调度器，每 15 秒 tick 一次评估到期任务。
+  照抄 `ScheduledCommand` 的 Timer + RunLoop.main `.common` 模式。
+- `KeepAliveView.swift` —— 功能页（任务列表 + 新建/编辑 sheet + 立即发送 +
+  恢复默认模板 + 刷新模型列表）。**没有挂侧边栏**，工具箱页挂载是后续阶段的事。
+
+接线：`SleepController.bootstrap()` 里 `KeepAliveEngine.shared.start()`，
+`shutdown()` 里 `stop()`。
+
+### 没动的与原因
+
+- **没塞进 `DeepSleep/LLMGateway/`**：LLMGateway 是「本地代理网关」（转发请求、
+  记流水账、SQLite），保活是「定时发一条请求」，两码事。混在一起会让网关模块
+  背上它不需要的依赖，也会让「网关是实验性功能」这件事变得含糊。
+- **没新建 Keychain service**：复用 `KeychainStore`（service 固定
+  `com.skyc8266.deepsleep.llmgateway`），靠 account 前缀 `keepalive.` 隔离。
+  改 service 会让用户已有的条目全部失效 —— 那是不能做的破坏性变更。
+- **没支持 cron**：保活的语义就是「每隔 N 分钟刷一次」，cron 表达不了这个意思，
+  还得额外写解析与 UI。为一个固定周期引入 cron 是过度设计。
+- **API Key 的存放方式**：只写 Keychain，UserDefaults 里只存 account 名
+  （`apiKeyRef`）。日志、错误摘要、任务列表里都不出现 key 本身。
+  Keychain IO 放在后台队列（`KeychainStore.load` 是同步调用）。
+- **没改 `ContentView.swift` / 侧边栏**：这一版只交付模块 + 可独立打开的功能页。
+  挂载位置由主 Agent 在工具箱阶段决定。
+
+### 这次改动留下的坑 / 注意事项
+
+1. **`preservesStateOnExit` 分支也调了 `stop()`**。「保留退出态」针对的是
+   assertion 与 `pmset disablesleep` 这两样**进程外仍生效**的状态；保活靠本进程
+   发请求，进程退出后必然失效，留着 Timer 只会让人误以为还在保活。
+   所以保留态分支里显式 `KeepAliveEngine.shared.stop()`。
+2. **锚点是「上次发送时间」，没有就用「创建时间」**。新建任务不会在创建瞬间
+   就发一条出去 —— 否则用户每建一个任务就立刻消耗一次额度。
+3. **间隔钳制是双保险**：`KeepAliveTask.clampedInterval` 在读盘、写入、UI
+   slider 三处都过一遍。手改 UserDefaults 塞进 0 会变成「一直发」。
+4. **URL 归一化把 `/v1` 判断做成大小写不敏感**（`lowered.hasSuffix("/v1")`），
+   否则用户写 `/V1` 会被拼成 `/V1/v1`。
+5. **`inFlight` 集合防重入**：tick 抖动时同一个任务不会被并发触发两次。
+6. **删除任务会顺手删掉 Keychain 条目**，否则会留下孤儿凭据。
+7. **模型列表刷新需要先填 API Key**（`fetchModels` 会检查）。编辑已有任务时
+   Key 输入框是空的，要刷新列表得先重新填一次 key —— 已知的小瑕疵，
+   下次做「用已存 key 刷新」时再改。
+8. **Deep Sleep 退出后保活就停了**，与定时命令、监控一致。要 7×24 保活得靠
+   launchd 之类的常驻进程，本模块不涉及。
+
+### 失败后的重试策略（v1.8 工具箱阶段补的）
+
+初版有个缺陷：发送失败时也会把 `lastRunAt` 推到当前时间，于是下次到期时间
+变成「失败时刻 + 间隔」。用户配 240 分钟、失败一次就变成 480 分钟才重试 ——
+而失败最该做的事恰恰是尽快重试。
+
+改法两条：
+
+- **只有成功才推进 `lastRunAt`**。失败时保留原锚点，下一个 tick（15 秒后）就重试。
+- **加退避阶梯**。光靠上一条会让「API Key 填错」的任务每 15 秒刷一次屏。
+  退避：连续失败 1 次等 1 分钟，2 次 5 分钟，3 次 15 分钟，4 次及以上 30 分钟。
+  冷却上限不超过用户自己配的间隔 —— 配 5 分钟保活不会因为退避变成 30 分钟才重试。
+  成功一次就把计数清零。
+
+退避的冷却期要相对**失败发生的时刻**算，不能相对「现在」算：每次 tick 都拿
+当前时间当基准的话冷却期会一直往后滑，永远等不到。失败时刻记在
+`lastFailureAt` 字典里。
+
+### 有效性：未验证
+
+**5 小时滚动窗口的具体重置规则是服务端行为，本地无法验证。**
+本模块只保证「按配置的间隔把请求发出去」，**是否能真的延长窗口需要用户实测**。
+服务端可能不把「一条 max_tokens=1 的请求」算作有效使用，也可能有自己的
+最小间隔与速率限制 —— 这些都不在本地代码里能确认的范围。
+
+### 自测覆盖
+
+- `scripts/test-keepalive-url.swift`：44 项断言（URL 拼接 20 项 + 默认模板 5 项 +
+  Codable 往返 8 项 + 间隔钳制 9 项 + 到期时间 2 项），全过。
+  运行：`swiftc DeepSleep/AIKeepAlive/KeepAliveModels.swift scripts/test-keepalive-url.swift -o /tmp/ka-test && /tmp/ka-test`
+- `xcodebuild` Debug 构建通过，零 error。全量构建有 13 条 warning，
+  全在 `DeepSleep/LLMGateway/` 与 `DeepSleep/Notifications/` 目录
+  （`StreamForwarder.swift` 的 `try` 冗余、`GatewayServer.swift` 的未使用变量、
+  `ProviderEditView.swift` / `UsageDetailView.swift` 的 `onChange(of:perform:)`
+  废弃警告），都是既有的，本次新增的文件零 warning。
+
+
+## v1.8 工具箱页 + AI Gateway 试验性开放（DeepSleep/Views/ToolboxView.swift 等，2026-10-24）
+
+### 做了什么
+
+**工具箱页**（新建 3 个文件）
+
+- `DeepSleep/Views/ToolboxLayout.swift` —— 纯逻辑层，**刻意不 import SwiftUI**：
+  `ToolboxTool` 枚举（nice / hosts / quarantine / aiKeepAlive / aiGateway，
+  声明顺序 = canonical 顺序 = 「重置排序」的还原目标）、`ToolboxLayout`
+  （置顶组 + 未置顶组，`Codable`）、`ToolboxStore`（UserDefaults JSON 持久化，
+  key `toolbox.layout.v1`，结构 `{ "pinned": [...], "rest": [...] }`）。
+  不 import SwiftUI 是为了能被 `scripts/test-toolbox-layout.swift` 单独编译，
+  测的是**真实源码**而不是副本（副本会漂移）。
+- `DeepSleep/Views/ToolboxView.swift` —— 工具箱页 + `ToolCard` 组件 +
+  `ToolCardButtonStyle`（按下 scale 0.985 + 背景 primary.opacity(0.06)）。
+  顶部细行显示「N 个工具」+「重置排序」（默认布局下置灰）。
+- `DeepSleep/LLMGateway/GatewayDisclaimer.swift` —— 免责状态
+  （`GatewayDisclaimer`）+ 免责弹窗（`GatewayDisclaimerView`）。
+
+**侧边栏收敛**（`DeepSleep/Views/ContentView.swift`）
+
+- `SidebarItem` 新增 `toolbox` / `aiKeepAlive` / `aiGateway` 三个 case。
+- 「工具」Section 只渲染 `toolbox` 一项。nice / hosts / quarantine 三个 case
+  **保留在枚举里**（工具箱页切 selection 要靠它们），只是不再单独出现在侧边栏。
+- 侧边栏「LLM Gateway」段**不再**被 `LLMGatewayFeature.tokenMonitor` 门禁。
+- detail 列加「‹ 工具箱」返回按钮（`.toolbar placement: .navigation`）——
+  从工具箱进工具后侧边栏里看不到那个条目，没这个按钮用户会以为走丢了。
+- `pageLayout(maxWidth:)` 加了带默认值的参数（默认仍是 760），
+  工具箱页单独用 980 —— 760 的净宽只排得下 2 列。
+
+**网关半成品接线修复**（5 处，全在 `DeepSleep/LLMGateway/`）
+
+1. `GatewayController.load()` 从未被调用 → 加幂等的 `ensureLoaded()`，
+   在 `GatewaySettingsView` / `ProviderListView` / `TokenDashboardView` 的
+   `.task` 与 `ModelSwitcherView.loadAll()` 里调用。`providers` 不再是空数组。
+2. `gatewayConfig` 只在内存 → 新建 `Database/GatewayConfigStore.swift`，
+   UserDefaults JSON 持久化（key `gateway.config.v1`），照抄
+   `Core/MonitorConfig.swift` 的 `load()` / `saveIfNotDefault()` 模式。
+   `gatewayConfig` 改成带 `didSet` 的 `@Published`，改动即落盘。
+3. `GatewaySettingsView` 无任何引用 → 工具箱的 AI 网关卡片进它（同意免责后）。
+   同时补一行「Provider（N 个）」入口（sheet 里套 `NavigationStack`，
+   因为 `ProviderListView` 里的 `NavigationLink` 需要它才推得动）。
+4. `LLMGatewayFeature` 开关没有 UI 入口 → 不再用它 gate 任何东西。
+   `startGateway()` 的 guard 改成检查「免责已同意」而不是旧开关。
+   `LLMGatewayFeature` 这个类型本身保留（`ContentView.swift` 还在引用）。
+5. 免责申明机制从零新建（见下）。
+
+**组件层**（`DeepSleep/Views/Components.swift`）
+
+- `StatusPill` 加可选 `color` 参数。颜色只作用于圆点与底色，文字始终是
+  primary；传 nil 时行为与从前完全一致（向后兼容）。
+- `pageLayout(maxWidth: CGFloat = 760)`。
+
+**保活引擎**（`DeepSleep/AIKeepAlive/KeepAliveEngine.swift`）
+
+- 加 `KeepAliveEngine.Status` 枚举（`.running` / `.paused` / `.notConfigured` /
+  `.unavailable(String)`）与派生的 `status` 属性，供工具箱状态徽章用。
+  不额外 `@Published` —— 派生属性，避免两处状态打架。
+
+### 免责申明的契约
+
+- UserDefaults Bool `llm.gateway.disclaimerAccepted`
+- UserDefaults Int `llm.gateway.disclaimerVersion`（当前版本 = 1）
+- 判定：`accepted == true && version >= 1` 才算已同意。两个 key 都满足。
+- 「同意并继续」= 写两个 key + 关弹窗 + 进网关页。
+- 「不同意」= **不写任何持久化** + 关弹窗 + 留在工具箱页。
+  不同意 = 从未同意过，下次点卡片弹同一张弹窗。
+- 不做二次确认 —— 弹窗本身就是那一次确认。
+- 正文语义有实质变化时把 `currentVersion` +1（老用户下次进入重新看到一次）；
+  纯错别字不动版本号。
+
+### 没动的与原因
+
+- **没有重写网关**。`GatewayServer`（927 行，路由 /health /v1/models /
+  /v1/chat/completions /v1/messages、Bearer + x-api-key 双鉴权、FormatConverter
+  协议互转、UsageRecorder 记账、流式转发）是完整的，能用。半成品的缺口全在
+  **接线**上（load 没调、配置不落盘、设置页没入口、开关没 UI、免责不存在），
+  补接线是几十行的事，重写是几千行且必然引入新 bug。
+- **不用 NavigationLink 推栈**。`NavigationSplitView` 的 detail 列没有
+  `NavigationStack`，`NavigationLink` 推不动；要推就得把整个 detail 列包成
+  `NavigationStack`，那会影响应用里**每一个**页面的导航行为，且与
+  「侧边栏驱动」的既有模型打架。改成切 selection：副作用最小，
+  三个旧工具页（`NiceView` / `HostsView` / `QuarantineView`）一行都不用改。
+- **不提供拖拽排序**。`LazyVGrid` 的拖拽排序在 macOS 上要自己实现 drag & drop
+  + 命中测试，成本高、收益低，而置顶已经解决了「常用的放前面」这个核心需求。
+  以后真要自定义顺序，应新增一个显式的「编辑模式」，而不是把拖拽塞进常态网格。
+- **废弃 `LLMGatewayFeature` 开关，但保留这个类型**。`tokenMonitor` / `gateway`
+  默认关且没有 UI 入口 —— 等于把功能永久锁死。用户没法打开一个自己都找不到的
+  开关。入口改成「工具箱卡片 + 已同意免责申明」。但 `LLMGatewayFeature` 这个
+  类型本身不删：`ContentView.swift` 还在引用它，且它是 v1.5.0 留下的历史结构，
+  删了属于扩大改动范围。
+- **没在「同意免责」时自动开启网关**。免责同意 ≠ 允许启停网关。启停是
+  `GatewaySettingsView` 里的开关，用户自己决定。
+- **没有改三个旧工具页**。`NiceView` / `HostsView` / `QuarantineView` 一行没动，
+  它们的导航标题仍由 `selection.title` 提供。
+- **没把 Token 用量 / 模型 Provider / 模型切换收进工具箱**。工具箱是发现层
+  （一眼看到有哪些工具），侧边栏 LLM Gateway 段是管理层（详细配置），
+  职责不重叠。
+
+### 这次改动留下的坑 / 注意事项
+
+1. **`JSONEncoder` 对 struct 的键序是随机的**。同一个值两次编码出来的字节
+   可能不同 —— `MonitorConfig.saveIfNotDefault()` 那种「和默认值比字节」的写法
+   会随机给出错误答案。`GatewayConfigStore` 用了
+   `encoder.outputFormatting = [.sortedKeys]`。`scripts/test-toolbox-layout.swift`
+   里有 50 次重复编码的断言专门盯这个。**`MonitorConfig` 也有同样的隐患**，
+   这次没动它（不在改动范围）。
+2. **`PrimitiveButtonStyle.Configuration` 没有 `isPressed`** —— 它的
+   `Configuration` 只有 `trigger`。要做按压反馈必须用普通 `ButtonStyle`
+   （`configuration.label` + `configuration.isPressed`）。第一版写成
+   `PrimitiveButtonStyle` 直接编译不过。
+3. **sheet 还在开着的时候不要换 selection**。会让 `ToolboxView` 从视图树里
+   被摘掉，sheet 的 `onDismiss` 拿不到状态。改成：免责弹窗同意后只记
+   `pendingSelection`，真正的跳转放在 `.sheet(onDismiss:)` 里做。
+4. **`GatewaySettingsView` 里弹 `ProviderListView` 要套 `NavigationStack`**。
+   `ProviderListView` 里有 `NavigationLink`（进 `ProviderEditView`），
+   没有 `NavigationStack` 的话那个 link 推不动。
+5. **工具箱页不做重 IO**。「共 N 个进程」用的是裸 `proc_listpids`
+   （0.1 毫秒级，本机实测 633 个进程耗时 0.0000–0.0001 秒），
+   **不是** `ProcessInventory.snapshot()` —— 后者要对每个进程跑 proc_pidinfo +
+   proc_pidpath + 读 nice，历史要 4~5 秒，放在这一页会卡住整页。
+6. **置顶组的顺序 = 操作顺序**。取消置顶的卡片落到未置顶组**末尾**（不是原位），
+   规则简单可预测。副作用：置顶→取消置顶之后顺序不再是 canonical 顺序，
+   「重置排序」按钮仍然可用（`isDefault` 为 false）。
+7. **`ToolCard` 永不使用 `.disabled`**。「助手未就绪」只改状态徽章
+   （橙色）+ 降级图标，进了页面还能看、只是按钮不可用（`NiceView` /
+   `HostsView` 的既有约定）。网关那张卡更不能 disabled ——
+   「点了弹免责」正是它的入口。
+8. **pin 按钮不能放进卡片 Button 的 label 里**。SwiftUI 里嵌套 Button 行为
+   未定义，VoiceOver 也会把两者合成一个元素。`ZStack` 的子视图顺序必须是
+   [卡片 Button, pin Button]：后画的在上层 → pin 抢鼠标命中；
+   VoiceOver 焦点按视图树顺序 → 卡片先、pin 后。
+9. **未置顶时 pin 按钮 `opacity(0)` 但仍占位**，且加了
+   `.accessibilityHidden(true)` —— 看不见的按钮不该出现在 VoiceOver 焦点序列里。
+   `.opacity` 不影响命中测试，所以鼠标仍能悬停显示。
+10. **网关的 `authToken` 存在 UserDefaults 里**。它是网关自己的访问令牌，
+    不是厂商 API Key（那些在 Keychain）。如果把监听地址改成 0.0.0.0，
+    这个 token 就是唯一的防线 —— 所以它不应该复用厂商 key 的存储位置，
+    但也不能当 API Key 那样看待。
+11. **`GatewayConfig.load()` 在 `GatewayController.init` 里调用**。`init` 是
+    `private` 且不能抛错，所以配置加载失败时静默回落到 `.default`，
+    不影响单例创建。
+
+### 有效性：免责申明的「同意」不代表网关功能已验证可用
+
+**免责弹窗里的「同意」只是一次法律 / 风险告知行为，不是功能验收。**
+它确认的是「用户知道网关会在本机开端口、请求与 API Key 会经过这台电脑」，
+**不代表网关的转发链路已经跑通、不代表各厂商的协议互转正确、
+不代表流式转发稳定**。
+
+**网关本身是实验性功能**，随时可能调整或移除，升级之后的行为也可能变化。
+入口挂出来是为了让用户能用，不是因为它已经可靠。
+
+本阶段只做了**接线**层面的修复（load 会调、配置会落盘、页面进得去、
+免责拦得住）。转发层的正确性、各厂商 API 的实际连通性、
+流式转发的边界情况，都**没有**被这次改动验证过。
+
+### 自测覆盖
+
+- `scripts/test-toolbox-layout.swift`：49 项断言（默认布局 4 + 置顶 5 +
+  取消置顶 6 + 置顶顺序 2 + 全部置顶 4 + 读入归一化 5 + 空存储 2 +
+  Codable 往返 2 + 布局持久化 4 + 免责状态 4 + 网关配置持久化 9 +
+  JSON 键序稳定性 1 + 清理 1），全过。
+  运行：
+  ```
+  swiftc DeepSleep/Views/ToolboxLayout.swift \
+         DeepSleep/LLMGateway/Database/QuotaModels.swift \
+         DeepSleep/LLMGateway/Database/GatewayConfigStore.swift \
+         scripts/test-toolbox-layout.swift -o /tmp/tb-test && /tmp/tb-test
+  ```
+  测的是**真实源码**（`ToolboxLayout.swift` 不 import SwiftUI 就是为此）。
+- `scripts/test-keepalive-url.swift`：44 项断言，全过（未受本次改动影响）。
+- `xcodebuild -configuration Debug`：BUILD SUCCEEDED，零 error。
+  本次新增 / 修改的文件零 warning。全量构建有 13 条 warning，
+  全在 `DeepSleep/LLMGateway/` 与 `DeepSleep/Notifications/` 目录，是既有的
+  （`StreamForwarder.swift` 的
+  `no calls to throwing functions occur within 'try' expression`、
+  `GatewayServer.swift` 的未使用变量、`ProviderEditView.swift` 与
+  `UsageDetailView.swift` 的 `onChange(of:perform:)` 废弃警告），
+  不在本次改动范围，没有去动。
+- `python3 scripts/check-docs.py`：仍是基线那 3 项不一致，没有新增第 4 项。
+- SF Symbol 存在性：17 个实际用到的 symbol 在本机 macOS 26 全部存在
+  （`NSImage(systemSymbolName:)` 逐个验证）；`toolbox.fill` 与 `beaker.fill`
+  确认不存在，确实避开了。
+
+### 没做的：GUI 手测
+
+按约定，工具箱页的界面渲染、置顶交互、免责弹窗的实际观感**没有**做
+GUI 手测（不启动应用、不截图、不点按钮）。上面的结论来自编译、
+纯逻辑自测与符号存在性验证。实际观感由用户本人手测。

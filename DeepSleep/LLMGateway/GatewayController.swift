@@ -29,15 +29,28 @@ final class GatewayController: ObservableObject {
     @Published var providers: [ProviderConfig] = []
     @Published var latestSnapshots: [UUID: QuotaWindow] = [:]
     @Published var isRunning: Bool = false
-    @Published var gatewayConfig: GatewayConfig = .default
+
+    /// 网关配置。改动会立刻落盘（`gateway.config.v1`），重启后仍在。
+    @Published var gatewayConfig: GatewayConfig {
+        didSet {
+            // 每次变更都写盘 —— 配置只改几项，没有合并的必要。
+            // 写盘的是「非默认值」判断，值等于默认值时会删掉 key。
+            gatewayConfig.saveIfNotDefault()
+        }
+    }
 
     /// 最近一次启动 / 关闭的错误（Banner 用）。
     @Published var lastError: String?
 
     // 私有
     private var cancellables: Set<AnyCancellable> = []
+    /// 是否已经读过数据库。`ensureLoaded()` 靠它做幂等。
+    private var hasLoaded = false
 
     private init() {
+        // 配置从磁盘读，不留在内存里 —— 重启后端口 / 鉴权不该丢。
+        gatewayConfig = GatewayConfig.load()
+
         // 观察 feature toggle：开了 .gateway 不代表立即启动——这只是「允许启」，
         // 真正的 startGateway() 由用户在 UI 里点「启动」触发。
         LLMGatewayFeature.didChange
@@ -46,6 +59,17 @@ final class GatewayController: ObservableObject {
     }
 
     // MARK: - 加载
+
+    /// 确保数据库读过一次。幂等，可以随便调。
+    ///
+    /// 以前 `load()` 从来没被调用过，`providers` 永远是空数组 ——
+    /// Provider 列表页 / 模型切换页 / 配额页全是空的。入口现在有两个：
+    /// 网关设置页与 Provider 列表页的 `.task`，两边都调它。
+    func ensureLoaded() async {
+        guard !hasLoaded else { return }
+        hasLoaded = true
+        await load()
+    }
 
     /// 从 db 读所有 provider + 各自的最近一条 quota 快照。
     func load() async {
@@ -155,11 +179,16 @@ final class GatewayController: ObservableObject {
     // MARK: - 网关启停
 
     /// 启动 GatewayServer + QuotaPoller。已经在跑的话幂等返回。
+    ///
+    /// 这里**不再**检查旧的 `LLMGatewayFeature.gateway` 开关：
+    /// 那个开关默认关且没有 UI 入口，等于把功能永久锁死。入口改成
+    /// 「工具箱卡片 + 已同意免责申明」，启停本身仍然由用户在
+    /// 网关设置页里点「启动」触发。
     func startGateway() async throws {
         guard !isRunning else { return }
-        guard LLMGatewayFeature.gateway.isEnabled else {
+        guard GatewayDisclaimer.accepted else {
             throw LLMGatewayError.unsupportedProvider(
-                "请先在「功能开关」中启用 LLM Gateway"
+                "尚未确认网关免责申明，无法启动"
             )
         }
         let cfg = gatewayConfig

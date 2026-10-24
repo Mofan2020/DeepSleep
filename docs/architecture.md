@@ -74,6 +74,8 @@
 | `writeHosts` | 写 `/etc/hosts`：先备份原文到 `/etc/hosts.deepsleep.bak`，再原子写入，最后强制 `root:wheel` + `0644`。调用方 uid 必须在 hosts 编辑白名单内（空白名单放行） |
 | `listHostsEditors` | 读「谁能改 hosts」白名单（payload `uids=...` / `usernames=...`）。无白名单检查 |
 | `setHostsEditors` | 替换「谁能改 hosts」白名单。同样的白名单约束：调用方必须在当前白名单内才能改它 |
+| `installWeeklyRestart` | 写周重启任务：launchd plist 放到 `~/Library/LaunchAgents/com.skyc8266.deepsleep.weeklyrestart.plist`，配套写 `/etc/sudoers.d/deepsleep-weeklyrestart` 给用户 NOPASSWD 跑 `shutdown -r now`，再 `launchctl bootstrap` 注册。参数 `weekday=<0–6, 0=周日>`、`hour=<0–23>`、`minute=<0–59>` |
+| `uninstallWeeklyRestart` | 删除上述 plist 与 sudoers 配置 |
 
 ## 二、权限模型：管理员密码只输一次
 

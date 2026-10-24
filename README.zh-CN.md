@@ -12,7 +12,7 @@
 - **应用名**：Deep Sleep
 - **最低系统**：macOS 26.0
 - **语言 / 框架**：Swift 5、SwiftUI + AppKit、IOKit、LocalAuthentication
-- **当前版本**：1.7.0
+- **当前版本**：1.8.0
 
 ## 安装
 
@@ -78,6 +78,9 @@
 ### 其他
 
 - 倒计时睡眠
+- 工具箱：所有工具收在一页，卡片可置顶（进程优先级 / Hosts 编辑 / Quarantine / AI 保活 / AI 网关）
+- AI 保活：按计划给订阅制 AI 服务发一条极短请求，让使用窗口别闲置到点重置
+- AI 网关（试验性）：本机跑一个 OpenAI 格式转发层，转发到各家模型服务
 - 菜单栏常驻：左键打开主界面，右键弹出快速设置，Control + 左键等同右键
 - 关掉所有窗口后隐藏 Dock 图标，应用继续在菜单栏后台运行
 - 运行日志页，按条数与天数自动裁剪
@@ -190,7 +193,7 @@ nice 是 POSIX 的 CPU 调度建议值：`-20` 最优先，`+19` 最让权，`0`
 bundle id 在保护名单里的 Apple 应用、可执行文件落在 `/System/Library/` /
 `/usr/libexec/` / `/usr/sbin/` / `/usr/bin/` / `/bin/` / `/sbin/` 下的任何进程。
 
-可用入口：侧边栏「工具 → 进程优先级」、`deepsleep://nice?pid=<pid>&value=<v>`、
+可用入口：侧边栏「工具箱 → 进程优先级」、`deepsleep://nice?pid=<pid>&value=<v>`、
 Siri「用 Deep Sleep 调整进程优先级」（提供 pid + value 两个参数）、
 `--nice <pid> <value>`。
 
@@ -213,7 +216,7 @@ open "deepsleep://hosts-read"           # 读全文
 open "deepsleep://hosts-editors?uids=501,502&names=mofan"  # 改白名单
 ```
 
-可用入口：侧边栏「工具 → Hosts 编辑」、`deepsleep://hosts-read|hosts-write|hosts-editors`、
+可用入口：侧边栏「工具箱 → Hosts 编辑」、`deepsleep://hosts-read|hosts-write|hosts-editors`、
 `--hosts list|read|write <file>|allow [uids=...] [names=...]`。
 
 ## Quarantine 属性管理
@@ -230,9 +233,75 @@ open "deepsleep://quarantine-scan?path=~/Downloads"
 open "deepsleep://quarantine-clear?path=~/Downloads"
 ```
 
-可用入口：侧边栏「工具 → Quarantine」、
+可用入口：侧边栏「工具箱 → Quarantine」、
 `deepsleep://quarantine-scan|quarantine-clear`、
 `--quarantine scan|clear <dir> [--no-recursive] [--no-hidden]`。
+
+## 工具箱
+
+所有工具收在一个页面上。侧边栏只有一个「工具箱」入口，每个工具是一张卡片。
+点卡片进入该工具，点图钉把卡片置顶，「重置排序」恢复默认顺序。
+
+| 卡片 | 做什么 |
+| --- | --- |
+| 进程优先级 | 查看与修改任何非系统进程的 nice 值 |
+| Hosts 编辑 | 读写 `/etc/hosts`，管理「谁能改 hosts」白名单 |
+| Quarantine | 扫描目录，清除文件上的 `com.apple.quarantine` 属性 |
+| AI 保活 | 按计划给订阅制 AI 服务发一条极短请求 |
+| AI 网关 | 在本机跑一个 OpenAI 格式转发层（试验性） |
+
+## AI 保活
+
+订阅制 AI 服务（Claude、Codex、Gemini、DeepSeek 这类）通常有一个「从你上次使用开始算」
+的滚动使用窗口。放着不用，窗口到点重置。
+
+AI 保活按你设的间隔，给你指定的服务发一条极短的请求，让窗口一直续着。
+
+每条任务要填这些：
+
+| 字段 | 填什么 |
+| --- | --- |
+| 服务地址 | 服务端地址，例如 `https://api.anthropic.com`。末尾有没有 `/v1` 都行 |
+| 请求格式 | `OpenAI`（Bearer 认证，`/v1/chat/completions`）或 `Anthropic`（`x-api-key`，`/v1/messages`） |
+| 模型名 | 服务支持的模型即可。「刷新模型列表」从服务端拉名字，也能手填 |
+| API Key | 存在 macOS 钥匙串里，不写进偏好设置，不出现在日志中 |
+| 发送间隔 | 1 到 1440 分钟。默认 240 分钟（4 小时），落在常见的 5 小时窗口到期之前 |
+| 请求内容 | 发出去的文本。默认 `ping`。「恢复默认模板」可以还原 |
+
+几点说明：
+
+- 每条请求只要求 1 个 token 的输出，消耗极低，但仍会记进该服务的用量统计。
+- 滚动窗口怎么重置由服务端决定。Deep Sleep 按计划把请求发出去，
+  窗口能不能因此续住，看服务自己的规则。
+- Deep Sleep 退出后保活就停了。
+
+## AI 网关（试验性）
+
+在你的 Mac 上跑一个 OpenAI 格式的转发层。任何支持 OpenAI 格式的工具，
+把地址指向这一个本机地址，就能通过它访问各家模型服务。默认监听 `127.0.0.1:15999`。
+
+从工具箱第一次进入网关时会先让你确认它会做些什么，因为请求内容和 API Key 都会经过这台电脑。
+
+| 路径 | 方法 | 做什么 |
+| --- | --- | --- |
+| `/health` | GET | 存活检查 |
+| `/v1/models` | GET | 已启用服务商的模型清单 |
+| `/v1/chat/completions` | POST | OpenAI 格式的请求 |
+| `/v1/messages` | POST | Anthropic 格式的请求 |
+
+「服务商」指一家模型服务上的一个账号。增删在侧边栏「LLM Gateway → 模型 Provider」，
+API Key 存进钥匙串。用量与配额窗口在「LLM Gateway → Token 用量」，
+默认模型在「LLM Gateway → 模型切换」。
+
+网关页里管端口、可选的访问令牌、要不要记录请求日志。设置重启后仍然保留。
+网关运行时 Deep Sleep 会占一个电源断言，请求中途 Mac 不会因为空闲而睡眠。
+
+几点说明：
+
+- 试验性功能，后续版本可能调整或移除。
+- 默认只监听 `127.0.0.1`，同一个网络里的其他设备连不上。改了监听地址这层保护就没了，
+  那时访问令牌是唯一的防线。
+- 它是转发层。服务商、密钥与配额规则都归你配置的那家服务。
 
 ## 外部活动
 

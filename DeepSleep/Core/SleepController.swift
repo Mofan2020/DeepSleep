@@ -306,6 +306,7 @@ final class SleepController: ObservableObject {
         automation.start()
         AppRestartWatcher.shared.start()
         ScheduledCommand.shared.start()
+        KeepAliveEngine.shared.start()
         PowerWatcher.shared.start()
         startRefreshLoop()
         if !PowerWatcher.shared.isRegistered {
@@ -333,6 +334,10 @@ final class SleepController: ObservableObject {
             holdTimer?.invalidate()
             holdTimer = nil
             automation.stop()
+            // 保活不属于「保留退出态」的语义范围：它靠本进程发请求，
+            // 进程退出后必然失效，留着 Timer 只是让人误以为还在保活。
+            // 保留态是针对 assertion 与 disablesleep 这两样「进程外仍生效」的状态。
+            KeepAliveEngine.shared.stop()
             PowerWatcher.shared.stop()
             return
         }
@@ -346,6 +351,7 @@ final class SleepController: ObservableObject {
         automation.stop()
         AppRestartWatcher.shared.stop()
         ScheduledCommand.shared.stop()
+        KeepAliveEngine.shared.stop()
         PowerWatcher.shared.stop()
 
         // 释放助手侧的 assertion，避免 app 退出后残留占用。

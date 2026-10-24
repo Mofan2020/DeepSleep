@@ -48,6 +48,7 @@ struct ProviderListView: View {
             }
         }
         .navigationTitle("模型 Provider")
+        .task { await controller.ensureLoaded() }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {

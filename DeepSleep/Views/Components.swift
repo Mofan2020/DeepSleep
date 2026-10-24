@@ -64,21 +64,32 @@ struct Tag: View {
 struct StatusPill: View {
     let text: String
     let isActive: Bool
+    /// 状态色。**只作用于圆点与底色** —— 文字始终是 primary。
+    ///
+    /// 传 nil 时行为与从前完全一致（运行中绿 / 已停止灰）。
+    var color: Color?
+
+    private var dotColor: Color {
+        if let color { return color }
+        return isActive ? Color.green : Color.secondary.opacity(0.5)
+    }
+
+    private var backgroundColor: Color {
+        if let color { return color.opacity(0.14) }
+        return isActive ? Color.green.opacity(0.14) : Color.secondary.opacity(0.12)
+    }
 
     var body: some View {
         HStack(spacing: 7) {
             Circle()
-                .fill(isActive ? Color.green : Color.secondary.opacity(0.5))
+                .fill(dotColor)
                 .frame(width: 8, height: 8)
             Text(text)
                 .font(.system(size: 12, weight: .medium))
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
-        .background(
-            (isActive ? Color.green.opacity(0.14) : Color.secondary.opacity(0.12)),
-            in: Capsule()
-        )
+        .background(backgroundColor, in: Capsule())
     }
 }
 
@@ -225,10 +236,13 @@ struct BannerView: View {
 
 extension View {
     /// 页面统一的内边距与最大宽度。
-    func pageLayout() -> some View {
+    ///
+    /// `maxWidth` 默认 760 —— 与从前一致，其他页面调用点零改动。
+    /// 工具箱页要排 3 列卡片，需要更宽的内容区（980）。
+    func pageLayout(maxWidth: CGFloat = 760) -> some View {
         self
             .padding(22)
-            .frame(maxWidth: 760, alignment: .leading)
+            .frame(maxWidth: maxWidth, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 }

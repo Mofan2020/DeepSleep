@@ -41,6 +41,7 @@ struct TokenDashboardView: View {
             .pageLayout()
         }
         .navigationTitle("Token 用量")
+        .task { await controller.ensureLoaded() }
     }
 
     // MARK: - Header

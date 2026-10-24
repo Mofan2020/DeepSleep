@@ -38,6 +38,15 @@ enum SidebarItem: String, CaseIterable, Identifiable {
     case hosts
     /// Quarantine 属性管理：扫描并清除 macOS 的 quarantine 扩展属性。
     case quarantine
+    /// 工具箱：nice / hosts / quarantine / AI 保活 / AI 网关 的卡片网格。
+    ///
+    /// 这几个 case 保留在枚举里，但**不从侧边栏渲染** —— 侧边栏「工具」段
+    /// 只渲染工具箱一项。工具箱页点卡片时切 selection 到对应 case。
+    case toolbox
+    /// AI 保活：按计划给指定接口发一次请求。
+    case aiKeepAlive
+    /// AI 网关（试验性）：本机的 OpenAI 格式转发层。
+    case aiGateway
 
     var id: String { rawValue }
 
@@ -61,6 +70,9 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .nice:           return "进程优先级"
         case .hosts:          return "Hosts 编辑"
         case .quarantine:     return "Quarantine"
+        case .toolbox:        return "工具箱"
+        case .aiKeepAlive:    return "AI 保活"
+        case .aiGateway:      return "AI 网关"
         }
     }
 
@@ -84,6 +96,9 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .nice:           return "gauge.with.dots.needle.bottom.50percent"
         case .hosts:          return "doc.text.fill"
         case .quarantine:     return "lock.shield"
+        case .toolbox:        return "wrench.and.screwdriver.fill"
+        case .aiKeepAlive:    return "bolt.heart.fill"
+        case .aiGateway:      return "flask.fill"
         }
     }
 }
@@ -128,22 +143,23 @@ struct ContentView: View {
                         .tag(SidebarItem.uninstall)
                 }
                 Section("工具") {
-                    Label(SidebarItem.nice.title, systemImage: SidebarItem.nice.symbol)
-                        .tag(SidebarItem.nice)
-                    Label(SidebarItem.hosts.title, systemImage: SidebarItem.hosts.symbol)
-                        .tag(SidebarItem.hosts)
-                    Label(SidebarItem.quarantine.title, systemImage: SidebarItem.quarantine.symbol)
-                        .tag(SidebarItem.quarantine)
+                    // 只渲染工具箱一项。nice / hosts / quarantine 仍然保留在
+                    // SidebarItem 里（工具箱页点卡片靠切 selection 进入它们），
+                    // 但不再在侧边栏单独出现。
+                    Label(SidebarItem.toolbox.title, systemImage: SidebarItem.toolbox.symbol)
+                        .tag(SidebarItem.toolbox)
                 }
-                if LLMGatewayFeature.tokenMonitor.isEnabled {
-                    Section("LLM Gateway") {
-                        Label(SidebarItem.tokenMonitor.title, systemImage: SidebarItem.tokenMonitor.symbol)
-                            .tag(SidebarItem.tokenMonitor)
-                        Label(SidebarItem.gateway.title, systemImage: SidebarItem.gateway.symbol)
-                            .tag(SidebarItem.gateway)
-                        Label(SidebarItem.modelSwitcher.title, systemImage: SidebarItem.modelSwitcher.symbol)
-                            .tag(SidebarItem.modelSwitcher)
-                    }
+                // LLM Gateway 段不再用 `LLMGatewayFeature.tokenMonitor` 做门禁。
+                // 那个开关默认关且没有 UI 入口 —— 等于把这三项永久锁死。
+                // 网关的入口是「工具箱卡片 + 已同意免责申明」；
+                // 这一段是管理层（详细配置），不重复免责流程。
+                Section("LLM Gateway") {
+                    Label(SidebarItem.tokenMonitor.title, systemImage: SidebarItem.tokenMonitor.symbol)
+                        .tag(SidebarItem.tokenMonitor)
+                    Label(SidebarItem.gateway.title, systemImage: SidebarItem.gateway.symbol)
+                        .tag(SidebarItem.gateway)
+                    Label(SidebarItem.modelSwitcher.title, systemImage: SidebarItem.modelSwitcher.symbol)
+                        .tag(SidebarItem.modelSwitcher)
                 }
             }
             .listStyle(.sidebar)
@@ -160,10 +176,34 @@ struct ContentView: View {
                     }
                     detailContent
                 }
-                .pageLayout()
+                .pageLayout(maxWidth: selection == .toolbox ? 980 : 760)
             }
             .navigationTitle(selection.title)
             .frame(minWidth: 620)
+            .toolbar {
+                // 从工具箱进入某个工具后，标题栏左侧给一个返回按钮 ——
+                // 否则用户会以为走丢了（侧边栏里已经看不到那个条目了）。
+                if showsBackToToolbox {
+                    ToolbarItem(placement: .navigation) {
+                        Button {
+                            selection = .toolbox
+                        } label: {
+                            Label("工具箱", systemImage: "chevron.left")
+                        }
+                        .help("返回工具箱")
+                    }
+                }
+            }
+        }
+    }
+
+    /// 当前页是不是「从工具箱进来的工具页」。
+    private var showsBackToToolbox: Bool {
+        switch selection {
+        case .nice, .hosts, .quarantine, .aiKeepAlive, .aiGateway:
+            return true
+        default:
+            return false
         }
     }
 
@@ -188,6 +228,12 @@ struct ContentView: View {
         case .nice:           NiceView()
         case .hosts:          HostsView()
         case .quarantine:     QuarantineView()
+        case .toolbox:
+            ToolboxView { tool in
+                selection = tool.sidebarItem
+            }
+        case .aiKeepAlive:    KeepAliveView()
+        case .aiGateway:      GatewaySettingsView()
         }
     }
 }
