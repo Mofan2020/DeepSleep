@@ -109,6 +109,26 @@ CASES = [
      "## Highlights",
      "## Highlights\n\nIt is not a sleep timer, but a power manager.\n",
      "对偶句"),
+
+    # 发布 workflow 的三条。硬规则是 runner 只发 pre-release，
+    # 实测确认之后才手动翻正式版 —— 这三条锁住那条规则不被改掉。
+    ("发布 workflow：把 prerelease 改成 false（绕过实测）",
+     ".github/workflows/release.yml",
+     "prerelease: true", "prerelease: false",
+     "prerelease"),
+
+    ("发布 workflow：又无条件覆写 release-notes.md",
+     ".github/workflows/release.yml",
+     "            if [ ! -f release-notes.md ]; then\n"
+     "              echo \"## v${{ steps.ver.outputs.version }}\" > release-notes.md\n"
+     "            fi",
+     "            echo \"## v${{ steps.ver.outputs.version }}\" > release-notes.md",
+     "release-notes.md"),
+
+    ("发布 workflow：body_path 指向不存在的文件",
+     ".github/workflows/release.yml",
+     "body_path: release-notes.md", "body_path: no-such-notes.md",
+     "body_path"),
 ]
 
 

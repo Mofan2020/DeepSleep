@@ -106,7 +106,19 @@ open -a "build/Build/Products/Release/Deep Sleep.app" \
      --args --wait 8 --status --blockers --rivals --helper-version
 ```
 
-### 第 4 步：提交并打 tag
+### 第 4 步：更新 `release-notes.md` 并提交打 tag
+
+**先更新 `release-notes.md`** —— 仓库根目录这个文件就是 CI 创建 Release 时用的正文
+（`body_path`）。打 tag 之前先把它改成这一版的发布说明：
+
+```sh
+$EDITOR release-notes.md
+```
+
+**这一步不能省。** CI 只在文件不存在时才写占位标题，文件存在就用文件里的内容 ——
+忘了更新，Release 页面就会挂着上一版的说明。写法照第 8 步「发布说明怎么写」那几条。
+
+然后提交并打 tag：
 
 ```sh
 git add -A
@@ -128,8 +140,17 @@ git push origin v1.2.2
 
 **从 v1.4.0 开始，第 6–8 步由 GitHub Actions 完成。** `.github/workflows/release.yml`
 监听 push tag（`v*`），在 macos-14 runner 上跑 `scripts/build-release.sh`，
-用 ditto 解压 + codesign 校验后用 `softprops/action-gh-release` 创建正式版
-（非 prerelease）。手动 `gh release create` 仍可用作兜底（例如 Actions 失败时）。
+用 ditto 解压 + codesign 校验后用 `softprops/action-gh-release` 创建 Release。
+
+**runner 建的 Release 一律是 pre-release。** 这是硬规则：版本发出去之前必须先有人
+实测确认没有严重问题，确认之后再手动翻成正式版：
+
+```sh
+gh release edit v1.2.2 --prerelease=false
+```
+
+手动 `gh release create` 仍可用作兜底（例如 Actions 失败时），同样要标
+`--prerelease`，实测之后再翻。
 
 跑完后用 `gh release list` / `gh api repos/:owner/:repo/releases` 验证资产：
 
@@ -172,12 +193,14 @@ gh release create v1.2.2 \
    'build/release/DeepSleep.zip' \
    'build/release/DeepSleep.zip.sha256' \
    --title 'v1.2.2 — <一句话>' \
-   --notes-file /tmp/release-notes.md
+   --notes-file /tmp/release-notes.md \
+   --prerelease
 ```
 
 - **`--notes-file` 推荐用文件**，命令行里塞多行说明很容易出错
-- **不要加 `--prerelease`**（除非确实想这样）。虽然应用侧改成了拉列表、
-  能识别预发布，但标成正式版能让 `/releases/latest` 这类标准接口也正常工作
+- **必须加 `--prerelease`**。发出去的版本要先经过实测确认没有严重问题，
+  确认之后再翻成正式版（见第 5 步）：
+  `gh release edit v1.2.2 --prerelease=false`
 - 资产名必须是 `DeepSleep.zip`。改名字会让所有已发布的旧版本找不到更新
 
 **发布说明怎么写**（README 的文字同理）：

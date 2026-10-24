@@ -55,9 +55,11 @@ jobs:
               exit 1
             fi
 
-      - name: 写 release notes 占位文件
+      - name: 准备 release notes
         run: |
-            echo "## v${{ steps.ver.outputs.version }}" > release-notes.md
+            if [ ! -f release-notes.md ]; then
+              echo "## v${{ steps.ver.outputs.version }}" > release-notes.md
+            fi
 
       - name: 创建 GitHub Release
         uses: softprops/action-gh-release@v2

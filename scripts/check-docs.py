@@ -504,6 +504,71 @@ def check_documents_exist():
         print(f"  ✓ 五份核心文档都在（{len(required)} 份）")
 
 
+# ---------------------------------------------------------------- 发布 workflow
+
+def check_release_workflow():
+    """校验发版 workflow 与 docs/release.md 的约定一致。
+
+    这里查的是「文档说 A、workflow 做 B」这类矛盾。
+
+    硬规则：**runner 只能发 pre-release**。版本发出去之前必须先有人实测确认
+    没有严重问题，确认之后再手动翻成正式版
+    （`gh release edit <tag> --prerelease=false`）。workflow 里把 prerelease
+    写死成 false，等于绕过了实测这一步。
+    """
+    section("发布 workflow")
+
+    workflow = read(".github/workflows/release.yml")
+    doc = read("docs/release.md")
+
+    if not workflow or not doc:
+        return False
+
+    problems = []
+
+    # 1. prerelease 必须是 true。
+    match = re.search(r"^\s*prerelease:\s*(true|false)\s*$", workflow, re.MULTILINE)
+    if not match:
+        problems.append("workflow 里找不到 prerelease 声明")
+    elif match.group(1) == "false":
+        problems.append(
+            "workflow 把 Release 标成正式版（prerelease: false），"
+            "但硬规则是 runner 只发 pre-release，实测后再手动翻"
+        )
+
+    # 2. 文档必须写明「先发预发布，实测后再翻正式版」这条流程。
+    doc_mentions_prerelease_rule = (
+        "prerelease" in doc and
+        ("实测" in doc or "正式版" in doc)
+    )
+    if not doc_mentions_prerelease_rule:
+        problems.append(
+            "docs/release.md 没写清「先发预发布、实测后再翻正式版」的流程"
+        )
+
+    # 3. release-notes.md 不能被无条件覆写 ——
+    #    覆写会让手写的发布说明只剩一行标题。
+    if re.search(r"echo\s+\"##\s*v\$\{\{[^}]*\}\}\"\s*>\s*release-notes\.md", workflow):
+        if "if [ ! -f release-notes.md ]" not in workflow:
+            problems.append(
+                "workflow 无条件覆写 release-notes.md，手写的发布说明会只剩一行标题"
+            )
+
+    # 4. body_path 指向的文件必须存在。
+    body_path = re.search(r"body_path:\s*(\S+)", workflow)
+    if body_path:
+        target = body_path.group(1)
+        if not os.path.exists(os.path.join(ROOT, target)):
+            problems.append(f"workflow 的 body_path 指向不存在的文件：{target}")
+
+    if problems:
+        failures.append("发布 workflow 与文档不一致：" + "；".join(problems))
+        return False
+
+    print("  ✓ workflow 只发 pre-release，文档与之一致")
+    return True
+
+
 # ---------------------------------------------------------------- 主流程
 
 def main():
@@ -520,6 +585,7 @@ def main():
     check_file_references()
     check_literal_interpolation()
     check_prose()
+    check_release_workflow()
 
     print()
     print("=" * 46)
