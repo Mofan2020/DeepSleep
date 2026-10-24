@@ -71,14 +71,17 @@ def check_cli_arguments():
     source = read("DeepSleep/AppDelegate.swift")
     in_code = set(re.findall(r'case\s+"(--[a-z0-9-]+)"', source))
 
-    doc = read("README.md")
-    # 表格行形如：| `--hold <kinds>` | 说明 |
-    in_doc = set(re.findall(r'^\|\s*`(--[a-z0-9-]+)', doc, re.MULTILINE))
+    # 两份 README 都查。只查英文的话，中文版参数表少一个参数没人知道 ——
+    # 而国内用户读的就是中文版。
+    for target in ("README.md", "README.zh-CN.md"):
+        doc = read(target)
+        # 表格行形如：| `--hold <kinds>` | 说明 |
+        in_doc = set(re.findall(r'^\|\s*`(--[a-z0-9-]+)', doc, re.MULTILINE))
 
-    compare_sets(
-        "CLI 参数", in_code, in_doc,
-        "这些参数代码里有、README.md 的参数表里没有：",
-        "这些参数 README.md 里写了、代码里没有：")
+        compare_sets(
+            f"CLI 参数（{target}）", in_code, in_doc,
+            f"这些参数代码里有、{target} 的参数表里没有：",
+            f"这些参数 {target} 里写了、代码里没有：")
 
 
 # ---------------------------------------------------------------- 协议命令
@@ -391,14 +394,31 @@ def check_literal_interpolation():
 # 用户打开这个项目，第一眼看到的就是 README 与发布说明。
 # 模板腔、套话、成排的破折号会让人失去耐心直接走人，所以它值得被机器拦一道。
 #
-# 只查 README：docs/ 下面几份是给改代码的人看的，写详细一点没关系。
+# 两份 README 都查：README.md（英文）与 README.zh-CN.md（中文）。
+# 只查英文的话，中文版 —— 也就是国内用户实际会读的那份 —— 就没人管了。
+#
+# docs/ 下面几份不查：那是给改代码的人看的，写详细一点没关系。
 #
 # 词表刻意短。这些是最容易识别的套话，误伤正常中文的可能性低 ——
 # 一条总在冤枉正常句子的检查，最后一定会被人关掉。
+#
+# 中文词表只对中文 README 有效；英文 README 用下面那份英文词表。
+# 早期版本只有中文词表却在查英文 README —— 那条检查等于空转，
+# 英文里的套话一个都拦不住。
 AI_PHRASES = [
     "不仅仅是", "不仅是", "此外，", "值得一提的是", "值得注意的是",
     "至关重要", "综上所述", "显而易见", "众所周知", "彰显", "奠定了",
     "见证了", "总而言之", "不可否认", "归根结底",
+]
+
+# 英文版同样的套话。写法上刻意避开「delve」「leverage」这类
+# 正常技术写作里也常用的词 —— 误伤一次就足以让人把检查关掉。
+AI_PHRASES_EN = [
+    "it's not just", "it's not only", "moreover,", "additionally,",
+    "it is worth noting", "it's worth noting", "crucially,",
+    "in conclusion", "needless to say", "undoubtedly", "arguably the most",
+    "a testament to", "stands as a", "seamlessly", "leverage the power of",
+    "unlock the potential", "elevate your",
 ]
 
 # 「不是 X，而是 Y」：AI 爱用的对偶句，中文写作里偶有正当用法，
@@ -407,32 +427,59 @@ AI_PATTERNS = [
     (r"不是[^，。！？\n]{1,24}，而是", "「不是……而是……」对偶句"),
 ]
 
+# 英文里的同一个句式。
+AI_PATTERNS_EN = [
+    (r"not [^,\n]{1,40}, but ", "「not X, but Y」对偶句"),
+]
+
 # 长破折号允许少量（正常中文会用它补充说明），靠它撑句子就会成排出现。
 MAX_EM_DASHES = 2
+
+# 英文 README **不查** em dash 数量。英文的 em dash 用法与中文完全不同：
+# 列表项的「粗体标题 — 说明」是这个项目的既有排版（`- **Keep awake** — ...`），
+# 21 处全是这种。按绝对数量判会把这个正常写法当成腔调。
+# 英文侧靠 AI 味短语与「not X, but Y」句式来抓，足够了。
+
+# 要做文案检查的 README。语言决定用哪套词表。
+PROSE_TARGETS = [
+    ("README.md", AI_PHRASES_EN, AI_PATTERNS_EN, "English"),
+    ("README.zh-CN.md", AI_PHRASES, AI_PATTERNS, "Chinese"),
+]
 
 
 def check_prose():
     section("文案")
 
-    text = read("README.md")
-    if not text:
-        return False
+    problems = []
+    checked = 0
 
-    problems = [f"AI 味短语「{phrase}」" for phrase in AI_PHRASES if phrase in text]
+    for target, phrases, patterns, language in PROSE_TARGETS:
+        text = read(target)
+        if not text:
+            # 文件缺失由 check_documents_exist 负责报，这里不重复报。
+            continue
+        checked += 1
 
-    for pattern, label in AI_PATTERNS:
-        if re.search(pattern, text):
-            problems.append(label)
+        for phrase in phrases:
+            if phrase.lower() in text.lower():
+                problems.append(f"{target}：AI 味短语「{phrase}」")
 
-    dashes = text.count("——")
-    if dashes > MAX_EM_DASHES:
-        problems.append(f"长破折号 {dashes} 处（上限 {MAX_EM_DASHES}）")
+        for pattern, label in patterns:
+            if re.search(pattern, text, re.IGNORECASE):
+                problems.append(f"{target}：{label}")
+
+        # 长破折号只对中文有意义。英文的 em dash 是这个项目列表项的
+        # 既有排版（「- **Keep awake** — ...」），按数量判会误伤，不查。
+        if language == "Chinese":
+            dashes = text.count("——")
+            if dashes > MAX_EM_DASHES:
+                problems.append(f"{target}：长破折号 {dashes} 处（上限 {MAX_EM_DASHES}）")
 
     if problems:
         failures.append("README 的文字读起来像 AI 写的，改成人话：" + "；".join(problems))
         return False
 
-    print("  ✓ README 没有发现 AI 味句式")
+    print(f"  ✓ {checked} 份 README 都没有发现 AI 味句式")
     return True
 
 

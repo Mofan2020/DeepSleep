@@ -52,7 +52,7 @@ CASES = [
      "允许睡眠（改了）"),
 
     ("CLI 参数：README 的参数表里删掉一行",
-     "README.md",
+     "README.zh-CN.md",
      "| `--hotkey-status` | 打印快速退出快捷键的注册状态（排查「按了没反应」） |\n",
      "",
      "--hotkey-status"),
@@ -85,16 +85,30 @@ CASES = [
      "找不到"),
 
     ("文案：README 里混进 AI 味短语",
-     "README.md",
+     "README.zh-CN.md",
      "## 已知限制",
      "## 已知限制\n\n值得注意的是，此外，这个功能不仅仅是修补。\n",
      "AI 味短语"),
 
     ("文案：README 里靠长破折号撑句子",
-     "README.md",
+     "README.zh-CN.md",
      "## 已知限制",
      "## 已知限制\n\n甲——乙——丙——丁\n",
      "长破折号"),
+
+    # 英文侧的检查：中文词表对英文 README 一点用都没有，
+    # 这两条锁住「英文 README 也在被检查」这件事。
+    ("文案：英文 README 里混进 AI 味短语",
+     "README.md",
+     "## Highlights",
+     "## Highlights\n\nMoreover, this is not just a utility, it is a testament to craft.\n",
+     "AI 味短语"),
+
+    ("文案：英文 README 里出现 not X, but Y 对偶句",
+     "README.md",
+     "## Highlights",
+     "## Highlights\n\nIt is not a sleep timer, but a power manager.\n",
+     "对偶句"),
 ]
 
 

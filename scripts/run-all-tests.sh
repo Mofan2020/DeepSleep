@@ -52,6 +52,20 @@ build_and_run "process-snapshot"     /tmp/t_snap     Shared/ProcessStats.swift S
 build_and_run "process-stats"        /tmp/t_stats    Shared/ProcessStats.swift scripts/test-process-stats.swift
 build_and_run "servermode-fsm"       /tmp/t_smode    Shared/ServerModeIdlePolicy.swift scripts/test-servermode-fsm.swift
 build_and_run "monitor-config"       /tmp/t_mcfg     Shared/NicePageSize.swift DeepSleep/Core/MonitorConfig.swift scripts/test-monitor-config.swift
+
+# check-docs.py 自身的负向测试：故意改坏文档，确认校验器会拦。
+# 它是 Python 脚本不是 Swift，单独跑。
+if [ -f scripts/test-check-docs.py ]; then
+    if python3 scripts/test-check-docs.py > /tmp/t_checkdocs.log 2>&1; then
+        printf '  ✓ %-42s 通过\n' "check-docs 负向测试"
+        PASS=$((PASS + 1))
+    else
+        printf '  ✗ %-42s 有失败项\n' "check-docs 负向测试"
+        grep '\[失败\]' /tmp/t_checkdocs.log | head -5 | sed 's/^/      /'
+        FAILED_LIST+=("check-docs 负向测试")
+        FAIL=$((FAIL + 1))
+    fi
+fi
 build_and_run "keepalive-url"        /tmp/t_kaurl    DeepSleep/AIKeepAlive/KeepAliveModels.swift scripts/test-keepalive-url.swift
 build_and_run "toolbox-layout"       /tmp/t_tblay    DeepSleep/Views/ToolboxLayout.swift DeepSleep/LLMGateway/Database/QuotaModels.swift DeepSleep/LLMGateway/Database/GatewayConfigStore.swift scripts/test-toolbox-layout.swift
 build_and_run "toolbox-gate"         /tmp/t_tbgate   DeepSleep/Views/ToolboxLayout.swift DeepSleep/AIKeepAlive/KeepAliveModels.swift DeepSleep/AIKeepAlive/KeepAliveStore.swift DeepSleep/LLMGateway/KeychainStore.swift DeepSleep/LLMGateway/Database/QuotaModels.swift DeepSleep/LLMGateway/Database/GatewayConfigStore.swift DeepSleep/LLMGateway/GatewayDisclaimer.swift scripts/test-toolbox-gate.swift
