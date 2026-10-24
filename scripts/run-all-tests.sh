@@ -41,6 +41,20 @@ build_and_run() {
     run "$name" "$outbin"
 }
 
+# 需要额外 swiftc 参数的（比如 -framework）。参数原样传给 swiftc，
+# 不强制加 -parse-as-library —— 用例自己决定。
+build_and_run_raw() {
+    local name="$1"; local outbin="$2"; shift 2
+    if ! swiftc "$@" -o "$outbin" 2>/tmp/ds_compile_err.txt; then
+        printf '  ✗ %-42s 编译失败\n' "$name"
+        head -8 /tmp/ds_compile_err.txt | sed 's/^/      /'
+        FAILED_LIST+=("$name")
+        FAIL=$((FAIL + 1))
+        return
+    fi
+    run "$name" "$outbin"
+}
+
 echo "=== DeepSleep 自测回归 ==="
 
 build_and_run "version-compare"      /tmp/t_version  Shared/Version.swift scripts/test-version-compare.swift
@@ -52,6 +66,11 @@ build_and_run "process-snapshot"     /tmp/t_snap     Shared/ProcessStats.swift S
 build_and_run "process-stats"        /tmp/t_stats    Shared/ProcessStats.swift scripts/test-process-stats.swift
 build_and_run "servermode-fsm"       /tmp/t_smode    Shared/ServerModeIdlePolicy.swift scripts/test-servermode-fsm.swift
 build_and_run "monitor-config"       /tmp/t_mcfg     Shared/NicePageSize.swift DeepSleep/Core/MonitorConfig.swift scripts/test-monitor-config.swift
+build_and_run "idle-time"            /tmp/t_idle     Shared/IdleTime.swift scripts/test-idle-time.swift
+build_and_run "selfupdate"           /tmp/t_selfupd  Shared/HelperProtocol.swift DeepSleepHelper/SelfUpdate.swift scripts/test-selfupdate.swift
+build_and_run "auto-start-manager"   /tmp/t_autostart DeepSleep/Core/AutoStartManager.swift scripts/test-auto-start-manager.swift
+build_and_run "cpu-temperature-decode" /tmp/t_cputemp DeepSleepHelper/SMCTemperature.swift Shared/CPUTemperatureSample.swift scripts/test-cpu-temperature-decode.swift
+build_and_run_raw "cgeventtap"       /tmp/t_cgevtap  -parse-as-library -framework ApplicationServices scripts/test-cgeventtap.swift
 
 # check-docs.py 自身的负向测试：故意改坏文档，确认校验器会拦。
 # 它是 Python 脚本不是 Swift，单独跑。
