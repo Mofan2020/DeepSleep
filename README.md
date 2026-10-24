@@ -14,7 +14,7 @@ macOS has never had a real answer to: *"I want my Mac to stay awake until this d
 - **App name**: Deep Sleep
 - **Minimum system**: macOS 26.0
 - **Language / framework**: Swift 5, SwiftUI + AppKit, IOKit, LocalAuthentication
-- **当前版本**：1.8.0
+- **当前版本**：1.8.1
 
 ## Highlights
 
