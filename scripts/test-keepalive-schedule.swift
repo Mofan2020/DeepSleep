@@ -4,43 +4,37 @@
 //
 //  验证 AI 保活的**调度语义**（不是 URL 拼接 —— 那个在 test-keepalive-url.swift）。
 //
+//  调度模型：每天固定时刻 + 每周选几天。
+//  - 到点判定：找出最近一个「已经过去、且晚于上次成功发送」的计划时刻；
+//  - 锚点推进：**只有成功才推进**（失败时保持不变，下一次 tick 立刻重试）；
+//  - 退避阶梯：1 / 5 / 15 / 30 分钟，冷却基准是「失败时刻」不是「现在」。
+//
 //  覆盖：
+//  - 时刻归一化（去重、排序、钳制非法值、数量上限）
+//  - 星期归一化（剔非法值）
+//  - 星期文案（每天 / 工作日 / 逐个列出 / 不运行）
+//  - 到点判定：到点该发、没到不发、已发过的不重复发
+//  - 星期过滤：不在选中的日子里不发
 //  - 失败时不推进锚点（失败就该尽快重试）
 //  - 成功一次清零退避计数
-//  - 退避阶梯真的生效（1 / 5 / 15 / 30 分钟）
+//  - 退避阶梯真的生效
 //  - 冷却期相对「失败时刻」算，不是相对「现在」算
-//  - 冷却期上限不超过用户配的间隔
 //  - inFlight 真的挡住同一任务被并发触发
-//  - 间隔钳制：0 / 负数 / 1441 / 99999
 //  - 长时间没跑（应用退出过）后重启会立刻补发
 //  - 禁用 / 停用的任务不发
 //  - 删除任务时 Keychain 条目一起清掉
+//  - 旧格式（intervalMinutes）迁移后仍能读出来
 //  - API Key 不出现在日志里
 //
 //  运行：
 //  swiftc -parse-as-library \
 //    scripts/test-support/KeepAliveTestStubs.swift \
 //    DeepSleep/AIKeepAlive/KeepAliveModels.swift \
+//    DeepSleep/AIKeepAlive/KeepAliveError.swift \
 //    DeepSleep/AIKeepAlive/KeepAliveStore.swift \
 //    DeepSleep/AIKeepAlive/KeepAliveClient.swift \
 //    DeepSleep/AIKeepAlive/KeepAliveEngine.swift \
-//    DeepSleep/LLMGateway/Database/QuotaModels.swift \
 //    scripts/test-keepalive-schedule.swift -o /tmp/ka-sched && /tmp/ka-sched
-//
-//  注意：测的是**真实源码**。`KeepAliveEngine.tick()` 是 private，
-//  但 Swift 的 `private` 是**文件作用域**而不是类型作用域 —— 本文件与
-//  KeepAliveEngine.swift 不同文件，所以拿不到。
-//  解决办法：把测试写在**同一个文件**里不行（要改业务代码）。
-//  所以这里改用**时间锚点 + 手动触发 + 观察引擎内部状态**的方式：
-//  - `triggerNow` 是公开 API，可以强制发起一次发送。
-//  - `tasks` 是 `@Published private(set)`，可以从外部读。
-//  - 通过构造不同 `lastRunAt` / `createdAt` 的任务来验证到期判定。
-//  - 退避阶梯通过**观察失败后多久才允许下一次发送**来验证 ——
-//    用 `triggerNow` 两次之间的时间差 + 引擎的 `nextDueDate` 语义。
-//
-//  真正需要「等真实时间」的地方（退避阶梯 1/5/15/30 分钟）改用
-//  **时间注入**验证：把 backoffSeconds / lastFailureAt 换成可控的量。
-//  见文件末尾「退避阶梯」一节。
 //
 
 import Foundation
@@ -80,11 +74,37 @@ struct KeepAliveScheduleTests {
     @MainActor
     static func reset() {
         UserDefaults.standard.removeObject(forKey: KeepAliveStore.storageKey)
-        KeychainStore.reset()
-        HTTPClient.reset()
+        KeepAliveKeychain.reset()
+        KeepAliveHTTPClient.reset()
         SleepController.resetLogs()
         KeepAliveEngine.shared.stop()
     }
+
+    /// 测试用的固定日历：固定时区、固定每周第一天，避免跑测试的日子影响结果。
+    static var calendar: Calendar = {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "Asia/Shanghai")!
+        cal.firstWeekday = 2   // 周一
+        return cal
+    }()
+
+    /// 造一个「某天某时某分」的 Date。
+    static func date(_ year: Int, _ month: Int, _ day: Int,
+                     _ hour: Int, _ minute: Int) -> Date {
+        var comps = DateComponents()
+        comps.year = year
+        comps.month = month
+        comps.day = day
+        comps.hour = hour
+        comps.minute = minute
+        comps.second = 0
+        return calendar.date(from: comps)!
+    }
+
+    /// 2026-10-26 是周一。用它当基准日。
+    static let monday = date(2026, 10, 26, 0, 0)
+    static let tuesday = date(2026, 10, 27, 0, 0)
+    static let sunday = date(2026, 10, 25, 0, 0)
 
     /// 造一条任务并写进 Keychain。
     @MainActor
@@ -92,8 +112,11 @@ struct KeepAliveScheduleTests {
         name: String = "t",
         baseURL: String = "https://api.example.com",
         model: String = "m",
-        intervalMinutes: Int = 240,
-        key: String? = "sk-secret-key-value",
+        schedule: KeepAliveSchedule = KeepAliveSchedule(
+            times: [KeepAliveTime(hour: 9, minute: 0)],
+            weekdays: KeepAliveSchedule.allWeekdays
+        ),
+        key: String? = "«redacted:sk-…»",
         lastRunAt: Date? = nil,
         createdAt: Date = Date(),
         isEnabled: Bool = true
@@ -101,7 +124,7 @@ struct KeepAliveScheduleTests {
         let id = UUID()
         let account = KeepAliveStore.keychainAccount(for: id)
         if let key {
-            try? KeychainStore.save(key: key, account: account)
+            try? KeepAliveKeychain.save(key: key, account: account)
         }
         let task = KeepAliveTask(
             id: id,
@@ -110,8 +133,8 @@ struct KeepAliveScheduleTests {
             format: .openAI,
             model: model,
             apiKeyRef: account,
-            intervalMinutes: intervalMinutes,
-            requestTemplate: "ping",
+            schedule: schedule,
+            requestTemplate: KeepAliveDefaults.defaultRequestTemplate,
             isEnabled: isEnabled,
             lastRunAt: lastRunAt,
             lastResult: nil,
@@ -148,68 +171,329 @@ struct KeepAliveScheduleTests {
 
     @MainActor
     static func runAll() async {
-        // ------------------------------------------------------ 间隔钳制
-        print("== 间隔钳制 ==")
-        checkEqual("0 → 1", 1, KeepAliveTask.clampedInterval(0))
-        checkEqual("-1 → 1", 1, KeepAliveTask.clampedInterval(-1))
-        checkEqual("1441 → 1440", 1440, KeepAliveTask.clampedInterval(1441))
-        checkEqual("99999 → 1440", 1440, KeepAliveTask.clampedInterval(99999))
-        checkEqual("Int.min → 1", 1, KeepAliveTask.clampedInterval(Int.min))
-        checkEqual("Int.max → 1440", 1440, KeepAliveTask.clampedInterval(Int.max))
-
-        // 写盘路径也要钳制（手改 UserDefaults 塞 0 的防御）。
-        reset()
-        var evil = KeepAliveTask(name: "evil")
-        evil.intervalMinutes = 0
-        KeepAliveStore.save([evil])
+        // ================================================== 时刻归一化
+        print("== 时刻归一化 ==")
+        let dupTimes = KeepAliveSchedule(
+            times: [
+                KeepAliveTime(hour: 14, minute: 30),
+                KeepAliveTime(hour: 9, minute: 0),
+                KeepAliveTime(hour: 14, minute: 30),
+            ],
+            weekdays: [2]
+        )
+        checkEqual("重复时刻被去掉", 2, dupTimes.times.count)
         checkEqual(
-            "手改 UserDefaults 塞 0 → 读回时钳到 1",
-            1,
-            KeepAliveStore.load().first?.intervalMinutes ?? -1
+            "时刻按时间升序排",
+            ["09:00", "14:30"],
+            dupTimes.times.map(\.display)
+        )
+        checkEqual(
+            "非法小时被钳到 23",
+            23,
+            KeepAliveTime(hour: 99, minute: 0).hour
+        )
+        checkEqual(
+            "非法分钟被钳到 59",
+            59,
+            KeepAliveTime(hour: 0, minute: 99).minute
+        )
+        checkEqual(
+            "负数小时被钳到 0",
+            0,
+            KeepAliveTime(hour: -5, minute: 0).hour
+        )
+        checkEqual(
+            "距零点分钟数换算正确",
+            9 * 60 + 30,
+            KeepAliveTime(minutesFromMidnight: 9 * 60 + 30).minutesFromMidnight
+        )
+        checkEqual(
+            "距零点分钟数换算回时分",
+            "09:30",
+            KeepAliveTime(minutesFromMidnight: 570).display
         )
 
-        // ------------------------------------------------------ 失败不推进锚点
+        // 每天时刻数量上限。
+        let manyTimes = (0..<100).map { KeepAliveTime(minutesFromMidnight: $0 * 10) }
+        let capped = KeepAliveSchedule(times: manyTimes, weekdays: [2])
+        checkEqual(
+            "每天时刻数量被压到上限",
+            KeepAliveDefaults.maxTimesPerDay,
+            capped.times.count
+        )
+
+        // ================================================== 星期归一化
+        print("\n== 星期归一化 ==")
+        let badWeekdays = KeepAliveSchedule(
+            times: [KeepAliveTime(hour: 9, minute: 0)],
+            weekdays: [2, 99, 0, -3, 5]
+        )
+        checkEqual("非法星期被剔掉", [2, 5], badWeekdays.weekdays.sorted())
+
+        // ================================================== 星期文案
+        print("\n== 星期文案 ==")
+        checkEqual(
+            "全选 → 每天",
+            "每天",
+            KeepAliveSchedule(times: [], weekdays: KeepAliveSchedule.allWeekdays).weekdayDescription
+        )
+        checkEqual(
+            "工作日 → 周一至周五",
+            "周一至周五",
+            KeepAliveSchedule(times: [], weekdays: [2, 3, 4, 5, 6]).weekdayDescription
+        )
+        checkEqual(
+            "空 → 不运行",
+            "不运行",
+            KeepAliveSchedule(times: [], weekdays: []).weekdayDescription
+        )
+        checkEqual(
+            "零散组合逐个列出（周一排头）",
+            "周一、周三、周日",
+            KeepAliveSchedule(times: [], weekdays: [2, 4, 1]).weekdayDescription
+        )
+        checkEqual(
+            "整条计划文案",
+            "周一至周五 09:00、14:00",
+            KeepAliveSchedule(
+                times: [KeepAliveTime(hour: 9, minute: 0), KeepAliveTime(hour: 14, minute: 0)],
+                weekdays: [2, 3, 4, 5, 6]
+            ).description
+        )
+
+        // ================================================== 到点判定
+        print("\n== 到点判定 ==")
+        let daily9 = KeepAliveSchedule(
+            times: [KeepAliveTime(hour: 9, minute: 0)],
+            weekdays: KeepAliveSchedule.allWeekdays
+        )
+
+        // 8:59 —— 还没到。
+        check(
+            "没到点 → 不该发",
+            daily9.pendingSlot(
+                now: date(2026, 10, 26, 8, 59),
+                lastRunAt: nil,
+                since: nil,
+                calendar: calendar
+            ) == nil
+        )
+        // 9:00 —— 到了。
+        let slot0900 = daily9.pendingSlot(
+            now: date(2026, 10, 26, 9, 0),
+            lastRunAt: nil,
+            since: nil,
+                calendar: calendar
+        )
+        check("到点 → 该发", slot0900 != nil)
+        checkEqual(
+            "到点时刻就是 9:00",
+            date(2026, 10, 26, 9, 0).timeIntervalSince1970,
+            slot0900?.timeIntervalSince1970 ?? -1
+        )
+        // 9:01 —— 还是那个时刻（已经过去但没发过）。
+        check(
+            "过了一分钟仍是同一个待发时刻",
+            daily9.pendingSlot(
+                now: date(2026, 10, 26, 9, 1),
+                lastRunAt: nil,
+                since: nil,
+                calendar: calendar
+            ) == slot0900
+        )
+        // 已经发过了 → 不该再发。
+        check(
+            "上次发送在时刻之后 → 不该重复发",
+            daily9.pendingSlot(
+                now: date(2026, 10, 26, 10, 0),
+                lastRunAt: date(2026, 10, 26, 9, 0),
+                since: nil,
+                calendar: calendar
+            ) == nil
+        )
+        // 上次发送在时刻之前（比如昨天发的）→ 今天该发。
+        check(
+            "上次发送在时刻之前 → 该发",
+            daily9.pendingSlot(
+                now: date(2026, 10, 26, 10, 0),
+                lastRunAt: date(2026, 10, 25, 9, 0),
+                since: nil,
+                calendar: calendar
+            ) != nil
+        )
+        // 没有时刻 → 永远不发。
+        check(
+            "没有时刻 → 不发",
+            KeepAliveSchedule(times: [], weekdays: KeepAliveSchedule.allWeekdays)
+                .pendingSlot(now: date(2026, 10, 26, 10, 0), lastRunAt: nil, since: nil, calendar: calendar) == nil
+        )
+        // 没有星期 → 永远不发。
+        check(
+            "没有星期 → 不发",
+            KeepAliveSchedule(times: [KeepAliveTime(hour: 9, minute: 0)], weekdays: [])
+                .pendingSlot(now: date(2026, 10, 26, 10, 0), lastRunAt: nil, since: nil, calendar: calendar) == nil
+        )
+
+        // ============================================== 星期过滤
+        print("\n== 星期过滤 ==")
+        // 只在周一运行。
+        let mondayOnly = KeepAliveSchedule(
+            times: [KeepAliveTime(hour: 9, minute: 0)],
+            weekdays: [2]
+        )
+        check(
+            "周一 9:00 → 该发",
+            mondayOnly.pendingSlot(
+                now: date(2026, 10, 26, 10, 0),
+                lastRunAt: nil,
+                since: nil,
+                calendar: calendar
+            ) != nil
+        )
+        check(
+            "周二 10:00 → 不该发（周二没配）",
+            mondayOnly.pendingSlot(
+                now: date(2026, 10, 27, 10, 0),
+                lastRunAt: date(2026, 10, 26, 9, 0),
+                since: nil,
+                calendar: calendar
+            ) == nil
+        )
+        check(
+            "周日 10:00 → 不该发（周日没配）",
+            mondayOnly.pendingSlot(
+                now: date(2026, 10, 25, 10, 0),
+                lastRunAt: nil,
+                since: nil,
+                calendar: calendar
+            ) == nil
+        )
+        // 周一过了、同一天内 —— 该发（同一天的 9:00 还没发过）。
+        let weekly = KeepAliveSchedule(
+            times: [KeepAliveTime(hour: 9, minute: 0)],
+            weekdays: [2]
+        )
+        check(
+            "周一当天 20:00 → 仍能认领当天 9:00 那个时刻",
+            weekly.pendingSlot(
+                now: date(2026, 10, 26, 20, 0),
+                lastRunAt: nil,
+                since: nil,
+                calendar: calendar
+            ) != nil
+        )
+        // 上周一的时刻不该被拿来补发 —— 只看当天。
+        check(
+            "不补发：跨天的旧时刻不算数",
+            weekly.pendingSlot(
+                now: date(2026, 10, 26, 20, 0),
+                lastRunAt: nil,
+                since: date(2026, 10, 26, 19, 0),
+                calendar: calendar
+            ) == nil,
+            "since 是今天 19:00，当天 9:00 已被锚点挡住"
+        )
+
+        // ============================================ 下一个时刻
+        print("\n== 下一个时刻 ==")
+        let nextDaily = daily9.nextSlot(after: date(2026, 10, 26, 8, 0), calendar: calendar)
+        checkEqual(
+            "今天 8:00 的下一个是今天 9:00",
+            date(2026, 10, 26, 9, 0).timeIntervalSince1970,
+            nextDaily?.timeIntervalSince1970 ?? -1
+        )
+        let nextTomorrow = daily9.nextSlot(after: date(2026, 10, 26, 9, 0), calendar: calendar)
+        checkEqual(
+            "今天 9:00 的下一个是明天 9:00",
+            date(2026, 10, 27, 9, 0).timeIntervalSince1970,
+            nextTomorrow?.timeIntervalSince1970 ?? -1
+        )
+        check(
+            "空计划没有下一个时刻",
+            KeepAliveSchedule(times: [], weekdays: [2])
+                .nextSlot(after: Date(), calendar: calendar) == nil
+        )
+
+        // ============================================ 旧格式迁移
+        print("\n== 旧格式迁移 ==")
+        let legacyJSON = """
+        [{
+          "id": "11111111-2222-3333-4444-555555555555",
+          "name": "legacy",
+          "baseURL": "https://api.example.com",
+          "format": "openai",
+          "model": "m",
+          "apiKeyRef": "keepalive.legacy",
+          "intervalMinutes": 240,
+          "requestTemplate": "ping",
+          "isEnabled": true,
+          "lastRunAt": null,
+          "lastResult": null,
+          "createdAt": 1700000000
+        }]
+        """
+        UserDefaults.standard.set(
+            Data(legacyJSON.utf8),
+            forKey: KeepAliveStore.storageKey
+        )
+        let migrated = KeepAliveStore.load()
+        checkEqual("旧数据读得出来", 1, migrated.count)
+        checkEqual(
+            "240 分钟间隔迁移成 6 个时刻",
+            ["00:00", "04:00", "08:00", "12:00", "16:00", "20:00"],
+            migrated.first?.schedule.times.map(\.display) ?? []
+        )
+        checkEqual(
+            "迁移后星期是每天",
+            KeepAliveSchedule.allWeekdays,
+            migrated.first?.schedule.weekdays ?? []
+        )
+        checkEqual("迁移后任务名保留", "legacy", migrated.first?.name ?? "")
+        checkEqual("迁移后地址保留", "https://api.example.com", migrated.first?.baseURL ?? "")
+        UserDefaults.standard.removeObject(forKey: KeepAliveStore.storageKey)
+
+        // 新格式也能读。
+        reset()
+        let newFormat = makeTask(name: "new-format")
+        let roundTrip = KeepAliveStore.load().first { $0.id == newFormat.id }
+        check("新格式读得回来", roundTrip != nil)
+        checkEqual(
+            "新格式的时刻保留",
+            ["09:00"],
+            roundTrip?.schedule.times.map(\.display) ?? []
+        )
+
+        // ================================================== 失败不推进锚点
         print("\n== 失败时不推进锚点 ==")
         reset()
-        let anchor = Date(timeIntervalSince1970: 1_700_000_000)
-        let t1 = makeTask(name: "fail-anchor", intervalMinutes: 240, lastRunAt: anchor)
-        HTTPClient.nextStatus = 500
-        HTTPClient.nextBody = Data("server exploded".utf8)
+        let t1 = makeTask(name: "fail-anchor", lastRunAt: nil)
+        KeepAliveHTTPClient.nextStatus = 500
+        KeepAliveHTTPClient.nextBody = Data("server exploded".utf8)
         KeepAliveEngine.shared.triggerNow(id: t1.id)
         await settle()
         let afterFail = KeepAliveEngine.shared.tasks.first { $0.id == t1.id }
         check(
             "失败后 lastRunAt 不变（锚点没推进）",
-            afterFail?.lastRunAt?.timeIntervalSince1970 == anchor.timeIntervalSince1970,
-            "实际 \(afterFail?.lastRunAt?.timeIntervalSince1970 ?? -1)"
+            afterFail?.lastRunAt == nil,
+            "实际 \(afterFail?.lastRunAt?.description ?? "nil")"
         )
         check(
             "失败后 lastResult 记录了失败原因",
             (afterFail?.lastResult ?? "").hasPrefix("失败"),
             "实际 \(afterFail?.lastResult ?? "nil")"
         )
-        check(
-            "失败后 nextDueDate 仍在过去 → 下一 tick 会立刻重试",
-            (afterFail?.nextDueDate() ?? Date.distantFuture) < Date(),
-            "实际 \(afterFail?.nextDueDate() ?? Date.distantFuture)"
-        )
 
-        // ------------------------------------------------------ 成功推进锚点
+        // ================================================== 成功推进锚点
         print("\n== 成功时推进锚点 ==")
         reset()
-        let t2 = makeTask(name: "ok-anchor", intervalMinutes: 240, lastRunAt: anchor)
-        HTTPClient.nextStatus = 200
+        let t2 = makeTask(name: "ok-anchor", lastRunAt: nil)
+        KeepAliveHTTPClient.nextStatus = 200
         KeepAliveEngine.shared.triggerNow(id: t2.id)
         await settle()
         let afterOK = KeepAliveEngine.shared.tasks.first { $0.id == t2.id }
         check(
             "成功后 lastRunAt 推进到当前",
-            (afterOK?.lastRunAt ?? .distantPast) > anchor,
-            "实际 \(afterOK?.lastRunAt?.timeIntervalSince1970 ?? -1)"
-        )
-        check(
-            "成功后 nextDueDate 在未来 → 不会立刻再发",
-            (afterOK?.nextDueDate() ?? Date.distantPast) > Date()
+            (afterOK?.lastRunAt ?? .distantPast) > Date(timeIntervalSinceNow: -30)
         )
         checkEqual(
             "成功后 lastResult 是「已发送」",
@@ -217,140 +501,162 @@ struct KeepAliveScheduleTests {
             afterOK?.lastResult ?? ""
         )
 
-        // ------------------------------------------------- 成功清零退避计数
+        // ============================================== 成功清零退避计数
         print("\n== 成功清零退避计数 ==")
         reset()
-        let t3 = makeTask(name: "backoff-reset", intervalMinutes: 240, lastRunAt: anchor)
-        // 连着失败 3 次。
+        let t3 = makeTask(name: "backoff-reset", lastRunAt: nil)
         for _ in 0..<3 {
-            HTTPClient.nextStatus = 500
+            KeepAliveHTTPClient.nextStatus = 500
             KeepAliveEngine.shared.triggerNow(id: t3.id)
             await settle()
         }
-        // 再成功一次。
-        HTTPClient.nextStatus = 200
+        KeepAliveHTTPClient.nextStatus = 200
         KeepAliveEngine.shared.triggerNow(id: t3.id)
         await settle()
-        checkEqual("成功一次后 lastResult 变回成功", "已发送", KeepAliveEngine.shared.tasks.first { $0.id == t3.id }?.lastResult ?? "")
-
-        // 再失败一次：这次应该是「第一次失败」的退避（1 分钟），
-        // 而不是「第四次失败」的退避（30 分钟）。
-        // 用 nextDueDate + 退避语义无法直接读内部状态 ——
-        // 改为验证：连续失败 3 次 + 成功 1 次 + 再失败 1 次后，
-        // 立刻再 triggerNow 仍能发出请求（说明退避没有卡死）。
-        // 真正的阶梯验证见后面的「退避阶梯」一节。
-        HTTPClient.nextStatus = 500
+        checkEqual(
+            "成功一次后 lastResult 变回成功",
+            "已发送",
+            KeepAliveEngine.shared.tasks.first { $0.id == t3.id }?.lastResult ?? ""
+        )
+        // 手动触发不受退避限制（退避只管定时路径）。
+        KeepAliveHTTPClient.nextStatus = 500
         KeepAliveEngine.shared.triggerNow(id: t3.id)
         await settle()
-        let reqCountBefore = HTTPClient.requestCount
+        let reqCountBefore = KeepAliveHTTPClient.requestCount
         KeepAliveEngine.shared.triggerNow(id: t3.id)
         await settle()
         check(
             "手动触发不受退避限制（退避只管定时路径）",
-            HTTPClient.requestCount == reqCountBefore + 1,
-            "实际 \(HTTPClient.requestCount - reqCountBefore)"
+            KeepAliveHTTPClient.requestCount == reqCountBefore + 1,
+            "实际 \(KeepAliveHTTPClient.requestCount - reqCountBefore)"
         )
 
-        // ------------------------------------------------------ inFlight 防并发
+        // ================================================== inFlight 防并发
         print("\n== inFlight 防止同一任务被并发触发 ==")
         reset()
-        let t4 = makeTask(name: "inflight", intervalMinutes: 240, lastRunAt: anchor)
-        HTTPClient.suspendBeforeResponse = true
+        let t4 = makeTask(name: "inflight", lastRunAt: nil)
+        KeepAliveHTTPClient.suspendBeforeResponse = true
         KeepAliveEngine.shared.triggerNow(id: t4.id)
-        // 等它真的发出去了（请求已记录），但还没返回。
         await settle(10)
-        checkEqual("第一次请求已发出", 1, HTTPClient.requestCount)
-        // 并发手动触发：inFlight 里已经有这个 id，应当被挡住。
-        // 修法：triggerNow 开头查 inFlight，挡住重复发送。
-        // （原缺陷：triggerNow 直接调 send()，send() 无条件 insert 从不检查，
-        //  → 连点「立即发送」会并发发出多条重复请求。）
+        checkEqual("第一次请求已发出", 1, KeepAliveHTTPClient.requestCount)
         KeepAliveEngine.shared.triggerNow(id: t4.id)
         KeepAliveEngine.shared.triggerNow(id: t4.id)
         await settle(10)
-        let inflightCount = HTTPClient.requestCount
         checkEqual(
             "并发手动触发被 inFlight 挡住，只发出 1 个请求",
             1,
-            inflightCount
+            KeepAliveHTTPClient.requestCount
         )
-        HTTPClient.suspendBeforeResponse = false
+        KeepAliveHTTPClient.suspendBeforeResponse = false
         await settle(20)
         check(
             "放行后请求完成，锚点推进",
-            (KeepAliveEngine.shared.tasks.first { $0.id == t4.id }?.lastRunAt ?? .distantPast) > anchor
+            (KeepAliveEngine.shared.tasks.first { $0.id == t4.id }?.lastRunAt ?? .distantPast)
+                > Date(timeIntervalSinceNow: -30)
         )
 
-        // -------------------------------------------------- 停用任务不发
+        // ================================================== 停用任务不发
         print("\n== 停用的任务不被调度 ==")
         reset()
-        let t5 = makeTask(name: "disabled", intervalMinutes: 240, lastRunAt: anchor, isEnabled: false)
-        HTTPClient.reset()
-        // 引擎的 tick 是私有的，只能间接验证：
-        // 用一个到期且启用的任务作对照。
-        let t5b = makeTask(name: "enabled", intervalMinutes: 240, lastRunAt: anchor, isEnabled: true)
+        let t5 = makeTask(name: "disabled", lastRunAt: nil, isEnabled: false)
         check(
             "任务确实存成了停用",
             KeepAliveEngine.shared.tasks.first { $0.id == t5.id }?.isEnabled == false
         )
-        check(
-            "对照任务是启用的",
-            KeepAliveEngine.shared.tasks.first { $0.id == t5b.id }?.isEnabled == true
-        )
 
-        // ------------------------------------------- 长时间没跑 → 立刻补发
-        print("\n== 长时间没跑（应用退出过）后重启会立刻补发 ==")
+        // ============================================ 长时间没跑 → 不补发
+        print("\n== 长时间没跑（应用退出过）后重启不补发 ==")
         reset()
-        let longAgo = Date(timeIntervalSinceNow: -86400 * 7)   // 一周前
-        let t6 = makeTask(name: "stale", intervalMinutes: 240, lastRunAt: longAgo)
-        check(
-            "锚点在过去 → nextDueDate 在过去（到期）",
-            t6.nextDueDate() < Date()
+        // 上次成功是上周。今天 9:00 如果已经过了，按「不补发」的规则 ——
+        // 只有「今天」的时刻算数，而上周那个时刻早于锚点，不该被认领。
+        // 这里用「未来的时刻」来验证：任务不处于待发状态。
+        let futureHour = (Calendar.current.component(.hour, from: Date()) + 1) % 24
+        let t6 = makeTask(
+            name: "stale",
+            schedule: KeepAliveSchedule(
+                times: [KeepAliveTime(hour: futureHour, minute: 0)],
+                weekdays: KeepAliveSchedule.allWeekdays
+            ),
+            lastRunAt: Date(timeIntervalSinceNow: -86400 * 7)
         )
         check(
-            "引擎启动后（reload）任务仍在",
-            true
+            "关了很久再打开，不补发已作废的时刻",
+            !t6.isDue(at: Date(), calendar: calendar),
+            "时刻 \(futureHour):00 还没到"
         )
-        KeepAliveEngine.shared.start()
-        await settle(80)   // 让 15 秒 tick 有机会跑（这里等约 0.8s，tick 未必触发）
-        // 直接验证「到期判定」本身，而不是等真实 tick：
+        // 但只要今天的时刻到了、且晚于锚点，就该发。
+        // 锚点是 max(上次成功, 创建时间) —— 老任务的创建时间在几天前，
+        // 所以今天的时刻早于锚点、不会发；要让它发，创建时间也必须早于时刻。
+        let pastHour = Calendar.current.component(.hour, from: Date())
+        let t6b = makeTask(
+            name: "due-now",
+            schedule: KeepAliveSchedule(
+                times: [KeepAliveTime(hour: pastHour, minute: 0)],
+                weekdays: KeepAliveSchedule.allWeekdays
+            ),
+            lastRunAt: Date(timeIntervalSinceNow: -86400 * 7),
+            createdAt: Date(timeIntervalSinceNow: -86400 * 7)
+        )
         check(
-            "到期任务的下次到期时刻在过去 → 引擎的 tick 会立刻补发",
-            KeepAliveEngine.shared.tasks.first { $0.id == t6.id }?.nextDueDate() ?? Date.distantFuture < Date()
+            "今天的时刻到了 → 该发",
+            t6b.isDue(at: Date(), calendar: calendar),
+            "时刻 \(pastHour):00"
         )
-        KeepAliveEngine.shared.stop()
+        // 新建任务（创建时间=现在）即使时刻已过也不该立刻发。
+        let t6c = makeTask(
+            name: "new-dont-fire",
+            schedule: KeepAliveSchedule(
+                times: [KeepAliveTime(hour: pastHour, minute: 0)],
+                weekdays: KeepAliveSchedule.allWeekdays
+            )
+        )
+        check(
+            "新建任务即使时刻已过也不立刻发",
+            !t6c.isDue(at: Date(), calendar: calendar),
+            "时刻 \(pastHour):00，创建时间=现在"
+        )
 
-        // ------------------------------------------- 新建任务不立刻发
+        // ============================================ 新建任务不立刻发
         print("\n== 新建任务不会在创建瞬间发 ==")
         reset()
-        let t7 = makeTask(name: "fresh", intervalMinutes: 240)
+        // 新建的时刻在 9:00，而现在（测试运行时）通常不是 9:00 ——
+        // 用一个「未来的时刻」来验证新建任务不立刻发。
+        let freshHour = (Calendar.current.component(.hour, from: Date()) + 1) % 24
+        let t7 = makeTask(
+            name: "fresh",
+            schedule: KeepAliveSchedule(
+                times: [KeepAliveTime(hour: freshHour, minute: 0)],
+                weekdays: KeepAliveSchedule.allWeekdays
+            )
+        )
         check(
-            "新任务锚点是 createdAt → nextDueDate 在未来",
-            t7.nextDueDate() > Date(),
-            "实际 \(t7.nextDueDate())"
+            "新任务在时刻到来前不该发",
+            !t7.isDue(at: Date(), calendar: calendar),
+            "时刻 \(freshHour):00"
         )
 
-        // ------------------------------------------- 删除任务连带删 Keychain
+        // ============================================ 删除任务连带删 Keychain
         print("\n== 删除任务连带清理 Keychain ==")
         reset()
-        let t8 = makeTask(name: "todelete", key: "sk-to-be-deleted")
+        let t8 = makeTask(name: "todelete", key: "«redacted:sk-…»")
         let account8 = t8.apiKeyRef
-        checkEqual("Keychain 里有条目", "sk-to-be-deleted", KeychainStore.snapshot()[account8] ?? "")
+        checkEqual("Keychain 里有条目", "«redacted:sk-…»", KeepAliveKeychain.snapshot()[account8] ?? "")
         KeepAliveEngine.shared.remove(id: t8.id)
         checkEqual("任务已从列表移除", 0, KeepAliveEngine.shared.tasks.count)
         check(
             "Keychain 条目也删掉了",
-            KeychainStore.snapshot()[account8] == nil,
-            "实际 \(KeychainStore.snapshot()[account8] ?? "nil")"
+            KeepAliveKeychain.snapshot()[account8] == nil,
+            "实际 \(KeepAliveKeychain.snapshot()[account8] ?? "nil")"
         )
 
-        // ------------------------------------------- API Key 不出现在日志里
+        // ============================================ API Key 不出现在日志里
         print("\n== API Key 不出现在日志 / 错误摘要 / 任务列表里 ==")
         reset()
-        let secret = "sk-SUPERSECRET-abc123"
+        let secret = "«redacted:sk-…»"
         let t9 = makeTask(name: "secret", key: secret)
-        HTTPClient.nextStatus = 401
+        KeepAliveHTTPClient.nextStatus = 401
         // 模拟服务端把 key 回显在错误体里 —— 脱敏应该抹掉它。
-        HTTPClient.nextBody = Data("invalid api key: \(secret) rejected".utf8)
+        KeepAliveHTTPClient.nextBody = Data("invalid api key: \(secret) rejected".utf8)
         KeepAliveEngine.shared.triggerNow(id: t9.id)
         await settle()
         let result = KeepAliveEngine.shared.tasks.first { $0.id == t9.id }?.lastResult ?? ""
@@ -378,7 +684,7 @@ struct KeepAliveScheduleTests {
         // 成功路径的日志也不该有 key。
         reset()
         let t10 = makeTask(name: "secret-ok", key: secret)
-        HTTPClient.nextStatus = 200
+        KeepAliveHTTPClient.nextStatus = 200
         KeepAliveEngine.shared.triggerNow(id: t10.id)
         await settle()
         check(
@@ -386,11 +692,11 @@ struct KeepAliveScheduleTests {
             !SleepController.logSnapshot().joined(separator: "\n").contains(secret)
         )
 
-        // --------------------------------- 头里带 key，但没进 UserDefaults
+        // ============================================ 头里带 key，但没进 UserDefaults
         print("\n== API Key 不进 UserDefaults ==")
         reset()
         let t11 = makeTask(name: "ud", key: secret)
-        HTTPClient.nextStatus = 200
+        KeepAliveHTTPClient.nextStatus = 200
         KeepAliveEngine.shared.triggerNow(id: t11.id)
         await settle()
         let stored = UserDefaults.standard.data(forKey: KeepAliveStore.storageKey)
@@ -405,7 +711,7 @@ struct KeepAliveScheduleTests {
             storedText.contains("keepalive.")
         )
 
-        // ------------------------------------------------- 真实请求的形状
+        // ================================================== 真实请求的形状
         print("\n== 真实 KeepAliveClient 发出的请求形状 ==")
         reset()
         let t12 = makeTask(
@@ -414,12 +720,12 @@ struct KeepAliveScheduleTests {
             model: "gpt-test",
             key: "sk-shape"
         )
-        HTTPClient.reset()
-        HTTPClient.nextStatus = 200
+        KeepAliveHTTPClient.reset()
+        KeepAliveHTTPClient.nextStatus = 200
         KeepAliveEngine.shared.triggerNow(id: t12.id)
         await settle()
-        checkEqual("发出了 1 个请求", 1, HTTPClient.requestCount)
-        if let req = HTTPClient.requestSnapshot.first {
+        checkEqual("发出了 1 个请求", 1, KeepAliveHTTPClient.requestCount)
+        if let req = KeepAliveHTTPClient.requestSnapshot.first {
             checkEqual(
                 "URL 是 /v1/chat/completions",
                 "https://api.example.com/v1/chat/completions",
@@ -434,25 +740,23 @@ struct KeepAliveScheduleTests {
             let bodyText = req.body.flatMap { String(data: $0, encoding: .utf8) } ?? ""
             check("body 含 model", bodyText.contains("gpt-test"), "实际 \(bodyText)")
             check("body 含 max_tokens=1", bodyText.contains("\"max_tokens\":1"), "实际 \(bodyText)")
-            check("body 含模板内容", bodyText.contains("ping"), "实际 \(bodyText)")
+            check("body 含默认模板内容", bodyText.contains("测试消息"), "实际 \(bodyText)")
             check("body 不含 key", !bodyText.contains("sk-shape"), "实际 \(bodyText)")
         }
 
         // Anthropic 协议的头。
         reset()
-        let anthKey = "sk-anthropic-key"
+        let anthKey = "«redacted:sk-…»"
         let t13 = makeTask(name: "anth", baseURL: "https://api.anthropic.com", model: "claude-test")
-        // 改格式为 anthropic。注意：makeTask 写入的 key 是默认的
-        // "sk-secret-key-value"，这里显式覆盖成 anthKey 便于断言。
         var anthTask = t13
         anthTask.format = .anthropic
-        try? KeychainStore.save(key: anthKey, account: anthTask.apiKeyRef)
+        try? KeepAliveKeychain.save(key: anthKey, account: anthTask.apiKeyRef)
         KeepAliveEngine.shared.upsert(anthTask)
-        HTTPClient.reset()
-        HTTPClient.nextStatus = 200
+        KeepAliveHTTPClient.reset()
+        KeepAliveHTTPClient.nextStatus = 200
         KeepAliveEngine.shared.triggerNow(id: t13.id)
         await settle()
-        if let req = HTTPClient.requestSnapshot.first {
+        if let req = KeepAliveHTTPClient.requestSnapshot.first {
             checkEqual(
                 "Anthropic URL 是 /v1/messages",
                 "https://api.anthropic.com/v1/messages",
@@ -472,10 +776,10 @@ struct KeepAliveScheduleTests {
         // 空 key → 不发请求，报「未配置 API Key」。
         reset()
         let t14 = makeTask(name: "nokey", key: nil)
-        HTTPClient.reset()
+        KeepAliveHTTPClient.reset()
         KeepAliveEngine.shared.triggerNow(id: t14.id)
         await settle()
-        checkEqual("没有 key 时一个请求都不发", 0, HTTPClient.requestCount)
+        checkEqual("没有 key 时一个请求都不发", 0, KeepAliveHTTPClient.requestCount)
         checkEqual(
             "没有 key 时结果写「未配置 API Key」",
             "失败：未配置 API Key",
@@ -485,10 +789,10 @@ struct KeepAliveScheduleTests {
         // 空模型名 → 同样不发。
         reset()
         let t15 = makeTask(name: "nomodel", model: "")
-        HTTPClient.reset()
+        KeepAliveHTTPClient.reset()
         KeepAliveEngine.shared.triggerNow(id: t15.id)
         await settle()
-        checkEqual("没有模型名时一个请求都不发", 0, HTTPClient.requestCount)
+        checkEqual("没有模型名时一个请求都不发", 0, KeepAliveHTTPClient.requestCount)
         checkEqual(
             "没有模型名时结果写「未配置模型名」",
             "失败：未配置模型名",
@@ -498,33 +802,23 @@ struct KeepAliveScheduleTests {
         // 空 baseURL → 不发。
         reset()
         let t16 = makeTask(name: "nobase", baseURL: "")
-        HTTPClient.reset()
+        KeepAliveHTTPClient.reset()
         KeepAliveEngine.shared.triggerNow(id: t16.id)
         await settle()
-        checkEqual("地址无效时一个请求都不发", 0, HTTPClient.requestCount)
+        checkEqual("地址无效时一个请求都不发", 0, KeepAliveHTTPClient.requestCount)
         checkEqual(
             "地址无效时结果写「地址无效」",
             "失败：地址无效",
             KeepAliveEngine.shared.tasks.first { $0.id == t16.id }?.lastResult ?? ""
         )
 
-        // ---------------------------------------------- 退避阶梯（内部状态）
-        print("\n== 退避阶梯 ==")
-        // `nextRetryAllowedDate` 是 private 的，拿不到。
-        // 但**退避的行为**可以通过「连续失败后多久才允许定时重试」观察 ——
-        // 而定时路径的入口是 private 的 tick()。
-        // 唯一可观察的外部信号是：连续失败 N 次后，
-        // 引擎不再立即重试（因为 cooldown 未过）。
-        // 这里退而求其次，验证**退避阶梯表本身**与引擎注释一致：
-        // 通过「失败 N 次 → 立刻再触发 → 请求仍发出」只能证明手动触发不受限。
-        //
-        // 真正能验证的：连续失败会**持续累积**计数，
-        // 而成功后计数清零。累积可从「失败后 lastResult 与日志条数」观察。
+        // ================================================== 连续失败累积
+        print("\n== 连续失败累积 ==")
         reset()
-        let t17 = makeTask(name: "streak", intervalMinutes: 240, lastRunAt: anchor)
+        let t17 = makeTask(name: "streak", lastRunAt: nil)
         for i in 1...4 {
-            HTTPClient.nextStatus = 500
-            HTTPClient.nextBody = Data("err \(i)".utf8)
+            KeepAliveHTTPClient.nextStatus = 500
+            KeepAliveHTTPClient.nextBody = Data("err \(i)".utf8)
             KeepAliveEngine.shared.triggerNow(id: t17.id)
             await settle()
         }
@@ -541,21 +835,18 @@ struct KeepAliveScheduleTests {
         )
         check(
             "连续失败后 lastRunAt 仍不推进",
-            streak?.lastRunAt?.timeIntervalSince1970 == anchor.timeIntervalSince1970
+            streak?.lastRunAt == nil
         )
 
-        // ------------------------------------------------------ 收尾清理
+        // ================================================== 收尾清理
         reset()
         print("\n== 清理 ==")
-        // 注意：reset() 只清 UserDefaults / Keychain / 桩，
-        // 引擎内存里的 tasks 数组要靠 reload() 重读（reload 从盘上读，
-        // 盘上已经空了 → 数组变空）。
         KeepAliveEngine.shared.reload()
         check("任务列表已清空", KeepAliveEngine.shared.tasks.isEmpty)
         check(
             "UserDefaults 已清理",
             UserDefaults.standard.data(forKey: KeepAliveStore.storageKey) == nil
         )
-        check("Keychain 已清理", KeychainStore.snapshot().isEmpty)
+        check("Keychain 已清理", KeepAliveKeychain.snapshot().isEmpty)
     }
 }

@@ -377,7 +377,8 @@ starting ──(initialSleepDelaySeconds 后)──▶ 关屏 ──▶ locked
 | `DeepSleep/Intents/DeepSleepAppShortcuts.swift` | App Shortcuts 短语与展示目录 | 短语是编译期常量、必须含 `\(.applicationName)`；两份短语由 check-docs 逐条比对 |
 | `DeepSleep/Core/UpdateManager.swift` | 应用自更新：检查、校验、替换 | 回滚分支不要删目标路径 |
 | `DeepSleep/Core/HelperVersionManager.swift` | 助手版本状态与触发自我更新 | 判据是内容摘要 |
-| `DeepSleep/LLMGateway/` | Token 监控 + 本地 LLM 网关（v1.5.0 新增） | 功能默认关闭；加 Provider 看 docs/maintenance.md 第 X 节 |
+| `DeepSleep/AIKeepAlive/` | AI 保活：每日定时给订阅制 AI 服务发极短请求，维持滚动使用窗口 | **不依赖 `LLMGateway/`** —— 网关随时可能被移除，保活必须自己带 HTTP / Keychain / 错误类型；`scripts/check-keepalive-isolation.py` 守着这条线 |
+| `DeepSleep/LLMGateway/` | Token 监控 + 本地 LLM 网关（v1.5.0 新增） | **当前不参与编译**（`project.yml` 的 `excludes`）—— 功能已对用户完全隐藏，源码保留待定去留 |
 | `DeepSleep/Privileged/HelperClient.swift` | socket 客户端、`probe()` | `Probe` 是结构体，加字段比改元组便宜 |
 | `DeepSleep/Privileged/HelperInstaller.swift` | 一次性安装 / 卸载 | 路径常量在 `HelperConstants`，脚本从环境变量取 |
 | `DeepSleep/Auth/BiometricAuth.swift` | Touch ID 授权封装 | — |

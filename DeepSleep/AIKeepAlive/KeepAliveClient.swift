@@ -4,8 +4,9 @@
 //
 //  AI 保活请求的实际发送者：两种协议各一套。
 //
-//  复用 LLMGateway 的 HTTPClient（URLSession 封装），不自己再造一个网络层。
-//  HTTPClient.ensureSuccess 负责把非 2xx 统一映射成 LLMGatewayError.httpStatus。
+//  用保活自己的 HTTP 客户端（`KeepAliveHTTP.swift`）与 Keychain
+//  （`KeepAliveKeychain.swift`），**不依赖 LLMGateway 的任何类型** ——
+//  网关随时可能被关停或移除，保活不该跟着一起倒。
 //
 //  安全约定：
 //  - API Key 只出现在 HTTP header 里，绝不写进日志、错误信息或返回值；
@@ -64,10 +65,10 @@ struct KeepAliveClient {
         do {
             let body = try encodeBody(task: task, content: template)
             let request = makeRequest(url: url, task: task, apiKey: trimmedKey, body: body)
-            let response = try await HTTPClient.shared.fetch(request)
-            _ = try HTTPClient.ensureSuccess(response)
+            let response = try await KeepAliveHTTPClient.shared.fetch(request)
+            _ = try KeepAliveHTTPClient.ensureSuccess(response)
             return KeepAliveSendResult(succeeded: true, summary: "已发送")
-        } catch let error as LLMGatewayError {
+        } catch let error as KeepAliveError {
             return KeepAliveSendResult(succeeded: false, summary: describe(error, apiKey: trimmedKey))
         } catch {
             return KeepAliveSendResult(
@@ -89,7 +90,7 @@ struct KeepAliveClient {
             return KeepAliveModelListResult(models: [], summary: "地址无效")
         }
 
-        var request = HTTPRequest(url: url, method: "GET", timeout: timeout)
+        var request = KeepAliveHTTPRequest(url: url, method: "GET", timeout: timeout)
         switch format {
         case .openAI:
             request.headers["Authorization"] = "Bearer \(trimmedKey)"
@@ -99,18 +100,15 @@ struct KeepAliveClient {
         }
 
         do {
-            let response = try await HTTPClient.shared.fetch(request)
-            let data = try HTTPClient.ensureSuccess(response)
+            let response = try await KeepAliveHTTPClient.shared.fetch(request)
+            let data = try KeepAliveHTTPClient.ensureSuccess(response)
             let models = try decodeModelIDs(data)
             if models.isEmpty {
                 return KeepAliveModelListResult(models: [], summary: "服务端返回了空列表")
             }
             return KeepAliveModelListResult(models: models, summary: "拉到 \(models.count) 个模型")
-        } catch let error as LLMGatewayError {
-            return KeepAliveModelListResult(
-                models: [],
-                summary: describe(error, apiKey: trimmedKey)
-            )
+        } catch let error as KeepAliveError {
+            return KeepAliveModelListResult(models: [], summary: describe(error, apiKey: trimmedKey))
         } catch {
             return KeepAliveModelListResult(
                 models: [],
@@ -149,8 +147,8 @@ struct KeepAliveClient {
         task: KeepAliveTask,
         apiKey: String,
         body: Data
-    ) -> HTTPRequest {
-        var request = HTTPRequest(url: url, method: "POST", body: body, timeout: timeout)
+    ) -> KeepAliveHTTPRequest {
+        var request = KeepAliveHTTPRequest(url: url, method: "POST", body: body, timeout: timeout)
         switch task.format {
         case .openAI:
             request.headers["Authorization"] = "Bearer \(apiKey)"
@@ -167,7 +165,7 @@ struct KeepAliveClient {
     private static func decodeModelIDs(_ data: Data) throws -> [String] {
         guard let object = try? JSONSerialization.jsonObject(with: data),
               let dict = object as? [String: Any] else {
-            throw LLMGatewayError.decodingError("响应不是 JSON 对象")
+            throw KeepAliveError.decodingError("响应不是 JSON 对象")
         }
         // 有的服务端把列表放在 data，有的直接放 models。
         let rawList = (dict["data"] as? [[String: Any]]) ?? (dict["models"] as? [[String: Any]]) ?? []
@@ -184,12 +182,10 @@ struct KeepAliveClient {
     }
 
     /// 把错误转成一句话。响应体可能很长，截断；并做 key 兜底脱敏。
-    private static func describe(_ error: LLMGatewayError, apiKey: String) -> String {
+    private static func describe(_ error: KeepAliveError, apiKey: String) -> String {
         switch error {
         case .noAPIKey:
             return "未配置 API Key"
-        case .invalidAPIKey(let platform):
-            return "[\(platform)] API Key 无效"
         case .networkError(let msg):
             return "网络错误：\(redact(msg, apiKey: apiKey))"
         case .httpStatus(let code, let body):
@@ -198,10 +194,6 @@ struct KeepAliveClient {
             return "HTTP \(code)：\(redact(snippet, apiKey: apiKey))"
         case .decodingError(let msg):
             return "解码失败：\(redact(msg, apiKey: apiKey))"
-        case .authFailed(let msg):
-            return "鉴权失败：\(redact(msg, apiKey: apiKey))"
-        case .unsupportedProvider(let msg):
-            return "不支持的 Provider：\(msg)"
         }
     }
 

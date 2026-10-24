@@ -5,10 +5,10 @@
 //  工具箱的排序状态：置顶组 + 未置顶组，以及它的持久化。
 //
 //  这个文件**不 import SwiftUI** —— 纯数据 + 纯规则。
-//  这么做是为了让 scripts/test-toolbox-layout.swift 能直接编译**真实源码**
-//  来测这套规则，而不是抄一份副本（副本会漂移）。
-//  界面上用到的东西（SF Symbol、badge、对应哪个 SidebarItem）都在
-//  ToolboxView.swift 里，用 extension 补上。
+// 这么做是为了让 scripts/test-toolbox-layout.swift 能直接编译**真实源码**
+// 来测这套规则，而不是抄一份副本（副本会漂移）。
+// 界面上用到的东西（SF Symbol、badge、对应哪个 SidebarItem）都在
+// ToolboxView.swift 里，用 extension 补上。
 //
 
 import Foundation
@@ -24,7 +24,6 @@ enum ToolboxTool: String, CaseIterable, Identifiable, Hashable {
     case hosts
     case quarantine
     case aiKeepAlive
-    case aiGateway
 
     var id: String { rawValue }
 
@@ -34,7 +33,6 @@ enum ToolboxTool: String, CaseIterable, Identifiable, Hashable {
         case .hosts:          return "Hosts 编辑"
         case .quarantine:     return "Quarantine"
         case .aiKeepAlive:    return "AI 保活"
-        case .aiGateway:      return "AI 网关"
         }
     }
 
@@ -45,7 +43,6 @@ enum ToolboxTool: String, CaseIterable, Identifiable, Hashable {
         case .hosts:          return "读写 /etc/hosts，并管理「谁能改 hosts」白名单。"
         case .quarantine:     return "扫描并清除 macOS 的 quarantine 扩展属性。"
         case .aiKeepAlive:    return "按计划给指定接口发一次请求，避免会话闲置失效。"
-        case .aiGateway:      return "在本机跑一个 OpenAI 格式的转发层，转发到各家模型。"
         }
     }
 
@@ -56,7 +53,6 @@ enum ToolboxTool: String, CaseIterable, Identifiable, Hashable {
         case .hosts:          return "doc.text.fill"
         case .quarantine:     return "lock.shield.fill"
         case .aiKeepAlive:    return "bolt.heart.fill"
-        case .aiGateway:      return "server.rack"
         }
     }
 }

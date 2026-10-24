@@ -1333,3 +1333,129 @@ v1.8.0 做对外文档时发现 `scripts/check-docs.py` 有两个盲区，都跟
 按约定，工具箱页的界面渲染、置顶交互、免责弹窗的实际观感**没有**做
 GUI 手测（不启动应用、不截图、不点按钮）。上面的结论来自编译、
 纯逻辑自测与符号存在性验证。实际观感由用户本人手测。
+
+---
+
+## 保活改成每日定时 + 网关整块隐藏（2026-10-24，v1.8.2）
+
+三件事一起做的：保活的调度模型从「固定间隔」改成「每天固定时刻 + 每周选几天」；
+默认请求模板换成人话；LLM Gateway 整块从构建里摘掉，界面完全看不见。
+
+### 保活：为什么不是「每隔 N 小时」
+
+原来的模型是「锚点 = 上次实际发送时刻，间隔 N 分钟」。用户要的是另一回事：
+
+- 订阅制的滚动窗口从「你上一次使用」起算。间隔模型下窗口边界跟着**实际
+  发送时刻**往后漂 —— 早上 9 点第一次用，边界就卡在你想工作的时段中间。
+- 「每天定时」把边界钉死在墙上：配了 09:00，窗口就从 09:00 整点起算，
+  在下一个时刻之前你一直待在同一个窗口里。
+- 「每周哪几天」用来表达「周末不用管」：那几天不发，窗口自然重置。
+
+数据结构变了：
+
+- `KeepAliveTask.intervalMinutes`（Int）→ `KeepAliveTask.schedule`
+  （`KeepAliveSchedule`：`times: [KeepAliveTime]` + `weekdays: Set<Int>`）。
+- `KeepAliveTime` 只精确到分钟，`Comparable`，`display` 给出 `HH:mm`。
+- 星期用 `Calendar` 的编号（1 = 周日 … 7 = 周六），不另造一套。
+- 默认：09:00 与 14:00，周一到周五。
+
+### 旧数据迁移
+
+v1.8.1 的任务存的是 `intervalMinutes`。不迁移的话解码直接失败、用户的任务
+会全部消失。`KeepAliveStore.load()` 走 `LegacyAwareTask`（一个 `Decodable`
+的影子结构），两个字段都 `decodeIfPresent`：
+
+- 有 `schedule` → 新格式，直接用。
+- 只有 `intervalMinutes` → 按「一天的步长」从 00:00 铺开。
+  间隔 240 分钟 → 00:00 / 04:00 / 08:00 / 12:00 / 16:00 / 20:00，每天 6 次，
+  与旧版的次数一致，只是边界从「跟着上次发送漂移」变成对齐整点。
+- 间隔小于 1 小时时按小时铺：不然 1 分钟间隔会铺出 1440 个时刻。
+
+`CodingKeys` 要**显式写出来**：一旦提供了自定义的 `init(from:)`，
+编译器就不再合成 `CodingKeys` 了（编译期报错 `cannot find 'CodingKeys' in scope`）。
+
+### 到点判定：三个坑
+
+`pendingSlot` 的语义最终定成这样 —— 只看**当天**、只看**运行日**里的时刻：
+
+1. **锚点是 `max(上次成功发送, 任务创建时间)`**。只看「上次发送」的话，
+   新建一条任务会立刻去补发「三天前的 20:00」—— 那不是用户要的。
+   任务存在之前的时刻一律不算欠账。
+2. **不补发**（用户明确要求）。应用关了好几天再打开，那期间的时刻已经作废，
+   等下一个整点再说。回看 8 天的实现会把「非运行日的时刻」和「几天前就作废的
+   时刻」错当成待发，所以改成只看当天。
+3. **非运行日一律不发**。任务只配周一 09:00，周日打开应用不该发。
+
+`nextSlot`（找下一个**未来**时刻）仍然回看 8 天 —— 那是必要的：
+只配周一时，今天的时刻过了，下一次要等到下周同一天。
+
+### 退避的上限跟着改了
+
+原来「冷却上限 = 用户配的间隔」。现在没有「间隔」了，上限改成
+「到下一个计划时刻的距离」：只配了早上 9 点的话，下一个时刻是明天 9 点，
+距离约 24 小时 → 退避阶梯（1/5/15/30 分钟）完全生效。
+
+### 默认请求模板
+
+原来只有一个 `ping`。模型不知道要做什么 —— 有的回一段解释，有的反问，
+消耗和延迟都不可控。改成「测试消息，直接回复'ping'即可」。
+
+### 网关整块隐藏
+
+用户要求「完全隐藏，用户完全不知道有的状态」。做法：
+
+- `ToolboxTool` 删掉 `aiGateway` case；`SidebarItem` 删掉 `tokenMonitor` /
+  `gateway` / `modelSwitcher` / `aiGateway`；侧边栏的「LLM Gateway」段整段移除。
+- `project.yml` 里 `DeepSleep/LLMGateway` 加进 `excludes` —— **不参与编译**。
+  源码仍在仓库里（36 个 swift 文件），将来决定了去留再处理。
+- `ToolboxView` 里免责弹窗那一整套（`GatewayDisclaimerView`、
+  `pendingSelection` 延迟跳转、`isInactive` 降级）跟着删掉 —— 没有入口了，
+  那条链路走不到。
+
+验证：`nm` 查产物 dylib，`Gateway` 相关符号 **0 个**，`KeepAlive` 1990 个。
+界面文案（本地 AI 网关 / LLM 网关 / Token 用量 / 模型 Provider）也查不到。
+
+### 保活不再依赖网关
+
+用户明确要求：网关后续可能随时关停或彻底移除，保活不能被它绑架。
+
+原先保活借了网关三样东西，现在全部自带：
+
+| 原来借的 | 现在 |
+| --- | --- |
+| `LLMGateway/Proxy/HTTPClient.swift` | `KeepAliveHTTP.swift`（`KeepAliveHTTPClient`） |
+| `LLMGateway/KeychainStore.swift` | `KeepAliveKeychain.swift`（service `com.skyc8266.deepsleep.keepalive`） |
+| `LLMGateway/Database/QuotaModels.swift` 的 `LLMGatewayError` | `KeepAliveError.swift`（`KeepAliveError`） |
+
+Keychain service 也分开了 —— 之前保活复用网关的 service
+（`com.skyc8266.deepsleep.llmgateway`），网关被移除时保活的凭据会跟着失效。
+分开之后互不影响。
+
+**新增 `scripts/check-keepalive-isolation.py`** 作为这条约束的守卫：
+
+- 扫 `DeepSleep/AIKeepAlive/` 下所有 swift 文件，出现网关类型名就失败
+  （`KeepAliveHTTPClient` 里的 `HTTPClient` 用负向 lookbehind 排除）；
+- 检查保活自带的那几个文件都在；
+- 检查 `project.yml` 里 `LLMGateway` 在 excludes 中；
+- 检查网关源码仍在仓库里（现在是「隐藏」不是「删除」）。
+
+负向自测：把 `KeepAliveError.swift` 里的 `enum KeepAliveError` 改成
+`enum LLMGatewayError`，检查器退出码 1 并指到 `KeepAliveError.swift:17`；
+还原后通过。
+
+### 自测
+
+- `scripts/test-keepalive-schedule.swift`：85 项断言，全过。
+  重写过 —— 旧的那套全是间隔语义（`clampedInterval`、`nextDueDate`），
+  现在测时刻归一化、星期归一化、星期文案、到点判定、星期过滤、
+  「不补发」语义、旧格式迁移。
+- `scripts/test-keepalive-url.swift`：URL 拼接照旧，新增归一化与解码的断言。
+- `scripts/test-keepalive-backoff-timing.swift`：18 项断言，全过。
+  场景按「时刻」重写 —— 原来靠「间隔配 1 分钟把冷却上限压平」来测退避，
+  那个手法在新模型下不成立了。
+- `scripts/test-toolbox-layout.swift`：去掉了网关的断言，工具数从 5 变 4。
+  新增一条：旧存储里的 `aiGateway` 会被归一化丢掉。
+- `scripts/test-toolbox-gate.swift`：原本测「网关免责」链路，网关不可见后
+  那个链路走不到了，改成测「网关确实不可见」+ 保活的持久化性质。
+- `xcodebuild -configuration Debug`：BUILD SUCCEEDED，零 error。
+- `python3 scripts/check-keepalive-isolation.py`：全过。

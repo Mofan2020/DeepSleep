@@ -24,12 +24,6 @@ enum SidebarItem: String, CaseIterable, Identifiable {
     case systemMonitor
     /// 卸载 Deep Sleep：二级确认 + 全流程清理。
     case uninstall
-    /// LLM Gateway 配额总览（feature gated）。
-    case tokenMonitor
-    /// LLM Gateway 模型与 Provider 管理（feature gated）。
-    case gateway
-    /// LLM Gateway 默认模型切换（feature gated）。
-    case modelSwitcher
     /// 服务器模式：永不睡眠 + 定时关屏锁屏。
     case serverMode
     /// 进程优先级（nice）：查看 / 调整任何非系统进程的 nice。
@@ -38,15 +32,13 @@ enum SidebarItem: String, CaseIterable, Identifiable {
     case hosts
     /// Quarantine 属性管理：扫描并清除 macOS 的 quarantine 扩展属性。
     case quarantine
-    /// 工具箱：nice / hosts / quarantine / AI 保活 / AI 网关 的卡片网格。
+    /// 工具箱：nice / hosts / quarantine / AI 保活 的卡片网格。
     ///
     /// 这几个 case 保留在枚举里，但**不从侧边栏渲染** —— 侧边栏「工具」段
     /// 只渲染工具箱一项。工具箱页点卡片时切 selection 到对应 case。
     case toolbox
     /// AI 保活：按计划给指定接口发一次请求。
     case aiKeepAlive
-    /// AI 网关（试验性）：本机的 OpenAI 格式转发层。
-    case aiGateway
 
     var id: String { rawValue }
 
@@ -63,16 +55,12 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .update:         return "更新"
         case .systemMonitor:  return "系统监控"
         case .uninstall:      return "卸载 Deep Sleep"
-        case .tokenMonitor:   return "Token 用量"
-        case .gateway:        return "模型 Provider"
-        case .modelSwitcher:  return "模型切换"
         case .serverMode:     return "服务器模式"
         case .nice:           return "进程优先级"
         case .hosts:          return "Hosts 编辑"
         case .quarantine:     return "Quarantine"
         case .toolbox:        return "工具箱"
         case .aiKeepAlive:    return "AI 保活"
-        case .aiGateway:      return "AI 网关"
         }
     }
 
@@ -89,16 +77,12 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .update:         return "arrow.down.circle"
         case .systemMonitor:  return "waveform.path.ecg"
         case .uninstall:      return "trash"
-        case .tokenMonitor:   return "gauge.with.dots.needle.50percent"
-        case .gateway:        return "server.rack"
-        case .modelSwitcher:  return "list.bullet.indent"
         case .serverMode:     return "powersleep"
         case .nice:           return "gauge.with.dots.needle.bottom.50percent"
         case .hosts:          return "doc.text.fill"
         case .quarantine:     return "lock.shield"
         case .toolbox:        return "wrench.and.screwdriver.fill"
         case .aiKeepAlive:    return "bolt.heart.fill"
-        case .aiGateway:      return "flask.fill"
         }
     }
 }
@@ -149,18 +133,6 @@ struct ContentView: View {
                     Label(SidebarItem.toolbox.title, systemImage: SidebarItem.toolbox.symbol)
                         .tag(SidebarItem.toolbox)
                 }
-                // LLM Gateway 段不再用 `LLMGatewayFeature.tokenMonitor` 做门禁。
-                // 那个开关默认关且没有 UI 入口 —— 等于把这三项永久锁死。
-                // 网关的入口是「工具箱卡片 + 已同意免责申明」；
-                // 这一段是管理层（详细配置），不重复免责流程。
-                Section("LLM Gateway") {
-                    Label(SidebarItem.tokenMonitor.title, systemImage: SidebarItem.tokenMonitor.symbol)
-                        .tag(SidebarItem.tokenMonitor)
-                    Label(SidebarItem.gateway.title, systemImage: SidebarItem.gateway.symbol)
-                        .tag(SidebarItem.gateway)
-                    Label(SidebarItem.modelSwitcher.title, systemImage: SidebarItem.modelSwitcher.symbol)
-                        .tag(SidebarItem.modelSwitcher)
-                }
             }
             .listStyle(.sidebar)
             .navigationSplitViewColumnWidth(min: 190, ideal: 205, max: 250)
@@ -200,7 +172,7 @@ struct ContentView: View {
     /// 当前页是不是「从工具箱进来的工具页」。
     private var showsBackToToolbox: Bool {
         switch selection {
-        case .nice, .hosts, .quarantine, .aiKeepAlive, .aiGateway:
+        case .nice, .hosts, .quarantine, .aiKeepAlive:
             return true
         default:
             return false
@@ -221,9 +193,6 @@ struct ContentView: View {
         case .update:         UpdateView()
         case .systemMonitor:  MonitoringView()
         case .uninstall:      UninstallView()
-        case .tokenMonitor:   TokenDashboardView()
-        case .gateway:        ProviderListView()
-        case .modelSwitcher:  ModelSwitcherView()
         case .serverMode:     ServerModeView()
         case .nice:           NiceView()
         case .hosts:          HostsView()
@@ -233,7 +202,6 @@ struct ContentView: View {
                 selection = tool.sidebarItem
             }
         case .aiKeepAlive:    KeepAliveView()
-        case .aiGateway:      GatewaySettingsView()
         }
     }
 }

@@ -4,21 +4,26 @@
 //
 //  AI 保活的调度器：每 15 秒评估一次，到点就发一条超短请求。
 //
+//  调度模型：**每天固定时刻 + 每周选几天**。
+//
+//  为什么不是「每隔 N 分钟」：
+//  - 订阅制的滚动窗口从「你上一次使用」起算。「每隔 N 分钟」意味着窗口
+//    边界跟着上一次实际发送的时刻往后漂 —— 你早上 9 点第一次用，边界就是
+//    9 点加 N 小时，正好卡在你想工作的时段中间。
+//  - 「每天定时」把边界钉死在墙上：配了 09:00，窗口就从 09:00 整点起算，
+//    你在下一个时刻之前一直待在同一个窗口里，用不完也不会白白重置。
+//  - 「每周哪几天」用来表达「周末不用管」：那几天不发，窗口自然重置。
+//
 //  做法照抄 ScheduledCommand（`Core/ScheduledCommand.swift`）：
 //  - `@MainActor` 单例；
 //  - `Timer(timeInterval:repeats:)` 挂在 `RunLoop.main` 的 `.common` 模式；
 //  - tick 里评估每个启用任务是否到点。
 //
-//  与定时命令的区别：
-//  - 定时命令用 cron（要匹配「分 时 日 月 周」）；保活只要「每隔 N 分钟」，
-//    cron 在这里是过度设计，而且用 cron 表达不了「每 4 小时一次」的干净语义。
-//  - 锚点是「上次发送时间」，没有就用「创建时间」—— 新建的任务不会立刻发一条。
-//
 //  安全约定：日志里只出现任务名、端点、结果摘要，**绝不出现 API Key**。
 //
-//  退出行为：Deep Sleep 退出后保活就停了（与定时命令、监控一致）。
-//  「保留退出态」分支下同样会 stop —— 进程要退了，留个 Timer 没意义，
-//  而且留着会让用户以为退出后还在保活。
+// 退出行为：Deep Sleep 退出后保活就停了（与定时命令、监控一致）。
+// 「保留退出态」分支下同样会 stop —— 进程要退了，留个 Timer 没意义，
+// 而且留着会让用户以为退出后还在保活。
 //
 
 import Foundation
@@ -31,13 +36,13 @@ final class KeepAliveEngine: ObservableObject {
 
     private init() {}
 
-    /// 评估周期（秒）。15 秒是为了让「1 分钟间隔」这种短间隔不至于误差过半。
+    /// 评估周期（秒）。15 秒是为了让「分钟级时刻」的判定不至于误差过半。
     private static let tickInterval: TimeInterval = 15
 
     /// 全部任务。UI 直接观察这个数组。
     @Published private(set) var tasks: [KeepAliveTask] = []
 
-    /// 是否在跑。
+    /// 是否在跑。工具箱页的状态徽章只依赖这一个入口。
     @Published private(set) var isRunning = false
 
     /// 引擎状态。工具箱页的状态徽章只依赖这一个入口。
@@ -73,7 +78,7 @@ final class KeepAliveEngine: ObservableObject {
     /// 失败后不推进 `lastRunAt`（见 `finish`），意味着下一个 tick 就会重试。
     /// 服务端临时不可用时这样能自愈，但 API Key 填错时会每 15 秒刷一次屏。
     /// 退避把重试间隔拉开：1 次失败等 1 分钟，2 次 5 分钟，3 次 15 分钟，
-    /// 4 次及以上 30 分钟（不超过用户自己配的间隔）。
+    /// 4 次及以上 30 分钟（不超过到下一个计划时刻的间隔）。
     private var consecutiveFailures: [UUID: Int] = [:]
 
     /// 最近一次失败的时刻（按任务 id 记）。
@@ -128,7 +133,7 @@ final class KeepAliveEngine: ObservableObject {
         // Keychain 里那条也删掉，否则会留下孤儿凭据。
         let account = (oldAccount?.isEmpty == false ? oldAccount : nil)
             ?? KeepAliveStore.keychainAccount(for: id)
-        try? KeychainStore.delete(account: account)
+        try? KeepAliveKeychain.delete(account: account)
         // 退避状态跟着任务一起清掉，别留孤儿条目。
         consecutiveFailures[id] = nil
         lastFailureAt[id] = nil
@@ -153,7 +158,7 @@ final class KeepAliveEngine: ObservableObject {
 
     // MARK: - 执行
 
-    /// 立即发一次（不等间隔）。UI 上的「立即发送」按钮用。
+    /// 立即发一次（不等时刻）。UI 上的「立即发送」按钮用。
     ///
     /// 也要过 `inFlight` 这道门：手动连点两次「立即发送」，或者手动发送的
     /// 同时定时 tick 命中，同一个任务会被并发发两次 —— 白白多消耗一次额度，
@@ -171,25 +176,29 @@ final class KeepAliveEngine: ObservableObject {
         let now = Date()
         for task in tasks where task.isEnabled {
             guard !inFlight.contains(task.id) else { continue }
-            guard now >= task.nextDueDate() else { continue }
+            guard task.isDue(at: now) else { continue }
             // 退避：连续失败的任务要等够冷却时间才重试。
-            guard now >= nextRetryAllowedDate(for: task) else { continue }
+            if let retryAt = nextRetryAllowedDate(for: task), now < retryAt { continue }
             send(task, reason: "定时")
         }
     }
 
     /// 退避冷却期结束的时刻。没有失败记录时返回过去（= 允许立刻重试）。
-    private func nextRetryAllowedDate(for task: KeepAliveTask) -> Date {
+    private func nextRetryAllowedDate(for task: KeepAliveTask) -> Date? {
         guard let failures = consecutiveFailures[task.id], failures > 0,
               let failedAt = lastFailureAt[task.id] else {
-            return Date(timeIntervalSince1970: 0)
+            return nil
         }
         let index = min(failures, Self.backoffSeconds.count) - 1
         let cooldown = Self.backoffSeconds[index]
-        // 冷却上限不超过用户自己配的间隔 —— 用户配 5 分钟保活，
-        // 不应该因为退避而 30 分钟才重试一次。
-        let cap = TimeInterval(KeepAliveTask.clampedInterval(task.intervalMinutes) * 60)
-        return failedAt.addingTimeInterval(min(cooldown, cap))
+        // 冷却上限不超过到下一个计划时刻的距离 —— 用户一天只配了早上 9 点，
+        // 不应该因为退避而在第二天早上才重试。
+        if let next = task.schedule.nextSlot(after: failedAt) {
+            let cap = next.timeIntervalSince(failedAt)
+            return failedAt.addingTimeInterval(min(cooldown, max(cap, 60)))
+        }
+        // 没有下一个时刻（今天的都过了且没有更多安排）→ 用阶梯本身。
+        return failedAt.addingTimeInterval(cooldown)
     }
 
     /// 发一条保活请求。失败只写日志，不抛错。
@@ -240,15 +249,11 @@ final class KeepAliveEngine: ObservableObject {
     ///
     /// 锚点的推进规则：**只有成功才推进 `lastRunAt`**。
     ///
-    /// 失败时如果也把 `lastRunAt` 推到当前时间，下次到期时间就是
-    /// 「失败时刻 + 间隔」—— 用户配 240 分钟、失败一次就变成 480 分钟才重试，
-    /// 而失败最该做的事恰恰是尽快重试。失败时保留原锚点，
-    /// 下一个 tick（15 秒后）就会再试一次。
+    /// 失败时如果也把 `lastRunAt` 推到当前时间，这次的时刻就算「已消费」了，
+    /// 下一次 tick 会判定「没有到点的时刻」—— 于是这一天都不会再重试。
+    /// 失败最该做的事恰恰是尽快重试，所以失败时保留原锚点。
     ///
-    /// 代价是：服务端持续失败时，任务会每 15 秒重试一次。
-    /// 这是刻意选的 —— 保活的失败多半是网络抖动或服务端临时不可用，
-    /// 快速重试能自愈；而持续失败会在日志里留下记录，用户看得见。
-    /// 真的需要限流的话，用户可以关掉这个任务的启用开关。
+    /// 退避把重试密度压下来，避免服务端持续失败时刷屏。
     private func finish(taskID: UUID, success: Bool, summary: String) {
         guard let idx = tasks.firstIndex(where: { $0.id == taskID }) else { return }
         if success {

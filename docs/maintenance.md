@@ -100,15 +100,23 @@ python3 scripts/check-docs.py
 4. **用户可见的 UI 里不要写开发笔记** —— 不写 `(A5.2)`、不写「按您说的…」、
    不写「TODO」。要解释设计写进这份文档或代码注释
 
-### 3.4 加一个 LLM Provider（v1.5.0+）
+### 3.4 加一个 LLM Provider（v1.5.0+，网关恢复编译后才需要）
 
-LLMGateway 子模块当前已实现 14 家 Provider（Anthropic / OpenAI / MiniMax /
+**现状**：`DeepSleep/LLMGateway/` 整块在 `project.yml` 的 `excludes` 里，
+不参与编译，功能对用户完全隐藏。源码仍在仓库里，等决定去留。
+
+**保活不依赖网关** —— `DeepSleep/AIKeepAlive/` 自己带 HTTP 客户端、
+Keychain 存取与错误类型，不 import 也不引用网关的任何类型。
+`scripts/check-keepalive-isolation.py` 会扫 `AIKeepAlive/` 下的源码，
+一旦出现网关类型名就失败并指出位置。改保活代码时别把网关的类型引回来。
+
+网关若恢复编译，它已有的 14 家 Provider（Anthropic / OpenAI / MiniMax /
 DeepSeek / 智谱 / DashScope / Moonshot / Doubao / Qianfan / Gemini / Grok /
-Mistral / Cohere / Ollama）。再加新平台：
+Mistral / Cohere / Ollama）可再加新平台：
 
 1. `DeepSleep/LLMGateway/Providers/<Name>Provider.swift` —— 新文件，
    `class <Name>Provider: NSObject, LLMProvider, LLMProviderInit`
-2. `ProviderRegistry.makeProvider(for:apiKey:)` 加 `case` 把平台分发到新类
+2. `ProviderRegistry.makeProvider(for:apiKey:*** 加 `case` 把平台分发到新类
 3. `QuotaModels.LLMPlatform` 加 `case .newProvider = "new-provider"`
    + `title` + `needsBillingMode` / `needsAPIKey` 等映射
 4. 如有 quota 接口与现有 schema 不同，在 Provider 内私有定义 `Codable`

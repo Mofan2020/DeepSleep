@@ -46,6 +46,12 @@ targets:
         excludes:
           - "Resources/install-helper.sh"
           - "Resources/uninstall-helper.sh"
+          # LLM Gateway 整块不参与编译。
+          #
+          # 它会在本机开端口、转发请求到各家模型 —— 暴露面大，值不值得留
+          # 还没定。当前状态是「隐藏」：界面没有任何入口，产物里也没有这
+          # 段代码，用户完全看不到它。源码仍在仓库里，随时可以拿回来。
+          - "LLMGateway"
       - path: DeepSleep/Resources/install-helper.sh
         buildPhase: resources
       - path: DeepSleep/Resources/uninstall-helper.sh
@@ -55,8 +61,8 @@ targets:
         PRODUCT_NAME: Deep Sleep
         PRODUCT_BUNDLE_IDENTIFIER: com.skyc8266.deepsleep
         INFOPLIST_FILE: DeepSleep/Resources/Info.plist
-        MARKETING_VERSION: "1.8.1"
-        CURRENT_PROJECT_VERSION: "16"
+        MARKETING_VERSION: "1.8.2"
+        CURRENT_PROJECT_VERSION: "17"
         COMBINE_HIDPI_IMAGES: "YES"
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon

@@ -6,7 +6,8 @@
 //  - URL 拼接（baseurl 带不带尾斜杠、带不带 /v1、空地址）
 //  - 默认请求模板非空且可还原
 //  - 任务模型的 Codable 往返
-//  - 间隔分钟数的边界钳制
+//  - 时刻与星期的归一化
+//  - 自定义解码必须过归一化（手改过的存储不能原样进运行时）
 //
 //  运行：
 //  swiftc DeepSleep/AIKeepAlive/KeepAliveModels.swift scripts/test-keepalive-url.swift \
@@ -128,14 +129,20 @@ struct KeepAliveTests {
         // ------------------------------------------------------- 默认模板
         print("\n== 默认请求模板 ==")
         check("模板非空", !KeepAliveDefaults.defaultRequestTemplate.isEmpty)
-        checkEqual("模板内容是 ping", "ping", KeepAliveDefaults.defaultRequestTemplate)
+        check(
+            "模板说清了要什么（不是孤零零一个 ping）",
+            KeepAliveDefaults.defaultRequestTemplate.contains("回复")
+                && KeepAliveDefaults.defaultRequestTemplate.contains("ping"),
+            "实际 \(KeepAliveDefaults.defaultRequestTemplate)"
+        )
         check("新任务默认用默认模板",
               KeepAliveTask().requestTemplate == KeepAliveDefaults.defaultRequestTemplate)
-        check("新任务默认间隔 240 分钟",
-              KeepAliveTask().intervalMinutes == 240)
-        check("默认间隔在合法区间内",
-              KeepAliveDefaults.defaultIntervalMinutes >= KeepAliveDefaults.minIntervalMinutes
-                && KeepAliveDefaults.defaultIntervalMinutes <= KeepAliveDefaults.maxIntervalMinutes)
+        check("新任务默认是 09:00 与 14:00",
+              KeepAliveTask().schedule.times.map(\.display) == ["09:00", "14:00"])
+        check("新任务默认工作日运行",
+              KeepAliveTask().schedule.weekdays == [2, 3, 4, 5, 6])
+        check("每天时刻上限是 24",
+              KeepAliveDefaults.maxTimesPerDay == 24)
 
         // --------------------------------------------------- Codable 往返
         print("\n== 任务模型 Codable 往返 ==")
@@ -146,8 +153,11 @@ struct KeepAliveTests {
             format: .anthropic,
             model: "claude-sonnet-4-5",
             apiKeyRef: "keepalive.1234",
-            intervalMinutes: 240,
-            requestTemplate: "ping",
+            schedule: KeepAliveSchedule(
+                times: [KeepAliveTime(hour: 8, minute: 30), KeepAliveTime(hour: 20, minute: 0)],
+                weekdays: [2, 3, 4, 5, 6]
+            ),
+            requestTemplate: KeepAliveDefaults.defaultRequestTemplate,
             isEnabled: true,
             lastRunAt: Date(timeIntervalSince1970: 1_700_000_000),
             lastResult: "已发送",
@@ -159,7 +169,8 @@ struct KeepAliveTests {
             check("往返后相等", decoded == original)
             checkEqual("往返后 id 不变", original.id, decoded.id)
             checkEqual("往返后格式不变", KeepAliveFormat.anthropic, decoded.format)
-            checkEqual("往返后间隔不变", 240, decoded.intervalMinutes)
+            checkEqual("往返后时刻不变", ["08:30", "20:00"], decoded.schedule.times.map(\.display))
+            checkEqual("往返后星期不变", [2, 3, 4, 5, 6], decoded.schedule.weekdays.sorted())
             check("往返后 API Key 引用仍是引用名",
                   decoded.apiKeyRef == "keepalive.1234")
             check("往返后没有出现明文 key",
@@ -175,33 +186,75 @@ struct KeepAliveTests {
             check("Codable 往返不抛错", false, error.localizedDescription)
         }
 
-        // ------------------------------------------------------- 间隔钳制
-        print("\n== 间隔分钟数边界钳制 ==")
-        checkEqual("0 → 1", 1, KeepAliveTask.clampedInterval(0))
-        checkEqual("-5 → 1", 1, KeepAliveTask.clampedInterval(-5))
-        checkEqual("1 → 1", 1, KeepAliveTask.clampedInterval(1))
-        checkEqual("240 → 240", 240, KeepAliveTask.clampedInterval(240))
-        checkEqual("1440 → 1440", 1440, KeepAliveTask.clampedInterval(1440))
-        checkEqual("1441 → 1440", 1440, KeepAliveTask.clampedInterval(1441))
-        checkEqual("99999 → 1440", 1440, KeepAliveTask.clampedInterval(99999))
+        // --------------------------------------- 解码必须过归一化
+        print("\n== 解码必须过归一化（手改过的存储） ==")
+        // 重复时刻 + 非法星期 + 非法时分。
+        let dirtySchedule = """
+        {"times":[{"hour":25,"minute":70},{"hour":9,"minute":0},{"hour":9,"minute":0}],
+         "weekdays":[2,99,0]}
+        """
+        let dirty = try! JSONDecoder().decode(
+            KeepAliveSchedule.self,
+            from: Data(dirtySchedule.utf8)
+        )
+        checkEqual("重复时刻被去掉", 2, dirty.times.count)
+        checkEqual(
+            "时刻按升序排",
+            ["09:00", "23:59"],
+            dirty.times.map(\.display)
+        )
+        checkEqual("非法星期被剔掉", [2], dirty.weekdays.sorted())
 
+        // 非法时分被钳制。
+        let clampedTime = try! JSONDecoder().decode(
+            KeepAliveTime.self,
+            from: Data(#"{"hour":30,"minute":90}"#.utf8)
+        )
+        checkEqual("小时钳到 23", 23, clampedTime.hour)
+        checkEqual("分钟钳到 59", 59, clampedTime.minute)
+
+        // 空数组也要能解出来。
+        let emptySchedule = try! JSONDecoder().decode(
+            KeepAliveSchedule.self,
+            from: Data(#"{"times":[],"weekdays":[]}"#.utf8)
+        )
+        checkEqual("空时刻", 0, emptySchedule.times.count)
+        checkEqual("空星期", 0, emptySchedule.weekdays.count)
+
+        // 缺字段也要能解出来（老存储）。
+        let missingFields = try! JSONDecoder().decode(
+            KeepAliveSchedule.self,
+            from: Data("{}".utf8)
+        )
+        checkEqual("缺字段 → 空时刻", 0, missingFields.times.count)
+        checkEqual("缺字段 → 空星期", 0, missingFields.weekdays.count)
+
+        // ------------------------------------------------------- 归一化副本
+        print("\n== 归一化副本 ==")
         var over = KeepAliveTask()
-        over.intervalMinutes = 5000
-        checkEqual("clamped 副本把 5000 压到 1440", 1440, over.clamped.intervalMinutes)
-        checkEqual("clamped 副本保留其它字段", over.id, over.clamped.id)
+        over.schedule = KeepAliveSchedule(
+            times: (0..<50).map { KeepAliveTime(minutesFromMidnight: $0 * 20) },
+            weekdays: [1, 2, 3, 4, 5, 6, 7, 99]
+        )
+        checkEqual(
+            "clamped 副本把时刻数量压到上限",
+            KeepAliveDefaults.maxTimesPerDay,
+            over.clamped.schedule.times.count
+        )
+        checkEqual(
+            "clamped 副本剔掉非法星期",
+            [1, 2, 3, 4, 5, 6, 7],
+            over.clamped.schedule.weekdays.sorted()
+        )
+        checkEqual("clamped 副本保留 id", over.id, over.clamped.id)
 
-        // ------------------------------------------------------- 下次到期
-        print("\n== 下次到期时间 ==")
-        var task = KeepAliveTask()
-        task.intervalMinutes = 60
-        task.createdAt = Date(timeIntervalSince1970: 1_000_000)
-        task.lastRunAt = nil
-        let firstDue = task.nextDueDate()
-        checkEqual("没有上次发送时锚点是创建时间", 1_000_000 + 3600, firstDue.timeIntervalSince1970)
-
-        task.lastRunAt = Date(timeIntervalSince1970: 1_000_500)
-        let secondDue = task.nextDueDate()
-        checkEqual("有上次发送时锚点是上次发送", 1_000_500 + 3600, secondDue.timeIntervalSince1970)
+        var blank = KeepAliveTask()
+        blank.requestTemplate = "   "
+        checkEqual(
+            "clamped 副本把空白模板换成默认模板",
+            KeepAliveDefaults.defaultRequestTemplate,
+            blank.clamped.requestTemplate
+        )
 
         // -------------------------------------------------------- 汇总
         print(failures == 0 ? "\n测试结论: 全部通过" : "\n测试结论: \(failures) 项失败")

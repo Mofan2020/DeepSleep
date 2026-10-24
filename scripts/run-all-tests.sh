@@ -85,11 +85,25 @@ if [ -f scripts/test-check-docs.py ]; then
         FAIL=$((FAIL + 1))
     fi
 fi
+
+# 保活独立性检查：保活不许依赖网关（网关随时可能被移除）。
+# 这是 Python 脚本不是 Swift，单独跑。
+if [ -f scripts/check-keepalive-isolation.py ]; then
+    if python3 scripts/check-keepalive-isolation.py > /tmp/t_ka_isolation.log 2>&1; then
+        printf '  ✓ %-42s 通过\n' "保活独立性检查"
+        PASS=$((PASS + 1))
+    else
+        printf '  ✗ %-42s 有失败项\n' "保活独立性检查"
+        grep -E '^\s+[0-9]+\.' /tmp/t_ka_isolation.log | head -5 | sed 's/^/      /'
+        FAILED_LIST+=("保活独立性检查")
+        FAIL=$((FAIL + 1))
+    fi
+fi
 build_and_run "keepalive-url"        /tmp/t_kaurl    DeepSleep/AIKeepAlive/KeepAliveModels.swift scripts/test-keepalive-url.swift
-build_and_run "toolbox-layout"       /tmp/t_tblay    DeepSleep/Views/ToolboxLayout.swift DeepSleep/LLMGateway/Database/QuotaModels.swift DeepSleep/LLMGateway/Database/GatewayConfigStore.swift scripts/test-toolbox-layout.swift
-build_and_run "toolbox-gate"         /tmp/t_tbgate   DeepSleep/Views/ToolboxLayout.swift DeepSleep/AIKeepAlive/KeepAliveModels.swift DeepSleep/AIKeepAlive/KeepAliveStore.swift DeepSleep/LLMGateway/KeychainStore.swift DeepSleep/LLMGateway/Database/QuotaModels.swift DeepSleep/LLMGateway/Database/GatewayConfigStore.swift DeepSleep/LLMGateway/GatewayDisclaimer.swift scripts/test-toolbox-gate.swift
-build_and_run "keepalive-schedule"   /tmp/t_kasch    scripts/test-support/KeepAliveTestStubs.swift DeepSleep/AIKeepAlive/KeepAliveModels.swift DeepSleep/AIKeepAlive/KeepAliveStore.swift DeepSleep/AIKeepAlive/KeepAliveClient.swift DeepSleep/AIKeepAlive/KeepAliveEngine.swift DeepSleep/LLMGateway/Database/QuotaModels.swift scripts/test-keepalive-schedule.swift
-build_and_run "keepalive-backoff"    /tmp/t_kabk     scripts/test-support/KeepAliveTestStubs.swift DeepSleep/AIKeepAlive/KeepAliveModels.swift DeepSleep/AIKeepAlive/KeepAliveStore.swift DeepSleep/AIKeepAlive/KeepAliveClient.swift DeepSleep/AIKeepAlive/KeepAliveEngine.swift DeepSleep/LLMGateway/Database/QuotaModels.swift scripts/test-keepalive-backoff-timing.swift
+build_and_run "toolbox-layout"       /tmp/t_tblay    DeepSleep/Views/ToolboxLayout.swift scripts/test-toolbox-layout.swift
+build_and_run "toolbox-gate"         /tmp/t_tbgate   DeepSleep/Views/ToolboxLayout.swift DeepSleep/AIKeepAlive/KeepAliveModels.swift DeepSleep/AIKeepAlive/KeepAliveError.swift DeepSleep/AIKeepAlive/KeepAliveStore.swift DeepSleep/AIKeepAlive/KeepAliveKeychain.swift scripts/test-toolbox-gate.swift
+build_and_run "keepalive-schedule"   /tmp/t_kasch    scripts/test-support/KeepAliveTestStubs.swift DeepSleep/AIKeepAlive/KeepAliveModels.swift DeepSleep/AIKeepAlive/KeepAliveError.swift DeepSleep/AIKeepAlive/KeepAliveStore.swift DeepSleep/AIKeepAlive/KeepAliveClient.swift DeepSleep/AIKeepAlive/KeepAliveEngine.swift scripts/test-keepalive-schedule.swift
+build_and_run "keepalive-backoff"    /tmp/t_kabk     scripts/test-support/KeepAliveTestStubs.swift DeepSleep/AIKeepAlive/KeepAliveModels.swift DeepSleep/AIKeepAlive/KeepAliveError.swift DeepSleep/AIKeepAlive/KeepAliveStore.swift DeepSleep/AIKeepAlive/KeepAliveClient.swift DeepSleep/AIKeepAlive/KeepAliveEngine.swift scripts/test-keepalive-backoff-timing.swift
 
 echo
 echo "=== 结果 ==="

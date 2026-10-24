@@ -5,7 +5,7 @@
 //  AI 保活功能页：任务列表 + 新建 / 编辑表单。
 //
 //  这一页是独立的功能页，不挂侧边栏 —— 挂载到工具箱是后续阶段的事。
-//  入口：把 `KeepAliveView()` 放进任何 NavigationStack / sheet 里即可。
+// 入口：把 `KeepAliveView()` 放进任何 NavigationStack / sheet 里即可。
 //
 //  安全：API Key 用 SecureField 输入，落 Keychain。列表里只显示「已配置 / 未配置」。
 //
@@ -23,7 +23,7 @@ struct KeepAliveView: View {
         VStack(alignment: .leading, spacing: 16) {
             SectionCard(
                 title: "AI 保活",
-                subtitle: "按固定间隔给订阅制 AI 服务发一条超短请求，把「按最后一次使用起算」的滚动窗口续成近似固定窗口。Deep Sleep 退出后保活停止。",
+                subtitle: "在每天固定时刻给订阅制 AI 服务发一条超短请求，把「按最后一次使用起算」的滚动窗口钉成固定窗口。Deep Sleep 退出后保活停止。",
                 symbol: "bolt.horizontal.circle",
                 accent: .teal
             ) {
@@ -87,10 +87,11 @@ struct KeepAliveView: View {
                 symbol: "info.circle"
             ) {
                 VStack(alignment: .leading, spacing: 7) {
+                    BulletLine("时刻按本机时区算，到点后最多 15 秒内发出。")
+                    BulletLine("选中的星期之外不发，那几天的窗口会自然重置。")
                     BulletLine("滚动窗口的重置规则由服务端决定，本地无法验证；能否真的延长窗口需要你自己实测。")
                     BulletLine("请求固定 max_tokens=1，消耗极低，但仍会记入该服务的用量统计。")
                     BulletLine("API Key 存在系统钥匙串里，不写入偏好设置，也不会出现在日志中。")
-                    BulletLine("间隔小于服务的滚动窗口时长即可保持窗口连续；默认 240 分钟（4 小时）对应常见的 5 小时窗口。")
                 }
             }
         }
@@ -147,7 +148,7 @@ struct KeepAliveTaskRow: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
 
-                Text("每 \(task.intervalDescription) 一次")
+                Text(task.scheduleDescription)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
 
@@ -224,7 +225,8 @@ struct KeepAliveTaskEditor: View {
     @State private var model: String = ""
     @State private var apiKey: String = ""
     @State private var revealKey: Bool = false
-    @State private var intervalMinutes: Int = KeepAliveDefaults.defaultIntervalMinutes
+    @State private var times: [KeepAliveTime] = KeepAliveSchedule.defaultTimes
+    @State private var weekdays: Set<Int> = KeepAliveSchedule.defaultWeekdays
     @State private var requestTemplate: String = KeepAliveDefaults.defaultRequestTemplate
     @State private var isEnabled: Bool = true
 
@@ -349,25 +351,98 @@ struct KeepAliveTaskEditor: View {
                 }
             }
 
+            // -------------------------------------------------- 时刻
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
-                    Text("发送间隔").font(.caption).foregroundStyle(.secondary)
+                    Text("发送时刻").font(.caption).foregroundStyle(.secondary)
                     Spacer()
-                    Text("\(intervalMinutes) 分钟")
+                    Text("每天 \(times.count) 次")
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
-                Slider(
-                    value: Binding(
-                        get: { Double(intervalMinutes) },
-                        set: { intervalMinutes = KeepAliveTask.clampedInterval(Int($0.rounded())) }
-                    ),
-                    in: Double(KeepAliveDefaults.minIntervalMinutes)...Double(KeepAliveDefaults.maxIntervalMinutes),
-                    step: 1
-                )
-                Text("默认 240 分钟（4 小时），可在 5 小时窗口到期前刷新一次。")
+
+                if times.isEmpty {
+                    Text("还没设时刻。任务不会自动发送。")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                } else {
+                    // 每个时刻一行：时间 + 删除。
+                    ForEach(times) { time in
+                        HStack(spacing: 8) {
+                            DatePicker(
+                                "",
+                                selection: binding(for: time),
+                                displayedComponents: .hourAndMinute
+                            )
+                            .labelsHidden()
+                            .datePickerStyle(.field)
+
+                            Spacer()
+
+                            Button {
+                                removeTime(time)
+                            } label: {
+                                Image(systemName: "minus.circle")
+                            }
+                            .buttonStyle(.borderless)
+                            .help("删掉这个时刻")
+                        }
+                    }
+                }
+
+                Button {
+                    addTime()
+                } label: {
+                    Label("加一个时刻", systemImage: "plus")
+                }
+                .controlSize(.small)
+                .disabled(times.count >= KeepAliveDefaults.maxTimesPerDay)
+
+                Text("到点后最多 15 秒内发出。时刻按本机时区算。")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+            }
+
+            // -------------------------------------------------- 星期
+            VStack(alignment: .leading, spacing: 6) {
+                Text("运行日").font(.caption).foregroundStyle(.secondary)
+
+                HStack(spacing: 6) {
+                    ForEach(KeepAliveSchedule.weekdayOrder, id: \.self) { weekday in
+                        let selected = weekdays.contains(weekday)
+                        Button {
+                            toggleWeekday(weekday)
+                        } label: {
+                            Text(KeepAliveSchedule.shortWeekdayName(weekday))
+                                .font(.callout.weight(selected ? .semibold : .regular))
+                                .frame(width: 28, height: 26)
+                                .background(
+                                    selected ? Color.accentColor : Color.secondary.opacity(0.14),
+                                    in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                )
+                                .foregroundStyle(selected ? Color.white : Color.primary)
+                        }
+                        .buttonStyle(.plain)
+                        .help(KeepAliveSchedule.fullWeekdayName(weekday))
+                    }
+                    Spacer()
+                }
+
+                HStack(spacing: 10) {
+                    Button("工作日") { weekdays = [2, 3, 4, 5, 6] }
+                        .controlSize(.small)
+                    Button("每天") { weekdays = KeepAliveSchedule.allWeekdays }
+                        .controlSize(.small)
+                    Button("清空") { weekdays = [] }
+                        .controlSize(.small)
+                    Spacer()
+                }
+
+                Text(weekdays.isEmpty
+                     ? "没选任何一天，这条任务不会自动发送。"
+                     : "只在选中的日子发送。没选的日子窗口会自然重置。")
+                    .font(.caption2)
+                    .foregroundStyle(weekdays.isEmpty ? Color.orange : Color.secondary)
             }
 
             VStack(alignment: .leading, spacing: 6) {
@@ -381,7 +456,7 @@ struct KeepAliveTaskEditor: View {
                     }
                     .controlSize(.small)
                 }
-                TextField("ping", text: $requestTemplate, axis: .vertical)
+                TextField("测试消息，直接回复‘ping’即可", text: $requestTemplate, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
                     .lineLimit(1...4)
                 Text("默认模板：\(KeepAliveDefaults.defaultRequestTemplate)")
@@ -431,7 +506,8 @@ struct KeepAliveTaskEditor: View {
             format = .openAI
             model = ""
             apiKey = ""
-            intervalMinutes = KeepAliveDefaults.defaultIntervalMinutes
+            times = KeepAliveSchedule.defaultTimes
+            weekdays = KeepAliveSchedule.defaultWeekdays
             requestTemplate = KeepAliveDefaults.defaultRequestTemplate
             isEnabled = true
             return
@@ -442,9 +518,62 @@ struct KeepAliveTaskEditor: View {
         format = task.format
         model = task.model
         apiKey = ""
-        intervalMinutes = task.intervalMinutes
+        times = task.schedule.times
+        weekdays = task.schedule.weekdays
         requestTemplate = task.requestTemplate
         isEnabled = task.isEnabled
+    }
+
+    // MARK: - 时刻与星期的操作
+
+    /// DatePicker 要一个 Date；内部只取时与分。
+    private func binding(for time: KeepAliveTime) -> Binding<Date> {
+        Binding(
+            get: {
+                Calendar.current.date(
+                    bySettingHour: time.hour, minute: time.minute, second: 0, of: Date()
+                ) ?? Date()
+            },
+            set: { newValue in
+                let comps = Calendar.current.dateComponents([.hour, .minute], from: newValue)
+                let updated = KeepAliveTime(
+                    hour: comps.hour ?? time.hour,
+                    minute: comps.minute ?? time.minute
+                )
+                times.removeAll { $0 == time }
+                times.append(updated)
+                times.sort()
+            }
+        )
+    }
+
+    /// 加一个时刻。默认接在最后一个时刻后面，隔 4 小时。
+    private func addTime() {
+        guard times.count < KeepAliveDefaults.maxTimesPerDay else { return }
+        let base = times.last.map(\.minutesFromMidnight) ?? (9 * 60)
+        let next = (base + 4 * 60) % (24 * 60)
+        let candidate = KeepAliveTime(minutesFromMidnight: next)
+        // 与已有时刻撞了就往后挪一分钟。
+        var probe = candidate
+        var guardCount = 0
+        while times.contains(probe) && guardCount < 24 * 60 {
+            probe = KeepAliveTime(minutesFromMidnight: (probe.minutesFromMidnight + 1) % (24 * 60))
+            guardCount += 1
+        }
+        times.append(probe)
+        times.sort()
+    }
+
+    private func removeTime(_ time: KeepAliveTime) {
+        times.removeAll { $0 == time }
+    }
+
+    private func toggleWeekday(_ weekday: Int) {
+        if weekdays.contains(weekday) {
+            weekdays.remove(weekday)
+        } else {
+            weekdays.insert(weekday)
+        }
     }
 
     // MARK: - 动作
@@ -504,7 +633,7 @@ struct KeepAliveTaskEditor: View {
             format: format,
             model: model.trimmingCharacters(in: .whitespaces),
             apiKeyRef: apiKeyRef,
-            intervalMinutes: intervalMinutes,
+            schedule: KeepAliveSchedule(times: times, weekdays: weekdays),
             requestTemplate: requestTemplate,
             isEnabled: isEnabled,
             lastRunAt: existing?.lastRunAt,

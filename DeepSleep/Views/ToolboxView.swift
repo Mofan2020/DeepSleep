@@ -9,11 +9,10 @@
 //    NavigationSplitView 的 detail 列没有 NavigationStack，要推就得把整个
 //    detail 列包成 NavigationStack —— 那会影响应用里每一个页面的导航行为。
 //    所以工具卡片只是换 selection，三个旧工具页一行都不用改。
-//  - 工具箱页只读轻量状态（助手状态、保活引擎、网关运行状态）。
+//  - 工具箱页只读轻量状态（助手状态、保活引擎）。
 //    **不触发任何重 IO**：进程快照要 4~5 秒，放在这一页会卡住整页。
 //    「共 N 个进程」这种元信息因此不做 —— 详见 docs/notes.md。
 //  - 置顶机制已解决「常用的放前面」，所以不提供拖拽排序。
-//
 //
 
 import SwiftUI
@@ -29,16 +28,6 @@ extension ToolboxTool {
         case .hosts:          return .hosts
         case .quarantine:     return .quarantine
         case .aiKeepAlive:    return .aiKeepAlive
-        case .aiGateway:      return .aiGateway
-        }
-    }
-
-    /// 标题右侧的小标签。网关是试验性功能，标出来 —— 用中性偏蓝的 accentColor，
-    /// 不用橙也不用红（红色会让人以为功能坏了）。
-    var badge: (text: String, color: Color)? {
-        switch self {
-        case .aiGateway:  return ("试验性", .accentColor)
-        default:          return nil
         }
     }
 }
@@ -50,17 +39,11 @@ struct ToolboxView: View {
 
     @EnvironmentObject private var controller: SleepController
     @ObservedObject private var keepAlive = KeepAliveEngine.shared
-    @ObservedObject private var gateway = GatewayController.shared
 
     /// 选中某个工具。调用方（ContentView）负责切 selection。
     let onSelect: (ToolboxTool) -> Void
 
     @State private var layout = ToolboxStore.load()
-    @State private var showDisclaimer = false
-    @State private var disclaimerAccepted = GatewayDisclaimer.accepted
-    /// 免责同意后要进入的目标工具。真正的跳转等 sheet 关掉再做 ——
-    /// 在 sheet 还开着的时候换 selection 会把 ToolboxView 从视图树里摘掉。
-    @State private var pendingSelection: ToolboxTool?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -72,26 +55,6 @@ struct ToolboxView: View {
             } else {
                 grid
             }
-        }
-        .sheet(isPresented: $showDisclaimer, onDismiss: {
-            // sheet 关掉之后再切 selection。
-            if let tool = pendingSelection {
-                pendingSelection = nil
-                onSelect(tool)
-            }
-        }) {
-            GatewayDisclaimerView(
-                onAccept: {
-                    GatewayDisclaimer.accept()
-                    disclaimerAccepted = true
-                    pendingSelection = .aiGateway
-                    showDisclaimer = false
-                },
-                onReject: {
-                    // 不同意 = 从未同意过：不写任何持久化，下次点还是同一张弹窗。
-                    showDisclaimer = false
-                }
-            )
         }
     }
 
@@ -138,12 +101,10 @@ struct ToolboxView: View {
             title: tool.title,
             desc: tool.desc,
             symbol: tool.symbol,
-            badge: tool.badge,
             status: status(for: tool),
             meta: meta(for: tool),
             isPinned: layout.isPinned(tool),
-            isInactive: tool == .aiGateway && !disclaimerAccepted,
-            onOpen: { open(tool) },
+            onOpen: { onSelect(tool) },
             onTogglePin: {
                 layout = layout.togglingPin(tool)
                 ToolboxStore.save(layout)
@@ -192,13 +153,6 @@ struct ToolboxView: View {
             case .unavailable:
                 return ToolCard.Status(text: "引擎未就绪", isActive: false, color: .orange)
             }
-        case .aiGateway:
-            if !disclaimerAccepted {
-                return ToolCard.Status(text: "需确认", isActive: false, color: .orange)
-            }
-            return gateway.isRunning
-                ? ToolCard.Status(text: "运行中", isActive: true, color: .green)
-                : ToolCard.Status(text: "已停止", isActive: false, color: .secondary)
         }
     }
 
@@ -216,20 +170,7 @@ struct ToolboxView: View {
         case .aiKeepAlive:
             if case .unavailable = keepAlive.status { return nil }
             return "\(keepAlive.tasks.count) 个任务"
-        case .aiGateway:
-            return "\(gateway.gatewayConfig.bindAddress):\(gateway.gatewayConfig.port)"
         }
-    }
-
-    // MARK: - 动作
-
-    private func open(_ tool: ToolboxTool) {
-        // AI 网关首次进入要先过免责申明。不同意就留在工具箱页。
-        if tool == .aiGateway && !disclaimerAccepted {
-            showDisclaimer = true
-            return
-        }
-        onSelect(tool)
     }
 }
 
@@ -275,12 +216,10 @@ struct ToolCard: View {
     let title: String
     let desc: String
     let symbol: String
-    var badge: (text: String, color: Color)?
     var status: Status
     var meta: String?
     var isPinned: Bool
-    /// 视觉降级（图标变灰）。**不等于禁用** —— 网关那张卡降级但仍可点，
-    /// 因为「点了弹免责」正是它的入口。
+    /// 视觉降级（图标变灰）。**不等于禁用**。
     var isInactive: Bool = false
 
     let onOpen: () -> Void
@@ -334,14 +273,9 @@ struct ToolCard: View {
                 iconContainer
 
                 VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        Text(title)
-                            .font(.headline)
-                            .lineLimit(1)
-                        if let badge {
-                            Tag(text: badge.text, color: badge.color)
-                        }
-                    }
+                    Text(title)
+                        .font(.headline)
+                        .lineLimit(1)
                     Text(desc)
                         .font(.callout)
                         .foregroundStyle(.secondary)

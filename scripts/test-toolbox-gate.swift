@@ -2,28 +2,22 @@
 //  test-toolbox-gate.swift
 //  Deep Sleep 回归测试
 //
-//  验证「工具箱门禁 + 网关免责」这条链路的**真实源码**行为，
-//  以及本轮验收中发现的三个真实缺陷在修复后能被测试稳定复现。
+//  验证两件事：
+//  1. **网关彻底不可见**：工具清单里没有它，存储里的旧 ID 会被清掉，
+//     保活也不依赖网关的任何类型（独立编译即可证明）。
+//  2. **保活的持久化性质**：落盘字节稳定（.sortedKeys）、旧格式能迁移。
 //
-//  覆盖：
-//  - 免责状态：两个 UserDefaults key 都满足才算已同意
-//  - 免责状态：版本号落后于当前版本不算已同意
-//  - 免责状态：版本号高于当前版本算已同意（向前兼容）
-//  - 免责状态：accept() 同时写两个 key；reset() 两个都清
-//  - 「不同意」不写任何持久化
-//  - 工具箱归一化：未知 ID / 重复 ID / 缺 ID 的处理
-//  - 工具箱归一化：新增工具自动补齐
-//  - **回归**：Codable 解码必须过归一化（修 D1 后）
-//  - **回归**：落盘编码用 .sortedKeys，字节稳定（修 D2 后）
+//  原来的这个脚本测的是「工具箱门禁 + 网关免责」——网关既然后来整块
+//  隐藏了，免责链路不再有意义（用户根本走不到那张弹窗），
+//  所以改成验证「网关不可见」这件事本身。
 //
 //  运行：
 //  swiftc -parse-as-library \
 //    DeepSleep/Views/ToolboxLayout.swift \
 //    DeepSleep/AIKeepAlive/KeepAliveModels.swift \
+//    DeepSleep/AIKeepAlive/KeepAliveError.swift \
 //    DeepSleep/AIKeepAlive/KeepAliveStore.swift \
-//    DeepSleep/LLMGateway/Database/QuotaModels.swift \
-//    DeepSleep/LLMGateway/Database/GatewayConfigStore.swift \
-//    DeepSleep/LLMGateway/GatewayDisclaimer.swift \
+//    DeepSleep/AIKeepAlive/KeepAliveKeychain.swift \
 //    scripts/test-toolbox-gate.swift -o /tmp/tb-gate && /tmp/tb-gate
 //
 
@@ -60,113 +54,75 @@ struct ToolboxGateTests {
 
     static func main() {
         let defaults = UserDefaults.standard
-        let acceptedKey = "llm.gateway.disclaimerAccepted"
-        let versionKey = "llm.gateway.disclaimerVersion"
 
-        // ---------------------------------------------------- 免责状态语义
-        print("== 免责状态：两个 key 都满足才算已同意 ==")
-        defaults.removeObject(forKey: acceptedKey)
-        defaults.removeObject(forKey: versionKey)
-        check("两个 key 都没有 → 不算已同意", !disclaimerAccepted(acceptedKey, versionKey))
-
-        defaults.set(true, forKey: acceptedKey)
-        check("只有 accepted=true → 不算已同意", !disclaimerAccepted(acceptedKey, versionKey))
-
-        defaults.set(1, forKey: versionKey)
-        check("两个 key 都对 → 算已同意", disclaimerAccepted(acceptedKey, versionKey))
-
-        defaults.set(0, forKey: versionKey)
-        check("版本号 0（落后）→ 不算已同意", !disclaimerAccepted(acceptedKey, versionKey))
-
-        defaults.set(2, forKey: versionKey)
-        check("版本号 2（超前）→ 算已同意（向前兼容）", disclaimerAccepted(acceptedKey, versionKey))
-
-        defaults.set(-1, forKey: versionKey)
-        check("版本号 -1 → 不算已同意", !disclaimerAccepted(acceptedKey, versionKey))
-
-        // 「不同意」不写任何持久化 —— 用一个干净的 defaults 域模拟。
-        print("\n== 「不同意」不写任何持久化 ==")
-        let probe = UserDefaults(suiteName: "deepsleep.test.disclaimer.probe")!
-        probe.removePersistentDomain(forName: "deepsleep.test.disclaimer.probe")
-        // 模拟 onReject：只关弹窗，不写任何 key。
+        // ============================================ 网关彻底不可见
+        print("== 网关已隐藏：工具清单里没有它 ==")
         check(
-            "拒绝后两个 key 都不存在",
-            probe.object(forKey: acceptedKey) == nil && probe.object(forKey: versionKey) == nil
+            "ToolboxTool 里没有 aiGateway",
+            !ToolboxTool.allCases.contains { $0.rawValue == "aiGateway" },
+            "实际 \(ToolboxTool.allCases.map(\.rawValue))"
+        )
+        checkEqual("工具清单是 4 项", 4, ToolboxTool.allCases.count)
+        check(
+            "没有叫「网关」的工具",
+            !ToolboxTool.allCases.contains { $0.title.contains("网关") },
+            "实际 \(ToolboxTool.allCases.map(\.title))"
+        )
+
+        print("\n== 网关已隐藏：存储里的旧 ID 被清掉 ==")
+        // 网关还在的时候存过布局的用户，升级后那段数据不能把网关带回来。
+        let legacyLayout = ToolboxLayout(pinned: ["aiGateway"], rest: ["aiGateway", "nice"])
+        check(
+            "旧布局里的 aiGateway 不在工具清单里",
+            !legacyLayout.orderedTools.contains { $0.rawValue == "aiGateway" },
+            "实际 \(legacyLayout.orderedTools.map(\.rawValue))"
+        )
+        checkEqual("清理后仍是 4 项", 4, legacyLayout.orderedTools.count)
+
+        // 直接解码一份含 aiGateway 的 JSON。
+        let legacyJSON = Data(#"{"pinned":["aiGateway"],"rest":["nice"]}"#.utf8)
+        let decoded = try! JSONDecoder().decode(ToolboxLayout.self, from: legacyJSON)
+        check(
+            "直接 decode 出来的数据里没有网关",
+            !decoded.orderedTools.contains { $0.rawValue == "aiGateway" },
+            "实际 \(decoded.orderedTools.map(\.rawValue))"
+        )
+        checkEqual(
+            "直接 decode 出来的数据补齐了全部工具",
+            4,
+            decoded.orderedTools.count
         )
         check(
-            "拒绝后 accepted 读出来是 false",
-            !probe.bool(forKey: acceptedKey)
+            "归一化后 pinned + rest 没有交集",
+            Set(decoded.pinned).intersection(Set(decoded.rest)).count == 0
         )
-        check(
-            "拒绝后 version 读出来是 0",
-            probe.integer(forKey: versionKey) == 0
-        )
-        probe.removePersistentDomain(forName: "deepsleep.test.disclaimer.probe")
 
-        // ---------------------------------------------------- 工具箱归一化
+        // ============================================ 工具箱归一化
         print("\n== 工具箱归一化 ==")
         let unknown = ToolboxLayout(pinned: ["nice", "不存在的工具"], rest: ["hosts"])
         checkEqual("未知 ID 被丢弃", ["nice"], unknown.pinned)
         checkEqual(
             "缺失的按 canonical 顺序补齐",
-            ["hosts", "quarantine", "aiKeepAlive", "aiGateway"],
+            ["hosts", "quarantine", "aiKeepAlive"],
             unknown.rest
         )
 
         let dup = ToolboxLayout(pinned: ["nice", "nice", "hosts"], rest: ["nice", "hosts"])
         checkEqual("重复 ID 只留一个", ["nice", "hosts"], dup.pinned)
-        checkEqual("总数仍是 5", 5, dup.orderedTools.count)
+        checkEqual("总数仍是 4", 4, dup.orderedTools.count)
         checkEqual(
             "pinned + rest 没有交集",
             0,
             Set(dup.pinned).intersection(Set(dup.rest)).count
         )
 
-        // -------------------------------------------------- D1：Codable 归一化
-        print("\n== [D1 已修复] Codable 解码必须过归一化 ==")
-        // 原缺陷：ToolboxLayout 的 Codable 是合成的，`init(from:)` 由编译器
-        // 生成，**不会**调用自定义的归一化 init。于是「直接
-        // JSONDecoder().decode(ToolboxLayout.self)」拿到的是未归一化数据
-        // （含未知 ID / 缺工具），主路径只是靠 ToolboxStore.load() 里
-        // 显式重建侥幸救回。
-        // 修法：ToolboxLayout 自定义 `init(from:)`，解码后走归一化。
-        let dirtyJSON = Data(#"{"pinned":["nice","ghost"],"rest":["hosts"]}"#.utf8)
-        let decoded = try! JSONDecoder().decode(ToolboxLayout.self, from: dirtyJSON)
-        check(
-            "直接 decode 出来的数据不含未知 ID",
-            !decoded.pinned.contains("ghost"),
-            "实际 \(decoded.pinned)"
-        )
-        checkEqual(
-            "直接 decode 出来的数据补齐了全部工具",
-            5,
-            decoded.orderedTools.count
-        )
-        check(
-            "归一化后未知 ID 被丢弃",
-            !decoded.orderedTools.contains { $0.rawValue == "ghost" }
-        )
-        check(
-            "归一化后 pinned + rest 没有交集",
-            Set(decoded.pinned).intersection(Set(decoded.rest)).count == 0
-        )
-        check(
-            "直接 decode 的结果与走 init 的结果一致",
-            decoded == ToolboxLayout(pinned: decoded.pinned, rest: decoded.rest)
-        )
-
-        // -------------------------------------------------- D2：JSON 键序
-        print("\n== [D2 已修复] 落盘编码必须用 .sortedKeys ==")
-        // 原缺陷：KeepAliveStore.save() 用默认 JSONEncoder，键序不固定 ——
-        // 同一份任务两次落盘的字节可能不同，与 GatewayConfigStore 的做法不一致。
-        // 修法：KeepAliveStore / ToolboxStore 统一用 .sortedKeys。
-        //
-        // 这里测的是**真实落盘路径**（KeepAliveStore.save → 读回字节），
-        // 断言的是要保证的性质：「同一份数据反复落盘，字节必须一致」。
-        let sortProbeTasks = [KeepAliveTaskProbe.makeTask()]
+        // ============================================ 落盘字节稳定
+        print("\n== 落盘编码必须用 .sortedKeys ==")
+        // JSONEncoder 对 struct 的键序不固定 —— 同一份数据反复落盘能产出
+        // 好几种字节，内容却等价。这里测的是「字节结果唯一」这个性质。
         var distinctSaveBytes: Set<Data> = []
         for _ in 0..<50 {
-            KeepAliveStore.save(sortProbeTasks)
+            KeepAliveStore.save([KeepAliveTaskProbe.makeTask()])
             if let data = UserDefaults.standard.data(forKey: KeepAliveStore.storageKey) {
                 distinctSaveBytes.insert(data)
             }
@@ -178,7 +134,6 @@ struct ToolboxGateTests {
         )
         UserDefaults.standard.removeObject(forKey: KeepAliveStore.storageKey)
 
-        // 同样的性质对 ToolboxStore 也要成立。
         var distinctLayoutBytes: Set<Data> = []
         for _ in 0..<50 {
             ToolboxStore.save(ToolboxLayout.default)
@@ -193,40 +148,50 @@ struct ToolboxGateTests {
         )
         UserDefaults.standard.removeObject(forKey: ToolboxStore.storageKey)
 
-        // 对照组：默认 JSONEncoder（不加 .sortedKeys）不保证这个性质。
-        // 它能产出多种键序 —— 实测同一 struct 连续 50 次编码出现过 8 种字节。
-        // 占比最大的那种约 80%，所以「50 次全撞同一种」的概率极低，
-        // 但这仍是个不稳定的事实，不作为断言依赖。
-        // 这里只把它当背景信息打印出来。
+        // 对照组：默认 JSONEncoder 不保证这个性质。
         var distinctDefault: Set<Data> = []
         for _ in 0..<50 {
             distinctDefault.insert(KeepAliveTaskProbe.encodeWithDefaultEncoder())
         }
         print("  （参考：默认 JSONEncoder 同一份数据 50 次编码出现 \(distinctDefault.count) 种字节）")
 
-        // ------------------------------------------- 工具箱落盘往返（真实路径）
-        print("\n== 工具箱布局落盘往返（走 ToolboxStore 的真实路径）==")
-        defaults.removeObject(forKey: ToolboxStore.storageKey)
-        var layout = ToolboxLayout.default
-        layout = layout.togglingPin(.aiGateway)
-        layout = layout.togglingPin(.nice)
-        ToolboxStore.save(layout)
-        let loaded = ToolboxStore.load()
-        checkEqual("置顶顺序往返正确", ["aiGateway", "nice"], loaded.pinned)
-        check("置顶状态往返正确", loaded.isPinned(.nice) && loaded.isPinned(.aiGateway))
-        checkEqual("总数仍是 5", 5, loaded.orderedTools.count)
+        // ============================================ 保活落盘往返
+        print("\n== 保活任务落盘往返（走 KeepAliveStore 的真实路径）==")
+        defaults.removeObject(forKey: KeepAliveStore.storageKey)
+        let task = KeepAliveTask(
+            id: UUID(),
+            name: "门禁测试",
+            baseURL: "https://api.example.com",
+            format: .openAI,
+            model: "m",
+            apiKeyRef: "keepalive.test",
+            schedule: KeepAliveSchedule(
+                times: [KeepAliveTime(hour: 9, minute: 0)],
+                weekdays: [2, 3, 4, 5, 6]
+            ),
+            requestTemplate: KeepAliveDefaults.defaultRequestTemplate,
+            isEnabled: true,
+            lastRunAt: nil,
+            lastResult: nil,
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        KeepAliveStore.save([task])
+        let loaded = KeepAliveStore.load()
+        checkEqual("存盘后能读回", 1, loaded.count)
+        checkEqual("时刻保留", ["09:00"], loaded.first?.schedule.times.map(\.display) ?? [])
+        checkEqual(
+            "星期保留",
+            [2, 3, 4, 5, 6],
+            loaded.first?.schedule.weekdays.sorted() ?? []
+        )
 
-        // 脏数据经 ToolboxStore.load() 后必须归一化。
+        // 脏数据经 load() 后必须归一化。
         defaults.set(Data(#"{"pinned":["nice","ghost"],"rest":[]}"#.utf8), forKey: ToolboxStore.storageKey)
         let dirtyLoaded = ToolboxStore.load()
-        checkEqual("脏数据经 load() 后总数正确", 5, dirtyLoaded.orderedTools.count)
+        checkEqual("脏数据经 load() 后总数正确", 4, dirtyLoaded.orderedTools.count)
         check(
             "脏数据经 load() 后没有未知 ID",
             !dirtyLoaded.pinned.contains("ghost") && !dirtyLoaded.rest.contains("ghost")
-        )
-        check(
-            "脏数据经 load() 后缺失工具被补齐",
-            dirtyLoaded.orderedTools.count == 5
         )
         defaults.removeObject(forKey: ToolboxStore.storageKey)
 
@@ -234,55 +199,51 @@ struct ToolboxGateTests {
         defaults.set(Data("garbage".utf8), forKey: ToolboxStore.storageKey)
         checkEqual(
             "非 JSON 数据 → 默认布局",
-            5,
+            4,
             ToolboxStore.load().orderedTools.count
         )
         check("非 JSON 数据 → 默认布局且无置顶", ToolboxStore.load().pinned.isEmpty)
         defaults.removeObject(forKey: ToolboxStore.storageKey)
 
-        // --------------------------------------------------- 置顶语义细节
-        print("\n== 置顶语义细节 ==")
-        var l = ToolboxLayout.default
-        l = l.togglingPin(.hosts)
-        l = l.togglingPin(.nice)
-        checkEqual("先置顶的排在前面", ["hosts", "nice"], l.pinned)
-        l = l.togglingPin(.hosts)
-        checkEqual("取消置顶后从 pinned 移除", ["nice"], l.pinned)
-        checkEqual("取消置顶落到 rest 末尾", "hosts", l.rest.last)
-        l = l.togglingPin(.hosts)
-        checkEqual("再置顶回到 pinned 末尾", ["nice", "hosts"], l.pinned)
-        checkEqual("再置顶后从 rest 移除", 3, l.rest.count)
-
-        // 全部置顶
-        var all = ToolboxLayout.default
-        for t in ToolboxTool.allCases { all = all.togglingPin(t) }
-        checkEqual("全部置顶 → pinned 5 个", 5, all.pinned.count)
-        checkEqual("全部置顶 → rest 空", 0, all.rest.count)
-        checkEqual("全部置顶 → 总数 5", 5, all.orderedTools.count)
-
-        // 重置
-        check("重置后是默认布局", ToolboxLayout.default.isDefault)
-        check("重置后 pinned 空", ToolboxLayout.default.pinned.isEmpty)
+        // ============================================ 旧格式迁移
+        print("\n== 保活任务旧格式迁移 ==")
+        let legacyTaskJSON = """
+        [{
+          "id": "11111111-2222-3333-4444-555555555555",
+          "name": "老任务",
+          "baseURL": "https://api.example.com",
+          "format": "openai",
+          "model": "m",
+          "apiKeyRef": "keepalive.legacy",
+          "intervalMinutes": 240,
+          "requestTemplate": "ping",
+          "isEnabled": true,
+          "lastRunAt": null,
+          "lastResult": null,
+          "createdAt": 1700000000
+        }]
+        """
+        defaults.set(Data(legacyTaskJSON.utf8), forKey: KeepAliveStore.storageKey)
+        let migrated = KeepAliveStore.load()
+        checkEqual("旧任务读得出来", 1, migrated.count)
+        checkEqual("旧任务名保留", "老任务", migrated.first?.name ?? "")
         checkEqual(
-            "重置后 rest 是 canonical 顺序",
-            ["nice", "hosts", "quarantine", "aiKeepAlive", "aiGateway"],
-            ToolboxLayout.default.rest
+            "间隔迁移成每日时刻",
+            ["00:00", "04:00", "08:00", "12:00", "16:00", "20:00"],
+            migrated.first?.schedule.times.map(\.display) ?? []
         )
-
-        // 取消置顶后顺序变了 → 不是默认布局（「重置排序」按钮应可用）
-        var l2 = ToolboxLayout.default
-        l2 = l2.togglingPin(.nice)
-        l2 = l2.togglingPin(.nice)   // 取消置顶
-        check(
-            "置顶又取消 → 顺序变了 → 不是默认布局",
-            !l2.isDefault,
-            "实际 rest=\(l2.rest)"
+        checkEqual(
+            "迁移后星期是每天",
+            [1, 2, 3, 4, 5, 6, 7],
+            migrated.first?.schedule.weekdays.sorted() ?? []
         )
+        defaults.removeObject(forKey: KeepAliveStore.storageKey)
 
-        // ------------------------------------------------- 清理
-        defaults.removeObject(forKey: acceptedKey)
-        defaults.removeObject(forKey: versionKey)
+        // ============================================ 清理
+        print("\n== 清理 ==")
+        defaults.removeObject(forKey: KeepAliveStore.storageKey)
         defaults.removeObject(forKey: ToolboxStore.storageKey)
+        check("测试用 key 已清理", defaults.data(forKey: ToolboxStore.storageKey) == nil)
 
         print("")
         if confirmedDefects.isEmpty {
@@ -296,19 +257,10 @@ struct ToolboxGateTests {
               : "\n测试结论: \(failures) 项失败（共 \(total) 项断言）")
         exit(failures == 0 ? 0 : 1)
     }
-
-    /// 复刻 GatewayDisclaimer.accepted 的判定逻辑。
-    /// 真实实现见 DeepSleep/LLMGateway/GatewayDisclaimer.swift ——
-    /// 那个文件 import SwiftUI，不能单独 swiftc 编译，所以这里逐行复刻。
-    /// 若真实实现的判定变了，这里的断言会失真 —— 属于已知的测试脆弱点。
-    static func disclaimerAccepted(_ acceptedKey: String, _ versionKey: String) -> Bool {
-        let flag = UserDefaults.standard.bool(forKey: acceptedKey)
-        let version = UserDefaults.standard.integer(forKey: versionKey)
-        return flag && version >= 1
-    }
 }
 
 /// 用真实源码里的 KeepAliveTask 探测 JSONEncoder 的键序随机性。
+///
 /// 这里的 KeepAliveTask 定义放在 test-toolbox-gate.swift 里会与
 /// ToolboxLayout.swift 冲突（两个文件都要 @main），所以只用一个
 /// 结构等价的最小类型来探测 JSONEncoder 行为 ——
@@ -321,7 +273,7 @@ enum KeepAliveTaskProbe {
         var format: String
         var model: String
         var apiKeyRef: String
-        var intervalMinutes: Int
+        var schedule: String
         var requestTemplate: String
         var isEnabled: Bool
         var lastRunAt: Double?
@@ -338,8 +290,11 @@ enum KeepAliveTaskProbe {
             format: .openAI,
             model: "m",
             apiKeyRef: "keepalive.u",
-            intervalMinutes: 240,
-            requestTemplate: "ping",
+            schedule: KeepAliveSchedule(
+                times: [KeepAliveTime(hour: 9, minute: 0)],
+                weekdays: [2]
+            ),
+            requestTemplate: KeepAliveDefaults.defaultRequestTemplate,
             isEnabled: true,
             lastRunAt: nil,
             lastResult: nil,
@@ -352,7 +307,7 @@ enum KeepAliveTaskProbe {
     static func encodeWithDefaultEncoder() -> Data {
         let t = T(
             id: "u", name: "n", baseURL: "https://x", format: "openai", model: "m",
-            apiKeyRef: "keepalive.u", intervalMinutes: 240, requestTemplate: "ping",
+            apiKeyRef: "keepalive.u", schedule: "s", requestTemplate: "ping",
             isEnabled: true, lastRunAt: nil, lastResult: nil, createdAt: 0
         )
         return try! JSONEncoder().encode(t)
