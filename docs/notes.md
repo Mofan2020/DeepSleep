@@ -1459,3 +1459,70 @@ Keychain service 也分开了 —— 之前保活复用网关的 service
   那个链路走不到了，改成测「网关确实不可见」+ 保活的持久化性质。
 - `xcodebuild -configuration Debug`：BUILD SUCCEEDED，零 error。
 - `python3 scripts/check-keepalive-isolation.py`：全过。
+
+## 应用图标换成月相表盘（2026-10-27）
+
+### 做了什么
+
+`scripts/make-icon.py` 整个重写，构图从「月牙 + 星星」换成「月相表盘」：
+
+- 深蓝夜空圆角方形做底，蓝色玻璃表盘偏左下，一枚金色月牙从盘后探出、压住盘缘。
+- 12 根小时刻度，时针指向 10 点、分针指向 2 分。
+- 配色：夜空 `#0B1132`→`#261C50`，盘面 `#94BEFF`→`#2A4294`，
+  月牙 `#FFFBE9`→`#F3C66A`，指针 `#FFEAA8`。
+- `docs/images/icon.png`（README 顶部那张）改由同一个脚本产出，
+  与 `AppIcon.appiconset/icon_512x512.png` 逐字节一致（sha256 相同）。
+
+### 为什么是指针指向 10:10 而不是具体时刻
+
+最初的设计是时针指 11 点（入睡）、分针指 7 点（唤醒），想让图标本身
+说出「睡眠时段由我调度」。实测下来这个想法在小尺寸下不成立：
+
+- 两针都朝左时，32px 下读起来是一个箭头，不像钟。
+- 换成 11:00 两针重叠，16px 下糊成一团。
+- 10:10 的展开姿态在 16px 下两针仍分得开，一眼读成「钟」。
+
+具体时刻交给 App 里的功能说明，图标只负责让人认出这是个管睡眠的时钟。
+
+### 没动的与原因
+
+- **菜单栏图标没换**，仍是 SF Symbol `moon.zzz.fill`。菜单栏按钮是
+  模板图（单色，随明暗主题反色），与应用图标是两套渲染路径，
+  强行统一会把菜单栏那一点位置塞进复杂图形。
+- **没有单独的 Release**。这次只换图标，没有功能变化，单独发一版
+  只会在更新日志里留下一条「换了张图」。图标随下一个版本一起走。
+
+### 这次改动留下的坑 / 注意事项
+
+- **月牙必须整体画在 824x824 圆角方形内**。第一版把月牙放在框外，
+  alpha bbox 是 `(0, 0, 1024, 1024)`，导出后被系统裁掉一角。
+  现在所有图层最后都与圆角方形遮罩求交，bbox 稳定在 `(47, 47, 465, 465)`。
+- **发光的 alpha 必须取自挖洞之后的月牙**。直接模糊一个完整的圆，
+  会在月牙缺口处残留一个灰色圆盘（深色背景上非常明显）。
+  这条在旧版脚本的注释里就有，重写时保留。
+- **构建产物要带 `-derivedDataPath build`**。不带这个参数时
+  xcodebuild 会把产物写到别处，`build/Build/Products/` 下的
+  `AppIcon.icns` 会保持旧版本，看不出图标有没有生效。
+
+### 自测覆盖
+
+- `python3 scripts/make-icon.py`：生成 10 张 PNG + `docs/images/icon.png`。
+- 一致性：`sha256(icon_512x512.png) == sha256(docs/images/icon.png)`，
+  实测均为 `fe510afe89934f46…`（前 16 位）。
+- 尺寸：10 张 PNG 的实际像素与 `Contents.json` 声明逐条对上
+  （16/32/32/64/128/256/256/512/512/1024）。
+- alpha bbox `(47, 47, 465, 465)`，落在 824 圆角方形内。
+- `xcodebuild -project DeepSleep.xcodeproj -scheme DeepSleep
+  -configuration Debug -derivedDataPath build build`：BUILD SUCCEEDED。
+  产物 `AppIcon.icns` 67537 字节，`iconutil -c iconset` 解出 4 张，
+  尺寸 16/32/128/256，内容为新图标。
+- `python3 scripts/check-docs.py`：全部一致。
+- `python3 scripts/test-check-docs.py`：19 项通过，0 项失败。
+
+### 未验证
+
+- 没有在真实 Dock 与访达里看过。macOS 26 起系统会给应用图标叠一层
+  液态玻璃材质，实际观感可能与生成图有出入，需要装到本机肉眼确认。
+- 没有做深色/浅色/单色（tinted）appearance 变体。
+  当前 Asset Catalog 只有默认一套，深色模式下由系统自动处理。
+
