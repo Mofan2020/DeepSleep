@@ -79,7 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - 命令行接口
 
     /// 支持的参数：
-    ///   --hold <kinds>   逗号分隔，接受 idle-system / display / system 及其别名
+    ///   --hold <kinds>   逗号分隔，接受 idle-system / display / system / disk-idle 及其别名
     ///   --release        释放全部保持
     ///   --status         把当前状态输出到标准输出
     ///   --server-mode 0|1 开启或关闭服务器模式（系统永不睡眠 + 定时关屏锁屏）

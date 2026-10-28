@@ -308,6 +308,7 @@ final class SleepController: ObservableObject {
         ScheduledCommand.shared.start()
         KeepAliveEngine.shared.start()
         PowerWatcher.shared.start()
+        ScheduledWakeManager.shared.start()
         startRefreshLoop()
         if !PowerWatcher.shared.isRegistered {
             appendLog("电源事件监听未注册，睡前拦截与唤醒对账不可用", isError: true)
@@ -322,6 +323,16 @@ final class SleepController: ObservableObject {
     }
 
     func shutdown() async {
+        // 风扇控制权**无条件**交回系统，不受「保留退出态」影响。
+        //
+        // 理由：assertion 与 disablesleep 是「便利性」状态，保留它们是用户的本意；
+        // 而手动风扇模式是把散热钉在一个固定转速上 —— 应用不在了，转速却不变，
+        // 这属于散热风险。留着 15 秒让租约到期也能兜底，但主动交回更干净。
+        //
+        // 紧急态（≥90°C）下助手会拒绝释放并继续维持最大转速 —— 那是兜底在起作用，
+        // 不是失败。
+        await FanController.shared.releaseOnShutdown()
+
         // v1.7.2：保留退出态开关。开启时 assertion 与 disablesleep 都不释放，
         // 进程退出后 helper 侧的 assertion 会保留到下次停用「完全控制」或重启；
         // disablesleep 会一直生效到外部程序或系统重启改回 —— 那时 Deep Sleep 已无能为力。
@@ -641,6 +652,14 @@ final class SleepController: ObservableObject {
         case .preventSystemSleep:      return .preventSystemSleep
         case .preventIdleSystemSleep:  return .preventIdleSystemSleep
         case .preventIdleDisplaySleep: return .preventIdleDisplaySleep
+        case .preventDiskIdle:
+            // preventDiskIdle 的 requiresPrivilege 是 false，普通进程用
+            // IOPMAssertionCreateWithName 就能拿到，永远不该走到这里。
+            // 真走进来说明调用点漏了 requiresPrivilege 判断，这是代码错误，
+            // 不是运行时状况 —— 所以用 assertionFailure 让它显式可见，
+            // 而不是静静返回一个语义不对的枚举值。
+            assertionFailure("preventDiskIdle 不需要特权，不该调用 privilegeKind(for:)")
+            return .preventIdleSystemSleep
         }
     }
 
@@ -970,37 +989,14 @@ final class SleepController: ObservableObject {
     // MARK: - 计划唤醒
 
     func refreshScheduledWake() async {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
-        process.arguments = ["-g", "sched"]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
-        do {
-            try process.run()
-        } catch {
-            return
-        }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard let text = String(data: data, encoding: .utf8) else { return }
-
-        // 输出形如：`Repeating power events:` / `Scheduled power events:` 后跟
-        // ` [0]  wake at 09/28/26 08:00:00 by 'com.apple.alarm'`
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "MM/dd/yy HH:mm:ss"
-        var found: Date?
-        for line in text.split(separator: "\n") {
-            guard line.contains("wake at") || line.contains("poweron at") else { continue }
-            guard let range = line.range(of: "at ") else { continue }
-            let remainder = line[range.upperBound...]
-            let candidate = remainder.split(separator: " ").prefix(2).joined(separator: " ")
-            if let date = formatter.date(from: candidate), date > Date() {
-                if found == nil || date < found! { found = date }
-            }
-        }
-        scheduledWake = found
+        // v1.9：排定状态改由 ScheduledWakeManager 统一管理（多条 + 循环 + 对账）。
+        // 这里只把「最近的一次性排定」同步到 scheduledWake ——
+        // Siri intent 用它判断「有没有排定唤醒」，不关心有几条。
+        await ScheduledWakeManager.shared.refresh()
+        scheduledWake = ScheduledWakeManager.shared.pendingEntries()
+            .compactMap(\.date)
+            .filter { $0 > Date() }
+            .min()
     }
 
     func scheduleWake(at date: Date) async {

@@ -76,13 +76,19 @@ import Foundation
                    "fireEvent 后空闲 < 50ms（实测 \(idle2)）")
 
         // 4) 多次 fireEvent 不会累加 —— 关键正确性
+        //
+        // 阈值为什么是 0.3 秒而不是 0.1：idleSeconds() 测的是**全系统**空闲，
+        // 不是本进程的。循环里一共睡了 10 × 0.05 = 0.5 秒，即使重置完全正常，
+        // 末值也该是「最后一个间隔 0.05 秒 + 系统噪声」，实测 0.11~0.12 秒。
+        // 这里要证明的是「没有累加成 0.5 秒」，所以阈值取 0.3 秒 ——
+        // 既不会被系统噪声误伤，又真的能抓住累加回归（坏掉时会是 0.5 秒以上）。
         for _ in 0..<10 {
             server.fireEvent()
             Thread.sleep(forTimeInterval: 0.05)
         }
         let idle3 = server.idleSeconds()
-        assertTrue(idle3 < 0.1,
-                   "连续 10 次 fireEvent 后空闲 < 100ms（实测 \(idle3)）")
+        assertTrue(idle3 < 0.3,
+                   "连续 10 次 fireEvent 后空闲 < 300ms（实测 \(idle3)）")
 
         // 5) 长时间不动：5 秒后空闲 ≥ 4.9 秒
         Thread.sleep(forTimeInterval: 5.0)

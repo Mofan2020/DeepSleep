@@ -76,6 +76,16 @@
 | `setHostsEditors` | 替换「谁能改 hosts」白名单。同样的白名单约束：调用方必须在当前白名单内才能改它 |
 | `installWeeklyRestart` | 写周重启任务：launchd plist 放到 `~/Library/LaunchAgents/com.skyc8266.deepsleep.weeklyrestart.plist`，配套写 `/etc/sudoers.d/deepsleep-weeklyrestart` 给用户 NOPASSWD 跑 `shutdown -r now`，再 `launchctl bootstrap` 注册。参数 `weekday=<0–6, 0=周日>`、`hour=<0–23>`、`minute=<0–59>` |
 | `uninstallWeeklyRestart` | 删除上述 plist 与 sudoers 配置 |
+| `getFanState` | 读风扇实时状态：数量、每个风扇的当前转速 / 最低 / 最高 / 是否手动模式。payload 见 `Shared/FanModels.swift` 的 `FanState.encode()` |
+| `setFanSpeed` | 写风扇目标转速 + 模式。参数 `fan`（序号）、`rpm`（0 = 交回系统自动）、`lease`（租约秒数）、`reason`（日志）。**写入顺序必须先模式后目标**（见 `docs/SMC.md` §2.6.1） |
+| `getTemperatureSnapshot` | 读全部温度传感器（IOHID 私有事件通道，`PrimaryUsagePage 0xFF00` / `PrimaryUsage 5`）。payload 见 `Shared/FanModels.swift` 的 `TemperatureSnapshot.encode()` |
+| `releaseFanControl` | 把所有风扇交回系统自动控制。安全兜底：应用退出 / 崩溃 / 租约到期时都要调用 |
+| `setFanDisclaimerAccepted` | 同步「用户已同意风扇免责声明」状态给助手。参数 `accepted`（true / false）。助手侧独立持久化并在未同意时拒绝一切写 SMC 的命令 |
+| `listScheduledEvents` | 读系统当前所有排定项（解析 `pmset -g sched`）。payload `entries` = 记录串 `kind|when|owner` |
+| `scheduleWakeWithOwner` | 排定一次唤醒并带 owner 标记（便于按条取消）。参数 `date`（`MM/dd/yy HH:mm:ss`）、`owner` |
+| `cancelScheduledEvent` | 按条取消排定。参数 `date` + `kind`。刻意不做 `cancelall` —— 那会连别的程序排的唤醒一起取消 |
+| `scheduleRepeatWake` | 循环排定唤醒。参数 `weekdays`（`MTWRFSU` 子集）、`time`（`HH:mm:ss`） |
+| `cancelRepeatWake` | 取消全部循环排定（`pmset repeat cancel`） |
 
 ## 二、权限模型：管理员密码只输一次
 

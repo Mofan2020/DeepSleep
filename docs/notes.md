@@ -1526,3 +1526,112 @@ Keychain service 也分开了 —— 之前保活复用网关的 service
 - 没有做深色/浅色/单色（tinted）appearance 变体。
   当前 Asset Catalog 只有默认一套，深色模式下由系统自动处理。
 
+
+## 温度监控 + 风扇控制 + 自定义告警规则 + 外部磁盘防休眠 + 排定唤醒增强（2026-10-27，v1.9.0）
+
+### 做了什么
+
+- **温度监控页**（`DeepSleep/Views/ThermalView.swift`）。温度走 IOHID 私有温度事件通道
+  （`PrimaryUsagePage 0xFF00` / `PrimaryUsage 5`），**普通用户进程就能读**，不需要特权助手。
+  实测本机命中 132 个 HID 服务，其中 38 条是有效温度读数，去重后 33 个传感器名。
+- **风扇控制页**（`DeepSleep/Views/FanControlView.swift`）。三种模式：交给系统 / 固定转速 /
+  按规则调速。规则三要素就是用户提的三个字段：目标风扇、最低温度、最高温度
+  （`FanMode.rule(targetFan:minTempC:maxTempC:)`），中间线性插值到该风扇的
+  `[minRPM, maxRPM]`。
+- **告警规则页**（`DeepSleep/Views/AlertRulesView.swift`）。指标覆盖 CPU 使用率、
+  内存使用率、单进程内存、CPU 温度、磁盘使用率；条件连续满足设定时长才触发。
+- **外部磁盘防休眠**。`AssertionKind.preventDiskIdle` → `kIOPMAssertPreventDiskIdle`。
+  与其它 assertion 不同，它**不需要 root**（实测普通进程创建成功，`pmset -g assertions`
+  里能看到 `PreventDiskIdle`，释放后消失）。
+- **排定唤醒增强**（`DeepSleep/Core/ScheduledWakeManager.swift`）。多条一次性 + 循环排定，
+  按条精确取消，不再用 `pmset schedule cancelall`。
+- **90°C 强制最大转速**（用户硬要求）。应用侧与助手侧**各自独立判定**。
+- **免责声明门禁**（用户硬要求）。助手侧独立持久化并拒绝一切写 SMC 的命令。
+
+### 为什么温度不走助手
+
+IOHID 的温度事件通道不需要 root。第一版实现走 SMC 读温度，普通进程直接
+`IOServiceOpen("AppleSMC")` 会 **Bus error: 10**（实测退出码 138）——
+所以 SMC 只能留在特权助手里，而温度没必要。温度留在应用侧带来两个好处：
+这一页在助手没装、没启动、没授权时**完全可用**，也不会因为助手版本不匹配而没有数据。
+
+### 为什么免责声明要在助手侧也存一份
+
+应用侧的同意状态存 UserDefaults，拦不住「绕过界面直接构造协议包打助手」——
+socket 就在 `/var/run`。风扇写入是本项目风险最高的功能（写错可能让风扇停转），
+所以门禁必须落在**执行点**：助手自己持久化一份同意状态
+（`/var/db/deepsleep/fan-disclaimer.json`，目录 0700、文件 0600、owner root），
+每次真正写 SMC 之前自己查一遍。两条链路各存一份，互不信任。
+
+### 90°C 兜底为什么两侧都要有
+
+助手侧独立执行、不依赖应用是否还活着：应用崩了、被强杀、租约断了，
+helper 依然能自己读温度、自己判断、自己写 maxRPM。紧急状态下**任何降速意图一律拒绝**
+——包括「交回系统」「按规则调速」「更低的目标转速」。等值或更高放行
+（应用可能也在按同一条规则拉满）。
+
+温度回落到阈值以下后仍保持 60 秒再恢复原模式。冷却是为了避免温度在阈值附近
+抖动导致风扇反复启停 —— 听起来像在喘气，实际也增加噪音和机械磨损。
+
+### 没动的与原因
+
+- **SMC 风扇写入的真实写入路径没有在真机上跑过**。`docs/SMC.md` 自己就写了
+  此前从未完成过一次真实写入。本版把读写实现补齐并做了编译期与纯逻辑层验证，
+  但「写下去风扇真的转」这件事仍然没有端到端验证过 —— 需要装上新版助手后手测。
+- **没有把风扇规则持久化到磁盘**。`FanMode.rule` 目前只存在于运行期状态里，
+  重启后规则消失。用户明确要求的三要素都在模型里，但持久化没做 ——
+  这是有意留下的缺口，不是不小心。
+- **没有做深色模式与 VoiceOver 的逐项核对**。界面用了语义字体与系统色，
+  理论上自适应，但没有逐个控件在深色下截图确认。
+- **`docs/SMC.md` 没有改动**。它是逆向分析报告，不是本项目的实现文档。
+
+### 这次改动留下的坑 / 注意事项
+
+- **`IOHIDEventGetFloatValue` 在 arm64 上必须按 `c_double` 读**。用 `c_float`
+  会只取到 FPR 的低 32 位，所有读数变成 0 —— 表现像「传感器没数据」，
+  实际是类型错。上一版 CPU 温度一直读不到就是这个原因。
+- **IOHID 一次会返回 132 个服务，其中 94 条读数恒为 0**。那些是电压/电流/角度/
+  加速度通道，不是温度。过滤规则是「读数 > 0.5 才算温度」，负值同理无效。
+  过滤放在 `ThermalMonitor` 一处，界面不重复实现。
+- **`pmset schedule cancelall` 不能用**。排定是系统共享资源，闹钟、备份工具
+  都在用，取消全部会误伤别的程序。改成按「类型 + 时间」精确定位单条。
+- **普通进程读 SMC 会 Bus error**。所有 SMC 读写必须留在 root 助手里。
+- **`Result<T, String>` 编译不过**。`Result` 的失败类型必须满足 `Error`，
+  裸 `String` 不行。排定管理器改用 `ScheduledWakeError`。
+- **`AlertRule.init` 的参数叫 `comparison` 不是 `operator`** —— `operator`
+  是 Swift 关键字，属性名要用反引号声明，初始化参数名则换成了 `comparison`。
+- **`AlertRuleEngine.onTrigger` 只能有一个消费者**。监控协调器用它派发通知，
+  告警规则页用它记历史会互相顶掉。现在引擎有独立的观察者列表
+  （`addTriggerObserver` / `removeTriggerObserver`），界面走观察者。
+- **`scripts/test-idle-time.swift` 的空闲阈值原来定错对象**。`idleSeconds()` 测的是
+  全系统空闲，循环里一共睡了 0.5 秒，原来的 100ms 阈值会被系统噪声打中
+  （实测 0.11~0.12 秒，机器一忙就红）。改成 300ms —— 仍是累加量（0.5 秒以上）的一半，
+  重置坏掉照样被抓。变异测试确认过：把 `fireEvent` 改成空操作后断言报 1.2 秒，红。
+
+### 自测覆盖
+
+- `bash scripts/run-all-tests.sh`：**642 项断言通过，0 脚本失败**（26 个脚本）。
+  其中新增：`fan-models`(35) / `fan-control`(67) / `alert-rules`(64) /
+  `disk-idle-assertion`(7)。
+- `scripts/test-fan-control.swift` 67 项：温度→转速线性映射、滞回、下发节流、
+  90°C 兜底状态机（触发 / 冷却 / 解除 / 解除后恢复原模式）、免责声明门禁、传感器分组。
+- `scripts/test-alert-rules.swift` 64 项：持续时间判定、条件中断重新计时、
+  5 分钟冷却、指标缺失处理、持久化往返、契约字段名、观察者与 `onTrigger` 并存。
+- `scripts/test-disk-idle-assertion.sh` 7 项：创建 → `pmset -g assertions` 确认系统登记
+  → 释放 → 确认消失。
+- `scripts/test-fan-models.sh` 35 项：编解码往返（含中文、`|`、`,`、`%` 转义）、
+  可写风扇判定、90°C 判定边界。
+- 变异测试两处：观察者派发去掉 → 告警规则测试红 2 项；
+  `fireEvent` 改成空操作 → 空闲测试报 1.2 秒、红。
+- `xcodebuild -project DeepSleep.xcodeproj -scheme DeepSleep -configuration Debug
+  -derivedDataPath build build`：BUILD SUCCEEDED，0 error。
+- `python3 scripts/check-docs.py`：全部一致。
+
+### 未验证
+
+- **风扇转速没有在真机上写入过**。编译通过、纯逻辑测试通过，但 SMC 写入路径
+  没有端到端跑过一次。需要装上新版助手后手动验证。
+- **90°C 兜底没有在真机上触发过**。触发路径是纯逻辑测的（状态机 + 写入调用），
+  真机上的温度读数与写入的配合没有验过。
+- **界面没有在真实窗口里逐页看过**。三个新页面是按 `docs/ui-spec-thermal-fan.md`
+  写的规格实现的，规格本身没经过渲染验证。

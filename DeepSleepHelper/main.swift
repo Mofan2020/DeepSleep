@@ -429,6 +429,40 @@ private final class CommandHandler {
         case .getCPUTemperature:
             return getCPUTemperature()
 
+        // MARK: - 风扇控制（v1.9 起）
+
+        case .getFanState:
+            return getFanState()
+
+        case .setFanSpeed:
+            return setFanSpeed(request)
+
+        case .getTemperatureSnapshot:
+            return getTemperatureSnapshot()
+
+        case .releaseFanControl:
+            return releaseFanControl()
+
+        case .setFanDisclaimerAccepted:
+            return setFanDisclaimerAccepted(request)
+
+        // MARK: - 排定唤醒增强（v1.9 起）
+
+        case .listScheduledEvents:
+            return listScheduledEvents()
+
+        case .scheduleWakeWithOwner:
+            return scheduleWakeWithOwner(request)
+
+        case .cancelScheduledEvent:
+            return cancelScheduledEvent(request)
+
+        case .scheduleRepeatWake:
+            return scheduleRepeatWake(request)
+
+        case .cancelRepeatWake:
+            return cancelRepeatWake()
+
         case .sleepDisplay:
             return sleepDisplay()
 
@@ -765,6 +799,341 @@ private final class CommandHandler {
             logLine("getCPUTemperature unexpected: \(error)")
             return .failure("读取 CPU 温度失败：\(error.localizedDescription)")
         }
+    }
+
+    // MARK: - 风扇控制（v1.9 起）
+
+    /// 读风扇实时状态。
+    ///
+    /// 本机读不到风扇键时返回失败而不是空列表 —— 调用方要能区分
+    /// 「这台机器没风扇」和「读失败了」。
+    private func getFanState() -> HelperResponse {
+        do {
+            let state = try SMCFanControl.shared.readState()
+            let emergency = SMCFanControl.shared.emergencyState
+            var payload = state.encode()
+            payload["emergency"] = emergency.isEngaged ? "1" : "0"
+            let summary = state.fans
+                .map { "fan\($0.index) \($0.currentRPM)rpm/\($0.minRPM)-\($0.maxRPM)\($0.isManual ? " 手动" : " 自动")" }
+                .joined(separator: "，")
+            return .ok("\(state.fans.count) 个风扇：\(summary)", payload: payload)
+        } catch {
+            logLine("getFanState 失败：\(error)")
+            return .failure("\(error)")
+        }
+    }
+
+    /// 写风扇转速。
+    ///
+    /// 门禁、租约、90°C 兜底判定全部在 `SMCFanControl.setSpeed` 里执行 ——
+    /// 命令层只做参数解析，避免「换一个入口就绕过检查」。
+    private func setFanSpeed(_ request: HelperRequest) -> HelperResponse {
+        guard let rawFan = request.arguments["fan"], let fan = Int(rawFan) else {
+            return .failure("缺少或非法的 fan 参数（应为风扇序号，0 起）")
+        }
+        guard let rawRPM = request.arguments["rpm"], let rpm = Int(rawRPM) else {
+            return .failure("缺少或非法的 rpm 参数（应为整数，0 = 交回系统自动控制）")
+        }
+        guard fan >= 0 else { return .failure("fan 不能是负数") }
+        guard rpm >= 0 else { return .failure("rpm 不能是负数（0 = 交回系统自动控制）") }
+
+        let lease = Int(request.arguments["lease"] ?? "") ?? FanControl.leaseSeconds
+        guard lease >= 0 else { return .failure("lease 不能是负数") }
+        guard lease <= 3600 else { return .failure("lease 不能超过 3600 秒") }
+
+        let reason = request.arguments["reason"]
+
+        do {
+            let result = try SMCFanControl.shared.setSpeed(
+                fan: fan, rpm: rpm, leaseSeconds: lease, reason: reason)
+            let message = rpm == 0
+                ? "fan \(fan) 已交回系统自动控制"
+                : "fan \(fan) 目标 \(result.targetRPM) RPM（实际 \(result.actualRPM) RPM，租约 \(lease)s）"
+            return .ok(message, payload: result.encode())
+        } catch {
+            logLine("setFanSpeed 失败 fan=\(fan) rpm=\(rpm)：\(error)")
+            return .failure("\(error)")
+        }
+    }
+
+    /// 读全部温度传感器。
+    private func getTemperatureSnapshot() -> HelperResponse {
+        do {
+            let snapshot = try SMCTemperatureIOHID().readSnapshot()
+            let hottest = snapshot.maxCelsius.map { String(format: "%.2f", $0) } ?? "n/a"
+            logLine("getTemperatureSnapshot：\(snapshot.readings.count) 个传感器，最高 \(hottest)°C")
+            return .ok("\(snapshot.readings.count) 个传感器，最高 \(hottest)°C",
+                       payload: snapshot.encode())
+        } catch {
+            logLine("getTemperatureSnapshot 失败：\(error)")
+            return .failure("\(error)")
+        }
+    }
+
+    /// 所有风扇交回系统自动控制（应用退出 / 启动兜底）。
+    private func releaseFanControl() -> HelperResponse {
+        do {
+            try SMCFanControl.shared.releaseAll()
+            return .ok("所有风扇已交回系统自动控制")
+        } catch {
+            logLine("releaseFanControl 失败：\(error)")
+            return .failure("\(error)")
+        }
+    }
+
+    /// 同步免责声明同意状态。
+    ///
+    /// 撤回同意（accepted=false）时**先**把风扇交回自动、**再**落盘，
+    /// 否则会出现「已标记未同意，但风扇还停在手动模式」这种没人能收回的状态。
+    private func setFanDisclaimerAccepted(_ request: HelperRequest) -> HelperResponse {
+        let raw = (request.arguments["accepted"] ?? "").lowercased()
+        guard raw == "true" || raw == "false" || raw == "1" || raw == "0" else {
+            return .failure("accepted 必须是 true / false")
+        }
+        let accepted = (raw == "true" || raw == "1")
+
+        if !accepted {
+            // 绕过门禁直接释放：这一步必须在落盘之前，且不能因「未同意」被拒。
+            do {
+                try SMCFanControl.shared.releaseAll(reason: "撤回免责声明同意")
+            } catch {
+                logLine("撤回同意时交回风扇控制失败：\(error)")
+            }
+        }
+
+        do {
+            try FanDisclaimer.shared.setAccepted(accepted)
+            logLine("setFanDisclaimerAccepted → \(accepted)")
+            return .ok(accepted
+                ? "已记录：用户同意风扇控制免责声明（v\(FanControl.disclaimerVersion)）"
+                : "已记录：用户撤回风扇控制免责声明同意，风扇已交回系统自动控制")
+        } catch {
+            logLine("setFanDisclaimerAccepted 落盘失败：\(error)")
+            return .failure("\(error)")
+        }
+    }
+
+    // MARK: - 排定唤醒增强（v1.9 起）
+
+    /// 读系统当前所有排定项。
+    ///
+    /// `pmset -g sched` 不需要 root，但统一放助手侧，避免应用再写一份解析。
+    private func listScheduledEvents() -> HelperResponse {
+        let result = runProcess("/usr/bin/pmset", ["-g", "sched"])
+        guard result.status == 0 else {
+            let detail = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            return .failure("pmset -g sched 失败：\(detail)")
+        }
+
+        let entries = Self.parseScheduledEvents(result.output)
+        return .ok(entries.isEmpty ? "没有排定项" : "\(entries.count) 条排定项",
+                   payload: [
+                       "entries": entries.joined(separator: ","),
+                       "count": "\(entries.count)"
+                   ])
+    }
+
+    /// 排定一次唤醒，带 owner 标记。
+    private func scheduleWakeWithOwner(_ request: HelperRequest) -> HelperResponse {
+        guard let date = request.arguments["date"], !date.isEmpty else {
+            return .failure("缺少 date 参数（格式 MM/dd/yy HH:mm:ss）")
+        }
+        guard Self.isValidScheduleDate(date) else {
+            return .failure("date 必须是合法日期时间，格式 MM/dd/yy HH:mm:ss（收到：\(date)）")
+        }
+
+        let owner = request.arguments["owner"] ?? "Deep Sleep"
+        guard Self.isValidOwner(owner) else {
+            return .failure("owner 只能是 1–64 个可打印字符（不含引号与换行）")
+        }
+
+        // 参数数组直传，不拼 shell 字符串 —— 注入无从谈起。
+        let result = runProcess("/usr/bin/pmset", ["schedule", "wake", date, owner])
+        let detail = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard result.status == 0 else {
+            logLine("scheduleWakeWithOwner 失败 date=\(date) owner=\(owner)：\(detail)")
+            return .failure("排定唤醒失败：\(detail)")
+        }
+        logLine("scheduleWakeWithOwner ok date=\(date) owner=\(owner)")
+        return .ok("已排定唤醒：\(date)（owner：\(owner)）")
+    }
+
+    /// 按条取消排定项。
+    ///
+    /// 刻意**不做** `cancelall` —— 那会连别的程序排的唤醒一起取消。
+    private func cancelScheduledEvent(_ request: HelperRequest) -> HelperResponse {
+        guard let date = request.arguments["date"], !date.isEmpty else {
+            return .failure("缺少 date 参数（格式 MM/dd/yy HH:mm:ss；应与 listScheduledEvents 返回的 when 一致）")
+        }
+        guard Self.isValidScheduleDate(date) else {
+            return .failure("date 必须是合法日期时间（收到：\(date)）")
+        }
+
+        let kind = request.arguments["kind"] ?? "wake"
+        guard Self.allowedScheduleKinds.contains(kind) else {
+            return .failure("kind 必须是 \(Self.allowedScheduleKinds.joined(separator: " / ")) 之一")
+        }
+
+        let result = runProcess("/usr/bin/pmset", ["schedule", "cancel", kind, date])
+        let detail = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard result.status == 0 else {
+            logLine("cancelScheduledEvent 失败 kind=\(kind) date=\(date)：\(detail)")
+            return .failure("取消排定失败：\(detail)")
+        }
+        logLine("cancelScheduledEvent ok kind=\(kind) date=\(date)")
+        return .ok("已取消排定：\(kind) @ \(date)")
+    }
+
+    /// 循环排定唤醒（每周固定几天、固定时刻）。
+    private func scheduleRepeatWake(_ request: HelperRequest) -> HelperResponse {
+        guard let weekdays = request.arguments["weekdays"], !weekdays.isEmpty else {
+            return .failure("缺少 weekdays 参数（M T W R F S U 的子集，例如 MTWRF）")
+        }
+        guard Self.isValidWeekdays(weekdays) else {
+            return .failure("weekdays 只能由 M/T/W/R/F/S/U 组成且不能重复（收到：\(weekdays)）")
+        }
+
+        guard let time = request.arguments["time"], !time.isEmpty else {
+            return .failure("缺少 time 参数（格式 HH:mm:ss）")
+        }
+        guard Self.isValidTimeOfDay(time) else {
+            return .failure("time 必须是合法的 HH:mm:ss（收到：\(time)）")
+        }
+
+        let result = runProcess("/usr/bin/pmset", ["repeat", "wake", weekdays, time])
+        let detail = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard result.status == 0 else {
+            logLine("scheduleRepeatWake 失败 weekdays=\(weekdays) time=\(time)：\(detail)")
+            return .failure("循环排定失败：\(detail)")
+        }
+        logLine("scheduleRepeatWake ok weekdays=\(weekdays) time=\(time)")
+        return .ok("已循环排定：每周 \(weekdays) \(time) 唤醒")
+    }
+
+    /// 取消全部循环排定。
+    private func cancelRepeatWake() -> HelperResponse {
+        let result = runProcess("/usr/bin/pmset", ["repeat", "cancel"])
+        let detail = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard result.status == 0 else {
+            logLine("cancelRepeatWake 失败：\(detail)")
+            return .failure("取消循环排定失败：\(detail)")
+        }
+        logLine("cancelRepeatWake ok")
+        return .ok("已取消全部循环排定")
+    }
+
+    // MARK: - 排定项解析与校验
+
+    /// `pmset schedule` 接受的类型。白名单，不接受任意字符串。
+    private static let allowedScheduleKinds = ["wake", "sleep", "shutdown", "poweron", "restart"]
+
+    /// 解析 `pmset -g sched` 输出。
+    ///
+    /// 实测格式（docs/SMC.md / 协议契约 §10）：
+    /// ```
+    /// Scheduled power events:
+    ///  [0]  wake at 10/28/2026 03:17:00 by 'pmset'
+    /// ```
+    /// 没有排定项时输出为空（本机实测：连表头都不打印）。
+    /// 每条转成 `kind|when|owner`，与协议契约的记录格式一致。
+    static func parseScheduledEvents(_ output: String) -> [String] {
+        var entries: [String] = []
+
+        for line in output.split(separator: "\n", omittingEmptySubsequences: true) {
+            let text = line.trimmingCharacters(in: .whitespaces)
+            // 只要带序号前缀的行：[0]  wake at ...
+            guard let bracketStart = text.firstIndex(of: "["),
+                  let bracketEnd = text.firstIndex(of: "]"),
+                  bracketStart < bracketEnd,
+                  text[bracketStart..<bracketEnd].dropFirst().allSatisfy(\.isNumber) else {
+                continue
+            }
+
+            var body = text[text.index(after: bracketEnd)...]
+                .trimmingCharacters(in: .whitespaces)
+
+            // "wake at 10/28/2026 03:17:00 by 'pmset'"
+            guard let atRange = body.range(of: " at ") else { continue }
+            let kind = String(body[body.startIndex..<atRange.lowerBound])
+                .trimmingCharacters(in: .whitespaces)
+            guard !kind.isEmpty else { continue }
+
+            body = String(body[atRange.upperBound...])
+
+            var when = body.trimmingCharacters(in: .whitespaces)
+            var owner = ""
+
+            if let byRange = when.range(of: " by '") {
+                var tail = String(when[byRange.upperBound...])
+                when = String(when[when.startIndex..<byRange.lowerBound])
+                    .trimmingCharacters(in: .whitespaces)
+                if tail.hasSuffix("'") { tail.removeLast() }
+                owner = tail
+            }
+
+            // 字段分隔用 |、记录分隔用 ,，所以这两个字符不能出现在字段里。
+            let safeWhen = when.replacingOccurrences(of: "|", with: "/")
+                .replacingOccurrences(of: ",", with: " ")
+            let safeOwner = owner.replacingOccurrences(of: "|", with: "/")
+                .replacingOccurrences(of: ",", with: " ")
+
+            entries.append("\(kind)|\(safeWhen)|\(safeOwner)")
+        }
+
+        return entries
+    }
+
+    /// 校验 `MM/dd/yy HH:mm:ss`（也接受 4 位年份，`pmset -g sched` 输出的就是 4 位）。
+    static func isValidScheduleDate(_ value: String) -> Bool {
+        isValidDate(value, formats: ["MM/dd/yy HH:mm:ss", "MM/dd/yyyy HH:mm:ss"])
+    }
+
+    /// 校验 `HH:mm:ss`。
+    static func isValidTimeOfDay(_ value: String) -> Bool {
+        isValidDate(value, formats: ["HH:mm:ss"])
+    }
+
+    /// 严格日期校验：格式匹配 + 字段范围合法 + 往返一致（挡掉 02/30、25:00 这类）。
+    private static func isValidDate(_ value: String, formats: [String]) -> Bool {
+        // 先挡掉多行 / 控制字符：参数会进 argv，别让换行混进去。
+        guard !value.isEmpty, value.count <= 32,
+              value.unicodeScalars.allSatisfy({ $0.value >= 0x20 && $0.value != 0x7F }) else {
+            return false
+        }
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
+        formatter.isLenient = false
+
+        for format in formats {
+            formatter.dateFormat = format
+            guard let date = formatter.date(from: value) else { continue }
+            // 往返一致：DateFormatter 对 "02/30/26" 这类可能滚到下个月，规范化后不等于原值就拒绝。
+            if formatter.string(from: date) == value { return true }
+        }
+        return false
+    }
+
+    /// owner 校验：可打印 ASCII，1–64 字符，不含引号 / 反斜杠 / 换行。
+    static func isValidOwner(_ value: String) -> Bool {
+        guard !value.isEmpty, value.count <= 64 else { return false }
+        return value.unicodeScalars.allSatisfy { scalar in
+            scalar.value >= 0x20 && scalar.value < 0x7F
+                && scalar != "'" && scalar != "\"" && scalar != "\\"
+        }
+    }
+
+    /// weekdays 校验：只能是 MTWRFSU 的子集，且不能重复。
+    static func isValidWeekdays(_ value: String) -> Bool {
+        let allowed = Set("MTWRFSU")
+        guard !value.isEmpty, value.count <= 7 else { return false }
+        var seen = Set<Character>()
+        for character in value {
+            guard allowed.contains(character) else { return false }
+            guard seen.insert(character).inserted else { return false }
+        }
+        return true
     }
 
     /// 卸载：写入一个延迟脚本，让本进程退出后再删除文件与 launchd 任务。
@@ -1255,4 +1624,9 @@ if CommandLine.arguments.contains("--test-cputemp") ||
 }
 
 logLine("=== deepsleep-helper 启动 (protocol v\(HelperConstants.protocolVersion)) ===")
+
+// 风扇控制：启动租约心跳与 90°C 兜底监控，并注册退出时的交回收尾。
+// 必须在 HelperServer().start() 之前 —— 心跳要覆盖「助手刚起、应用还没连上」这段窗口。
+FanControlBootstrap.start()
+
 HelperServer().start()

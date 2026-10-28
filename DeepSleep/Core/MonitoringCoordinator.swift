@@ -10,6 +10,8 @@
 //
 
 import Foundation
+import Combine
+import UserNotifications
 
 @MainActor
 final class MonitoringCoordinator {
@@ -17,6 +19,11 @@ final class MonitoringCoordinator {
     static let shared = MonitoringCoordinator()
 
     private init() {}
+
+    /// 单进程内存采样的缓存（GB）。只在有规则用到该指标时才去抓进程快照。
+    private var cachedMaxProcessRAMGB: Double?
+    private var processRAMSamping: Task<Void, Never>?
+    private var rulesObservation: AnyCancellable?
 
     func wire() {
         SystemMonitor.shared.onEvent = { [weak self] event in
@@ -31,6 +38,189 @@ final class MonitoringCoordinator {
         }
         SystemNotifier.shared.registerCategories()
         SystemNotifier.shared.requestAuthorization()
+
+        wireThermalAndFans()
+        wireAlertRules()
+    }
+
+    // MARK: - 温度 / 风扇 / 自定义规则接线
+
+    private func wireThermalAndFans() {
+        ThermalMonitor.shared.start()
+
+        let fans = FanController.shared
+        // 风扇引擎的日志并入应用日志面板，别让它们只躺在 NSLog 里。
+        fans.onLog = { text, isError in
+            SleepController.shared.appendLog(text, isError: isError)
+        }
+        // 90°C 兜底是安全事件：复用现有的 CPU 温度通知 + 置顶对话框，
+        // 用户不能因为「没在看风扇页」而错过它。
+        fans.onEmergencyTriggered = { event in
+            let synthetic = CPUTemperatureEvent(
+                maxC: event.peakCelsius,
+                averageC: nil,
+                aggregateC: nil,
+                observedMaxC: event.peakCelsius,
+                thresholdC: FanControl.emergencyTemperatureCelsius,
+                timestamp: event.triggeredAt)
+            SystemNotifier.shared.notifyCPUTemperature(synthetic)
+            AlertWindowController.shared.presentCPUTemperature(event: synthetic)
+            SleepController.shared.appendLog(
+                String(format: "风扇已全部强制到最大转速（%.1f°C）", event.peakCelsius),
+                isError: true)
+        }
+        // 启动控制循环：内部先清残留 → 同步免责声明 → 起心跳。
+        // 注意它**不会**自动开启风扇控制（isEnabled 默认 false），
+        // 用户必须在界面里显式打开。
+        fans.start()
+    }
+
+    private func wireAlertRules() {
+        let engine = AlertRuleEngine.shared
+        engine.metricsProvider = { [weak self] in
+            self?.currentAlertMetrics()
+        }
+        engine.onTrigger = { [weak self] trigger in
+            self?.dispatchAlertRule(trigger)
+        }
+        engine.start()
+        syncProcessRAMSampling()
+        // 规则改动后重算「要不要采样单进程内存」。
+        rulesObservation = engine.$rules
+            .dropFirst()
+            .sink { [weak self] _ in
+                Task { @MainActor in self?.syncProcessRAMSampling() }
+            }
+    }
+
+    /// 汇总一次指标快照。取不到的指标是 nil，不是 0。
+    private func currentAlertMetrics() -> AlertMetrics {
+        let snapshot = SystemMonitor.shared.liveSnapshot()
+        let disk = DiskUsage.current()
+        let thermal = ThermalMonitor.shared
+        return AlertMetrics(
+            cpuPercent: snapshot.updatedAt == .distantPast ? nil : snapshot.cpuPercent,
+            ramPercent: snapshot.updatedAt == .distantPast ? nil : snapshot.ramPercent,
+            singleProcessRAMGB: cachedMaxProcessRAMGB,
+            cpuTemperature: thermal.isAvailable ? thermal.hottestCelsius : nil,
+            diskUsagePercent: disk.isEmpty ? nil : disk.usedFraction * 100
+        )
+    }
+
+    /// 有规则用到「单进程内存」时才去抓进程快照，30 秒一次。
+    ///
+    /// 为什么不复用 SystemMonitor：它只把 Top3（按 CPU 排）暴露出来，
+    /// 内存泄漏的进程往往 CPU 不高，按 CPU 排的 Top3 正好会漏掉它。
+    private func syncProcessRAMSampling() {
+        let needsSampling = AlertRuleEngine.shared.rules.contains {
+            $0.isEnabled && $0.metric == .singleProcessRAMGB
+        }
+        if needsSampling, processRAMSamping == nil {
+            processRAMSamping = Task { [weak self] in
+                while !Task.isCancelled {
+                    guard let records = try? await ProcessStatsProvider.shared.fetchStats(),
+                          !records.isEmpty else {
+                        self?.cachedMaxProcessRAMGB = nil
+                        try? await Task.sleep(nanoseconds: 30_000_000_000)
+                        continue
+                    }
+                    let maxRSS = records.map(\.rssBytes).max() ?? 0
+                    self?.cachedMaxProcessRAMGB =
+                        Double(maxRSS) / 1_073_741_824
+                    try? await Task.sleep(nanoseconds: 30_000_000_000)
+                }
+            }
+        } else if !needsSampling {
+            processRAMSamping?.cancel()
+            processRAMSamping = nil
+            cachedMaxProcessRAMGB = nil
+        }
+    }
+
+    /// 自定义规则触发：按动作发通知 / 邮件。
+    private func dispatchAlertRule(_ trigger: AlertTrigger) {
+        let rule = trigger.rule
+        let value = String(format: "%.1f", trigger.observedValue)
+        let message = String(
+            format: "规则「%@」触发：%@ %@ %@%@，当前 %@%@",
+            rule.name,
+            rule.metric.displayName,
+            rule.operator.displayName,
+            String(format: "%g", rule.threshold),
+            rule.metric.unit,
+            value,
+            rule.metric.unit)
+
+        SleepController.shared.appendLog(message, isError: true)
+
+        if rule.action.wantsNotification {
+            postRuleNotification(rule: rule, message: message, trigger: trigger)
+        }
+        if rule.action.wantsEmail {
+            sendRuleEmail(rule: rule, trigger: trigger)
+        }
+    }
+
+    /// 自定义规则的系统通知。
+    ///
+    /// 没走 `SystemNotifier`：它是给「过载 / 单进程 / CPU 温度」三类固定事件
+    /// 定制的，分类与按钮都绑死在那三条链路上；自定义规则的文字是动态的，
+    /// 这里单发一条不带动作按钮的通知更合适（也不该给用户「结束进程」的按钮）。
+    private func postRuleNotification(rule: AlertRule, message: String, trigger: AlertTrigger) {
+        let content = UNMutableNotificationContent()
+        content.title = "⚠️ \(rule.name)"
+        content.body = message
+        content.sound = .default
+        content.userInfo = [
+            "kind": "alertRule",
+            "ruleID": rule.id.uuidString,
+        ]
+        let request = UNNotificationRequest(
+            identifier: "alertRule-\(rule.id.uuidString)-\(Int(trigger.timestamp.timeIntervalSince1970))",
+            content: content,
+            trigger: nil)
+        UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
+    }
+
+    /// 自定义规则的邮件。
+    ///
+    /// 冷却由引擎负责（同一规则 5 分钟一次）；这里仍走 EmailThrottleStore，
+    /// 是为「用户连点保存导致规则集合反复变化」这类边角情况兜一层。
+    private func sendRuleEmail(rule: AlertRule, trigger: AlertTrigger) {
+        let config = MonitorConfig.load()
+        guard config.emailAlertEnabled else { return }
+
+        let key = "alertRule-\(rule.id.uuidString)"
+        let cooldown = TimeInterval(max(0, config.emailCooldownSeconds))
+        let now = Date()
+        if cooldown > 0, let last = EmailThrottleStore.shared.lastSent(forKey: key),
+           now.timeIntervalSince(last) < cooldown {
+            return
+        }
+        EmailThrottleStore.shared.record(key: key, at: now)
+
+        let body = """
+        Deep Sleep 自定义告警规则触发：
+
+        • 规则：\(rule.name)
+        • 指标：\(rule.metric.displayName) \(rule.operator.displayName) \(String(format: "%g", rule.threshold))\(rule.metric.unit)
+        • 当前值：\(String(format: "%.1f", trigger.observedValue))\(rule.metric.unit)
+        • 持续时间要求：\(rule.durationSeconds) 秒
+
+        时间：\(ISO8601DateFormatter().string(from: trigger.timestamp))
+        """
+
+        Task { @MainActor in
+            let result = await EmailChannel.shared.send(subject: "自定义告警：\(rule.name)", body: body)
+            switch result {
+            case .success:
+                SleepController.shared.appendLog("规则告警邮件已发：\(rule.name)")
+            case .failure(let reason):
+                EmailThrottleStore.shared.clear(key: key)
+                SleepController.shared.appendLog(
+                    "规则告警邮件发送失败（\(rule.name)）：\(reason)", isError: true)
+            }
+        }
     }
 
     /// 服务器模式期间：只走 notify（若有），跳过 AlertWindow 的「冻结 / 终结」按钮。

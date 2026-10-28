@@ -18,7 +18,7 @@
 - **应用名**：Deep Sleep
 - **最低系统**：macOS 26.0
 - **语言 / 框架**：Swift 5、SwiftUI + AppKit、IOKit、LocalAuthentication
-- **当前版本**：1.8.2
+- **当前版本**：1.9.0
 
 ## 安装
 
@@ -103,7 +103,11 @@ brew install mofan2020/tap/deepsleep
 - **CPU / RAM 过载告警**：连续 N 秒超过阈值时提示前三大占用的进程，
   用户可冻结（SIGSTOP）或结束（SIGKILL），也可忽略。
 - **单进程 RAM 超阈告警**：任一进程 RSS 超过设定值立刻提示（不等持续）。
-- **CPU 温度超阈告警**：暂不可用 —— macOS 26/27 的 Apple SMC 公开接口实测返回 `kIOReturnNotFound / kIOReturnUnsupported` / `result=0` 但 `dataSize=0`（本机实测，开发笔记 [notes.md](docs/notes.md) 有完整诊断记录），重构中，下次更新放出；其它监控项不受影响。先占位 UI「等待后续更新」。
+- **温度监控**：新增「温度监控」页，列出 SoC、电池、存储等传感器的实时读数。走 IOHID 私有温度事件通道，普通用户进程就能读，不需要完全控制权限。同一传感器的多条通道合并成一行，取其中最高值。
+- **风扇控制**：新增「风扇控制」页，三种模式 —— 交给系统、固定转速、按规则调速。规则需要三个参数：目标风扇、最低温度、最高温度，低于最低温度用最低转速，高于最高温度用最高转速，中间随温度线性变化。固定转速与规则调速需要完全控制权限，并需先同意免责声明。
+- **90°C 强制最大转速**：任一传感器达到 90°C，所有风扇立即拉到各自最大转速，压过你设置的任何模式与规则。温度回落后仍保持 60 秒再恢复原模式。
+- **自定义告警规则**：新增「告警规则」页，可自定指标、比较方式、阈值、持续时间和动作。指标覆盖 CPU 使用率、内存使用率、单进程内存、CPU 温度和磁盘使用率。条件连续满足设定时长才触发。规则只发告警，不结束进程。
+- **阻止外部磁盘空闲休眠**：电源设置页的高级选项。外置硬盘不会因为长时间无操作转入低功耗状态，避免传输中断与唤醒延迟。不阻止系统睡眠，也不能阻止电池耗尽时关机。
 - **完全卸载**：撤销所有断言，恢复 disablesleep，清理配置（Preferences / Caches / Application Support / Saved State / Logs），卸载助手，删除自启 plist，删除 .app 包。侧栏「卸载 Deep Sleep」项入口。
 
 ## 命令行接口
@@ -118,7 +122,7 @@ open -a "Deep Sleep" --args --status
 
 | 参数 | 说明 |
 | --- | --- |
-| `--hold <kinds>` | 逗号分隔。接受 `idle-system` / `display` / `system`，以及 `idle`、`screen`、`lid`、`all` 等别名 |
+| `--hold <kinds>` | 逗号分隔。接受 `idle-system` / `display` / `system` / `disk-idle`，以及 `idle`、`screen`、`lid`、`all` 等别名 |
 | `--release` | 释放全部保持 |
 | `--status` | 输出当前状态，含 `powerWatcher=`、`audits=` 等诊断字段 |
 | `--wait <秒>` | 与 `--status` 配合，等一段时间后再报告（用于验证对账频率） |

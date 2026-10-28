@@ -13,6 +13,7 @@
 		034839185EA8864A606DF6EF /* ProcessPriority.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBB5D215E2943FDD3FC7BEDB /* ProcessPriority.swift */; };
 		04AADB1A90517C6AFA89E030 /* URLCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DFE7EA8FCC931540BB46584 /* URLCommands.swift */; };
 		04E9E649615877F270D223AA /* PMSetOutput.swift in Sources */ = {isa = PBXBuildFile; fileRef = 575A45B0E6499C686C4827CF /* PMSetOutput.swift */; };
+		07869D7E846656DBC963A4CE /* SMCTemperatureIOHID.swift in Sources */ = {isa = PBXBuildFile; fileRef = 208F03A64FF92975883CA9D7 /* SMCTemperatureIOHID.swift */; };
 		0B6E7356695F7E831C9EEE27 /* KeepAliveEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51DC08B3654D7031295EBD13 /* KeepAliveEngine.swift */; };
 		1918D7D77EC9140F31DE6718 /* AutomationRule.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4120515887C376197CCE7F9 /* AutomationRule.swift */; };
 		1C970D88D66C4F43D8AD1DAC /* PowerWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2DD20BF1CBB3194597701CA /* PowerWatcher.swift */; };
@@ -22,11 +23,14 @@
 		30B151DC27ACB9ECBD8AFEA4 /* DiskUsage.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2908A142A34184EE666FF94 /* DiskUsage.swift */; };
 		313486F9C714E8AC1436BE78 /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = 178D52B0BEF95859AB8B6D88 /* Components.swift */; };
 		355B12850D9D59EF6A64EDD2 /* TerminationReport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4977ACA618E906FAE14B97C0 /* TerminationReport.swift */; };
+		3657D5DF6AC5D265032C1E81 /* FanDisclaimer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BA10B3137070A97BD3D9B30 /* FanDisclaimer.swift */; };
 		373014038B076AA90C1FA300 /* HelperProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE3295E35F8D28B69A629A8F /* HelperProtocol.swift */; };
 		3A1481D80852929319D7370D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 7C643740D2392EB1F876E8BA /* Assets.xcassets */; };
+		3B1F3F21CD88DEA9B8881CA2 /* FanControlView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73544675806A1C9BE67304B3 /* FanControlView.swift */; };
 		3DD32746C4046DE4C01B1BC6 /* ProcessStatsProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED60BFA7B2D37DD4613795ED /* ProcessStatsProvider.swift */; };
 		3E5B62161B19BF1CCE6E1B22 /* ControlView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DEE905EAF64EFC038DFC418 /* ControlView.swift */; };
 		43965B2CAF6676C308E55526 /* SleepController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93C5E4B4358BF400FACC53DC /* SleepController.swift */; };
+		45C95F7C8C6687B0080EB1FC /* FanController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6012695D8816727E333287FF /* FanController.swift */; };
 		46F0FD7486AF2AD5E745E69A /* Version.swift in Sources */ = {isa = PBXBuildFile; fileRef = F67CFF72B57B6842BFE84727 /* Version.swift */; };
 		48A8411A91BC1725A62EAE46 /* HelperInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64A44533D85F54CB2BC70D48 /* HelperInstaller.swift */; };
 		49BA4D1FF2BB3180D79AA7D5 /* uninstall-helper.sh in Resources */ = {isa = PBXBuildFile; fileRef = 5C4F13990352AAC1FC42479A /* uninstall-helper.sh */; };
@@ -40,6 +44,7 @@
 		55F671363B5B444E79AD7D65 /* NicePageSize.swift in Sources */ = {isa = PBXBuildFile; fileRef = 397AFF18E2E49FCA4EF4C9B6 /* NicePageSize.swift */; };
 		5CBBFE252FA1FF06D00A3222 /* TerminationReport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4977ACA618E906FAE14B97C0 /* TerminationReport.swift */; };
 		5CF047FA11D64F6D5A7CF6FB /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68F588C53CC45F52D04A434B /* AppDelegate.swift */; };
+		5D4E0D12589875B3246CCEFE /* ScheduledWakeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6577DBB50BCE48AD868CB0EE /* ScheduledWakeManager.swift */; };
 		5E8C2C5C7356AE760C7CBF15 /* MenuBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13BD008C8B73D8005C11EFAC /* MenuBarController.swift */; };
 		62404108B725BBFBFE76C583 /* UpdateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BBF3FF9C3B4A0AA3E5A2493 /* UpdateView.swift */; };
 		629AF9961611BE5DEBCFE641 /* IdleTime.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFD43F8F82DD114B7424CF91 /* IdleTime.swift */; };
@@ -47,16 +52,20 @@
 		6659B6122A8EEA38871C4070 /* ProcessPriority.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBB5D215E2943FDD3FC7BEDB /* ProcessPriority.swift */; };
 		683EF363E4F084BEF59CD0EB /* BiometricAuth.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BE799E3FF01373354EC7D76 /* BiometricAuth.swift */; };
 		68BBD23F6A82CF25F557453C /* CPUTemperatureSample.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16BB6D07F5EFD58141E50A48 /* CPUTemperatureSample.swift */; };
+		697159DF6592C3DF33AFB152 /* FanModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE02139511172EAC3BE83EDC /* FanModels.swift */; };
 		6AFBA0A1C3939B8A8162754B /* ProcessGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09942C2FCA248432F203B05D /* ProcessGuard.swift */; };
 		6CE01DD4BAA6D26B9C73121A /* NiceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 005259E71AECD16B7A5CE1A1 /* NiceView.swift */; };
 		6F47FDDC8B8A8BCEF68E6621 /* HelperClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CAA06BD31D3CA20982FDE4C /* HelperClient.swift */; };
 		708B71B465D2605742446DBD /* PowerActivityMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C993F30605CB3C3BB8F0EC18 /* PowerActivityMonitor.swift */; };
 		7199FB5E6E665788C67B22C3 /* HostsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A84DDB9E0CFBF5F7269C34B8 /* HostsView.swift */; };
+		739671A0C4D83A406D54898E /* FanModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE02139511172EAC3BE83EDC /* FanModels.swift */; };
 		73ACAA59B7A7FB882CB55A50 /* AutomationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65EE86101EAC650FBB5F0CBB /* AutomationEngine.swift */; };
+		77342CE17E42BF9491EB9D30 /* FanDisclaimer.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE18F7C52D61C3E6970A309 /* FanDisclaimer.swift */; };
 		777A351396E1CB2C231820FD /* EmailChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B977BD301346F61F48D15CDB /* EmailChannel.swift */; };
 		77AC54EAF737FDB032DEB3FA /* ServerModeIdlePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27F7A85603F8F24BB4412911 /* ServerModeIdlePolicy.swift */; };
 		78D179B4ACE0E28FB61B6555 /* AlertWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B527587ED1D0F7A77206BE2C /* AlertWindowController.swift */; };
 		7B5449CB86A23F58E0331611 /* HostsAllowedEditors.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6450BE748FD8543755017DE /* HostsAllowedEditors.swift */; };
+		7D67EE9A219FAB797919FF33 /* ThermalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B2F82075D9BCAEBCCF8EA45 /* ThermalView.swift */; };
 		7E9BB0ED0884AB7842D45981 /* ExternalActivityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 596F4304321F89BFF2BEC9DB /* ExternalActivityView.swift */; };
 		8497605C3EFAAF988C2007FB /* SystemMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = E13408104C16C642713945FC /* SystemMonitor.swift */; };
 		84F5D460858BA98B403006FD /* KeepAliveView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8EA071AFAF53B9AAEAEC928 /* KeepAliveView.swift */; };
@@ -65,6 +74,7 @@
 		89D6B9C0B4DFC68071831BD1 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96ED86613A6A98B3C2D18307 /* main.swift */; };
 		8BD0DC602D72415D81D2B19D /* PMSetOutput.swift in Sources */ = {isa = PBXBuildFile; fileRef = 575A45B0E6499C686C4827CF /* PMSetOutput.swift */; };
 		906DC80E391FF7C7313B50F8 /* QuarantineService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20EF4F84074F785EE30C16A /* QuarantineService.swift */; };
+		910627B4BEF3D19C697C5890 /* SMCFanControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = E963C2A473DB611F7AB01326 /* SMCFanControl.swift */; };
 		92410274FE9694B7FA8A76D8 /* install-helper.sh in Resources */ = {isa = PBXBuildFile; fileRef = 960F8920CB0412CB44C5FB31 /* install-helper.sh */; };
 		9429A1EB6266F9702E9D9158 /* ScheduleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43F312DABC0A8AAF435E103B /* ScheduleView.swift */; };
 		9551EFBCD9BC4F0B0C324544 /* DeepSleepIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09E4540A7ED2046DEB126599 /* DeepSleepIntents.swift */; };
@@ -78,7 +88,9 @@
 		B241E8443F1AAB49F8BDDEBE /* KeepAliveKeychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C1DA8B6AFFE67CFA6EAD1A2 /* KeepAliveKeychain.swift */; };
 		B375FF39CCDF2A267D7E2192 /* DiskUsage.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2908A142A34184EE666FF94 /* DiskUsage.swift */; };
 		B49E2B674BE4C8DBA32A22F6 /* HelperProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE3295E35F8D28B69A629A8F /* HelperProtocol.swift */; };
+		B6A73FE056BDB671EA8AEAA3 /* AlertRule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F135C3A75CFEA2A9867579F /* AlertRule.swift */; };
 		BB3A3C58E54678870163A762 /* DeepSleepAppShortcuts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52354ED18755C8CF314F230E /* DeepSleepAppShortcuts.swift */; };
+		BC562F38039D60B8597B927C /* AlertRulesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07D54DD1D4D5168D7EA9FF30 /* AlertRulesView.swift */; };
 		C0EB5F908D427F907D33B32D /* SystemNotifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76A414E466231BC9EA4876AB /* SystemNotifier.swift */; };
 		C58D488668AB8F3B538FC28C /* PowerSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0E2DA26DEFB4FB3396D7063 /* PowerSettingsView.swift */; };
 		C5C82FA1DED31F6CAD42F13E /* QuickQuit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DAFF6F4654DCF7056F1BA67 /* QuickQuit.swift */; };
@@ -90,6 +102,7 @@
 		CF5AACF31452068C8B44EBC6 /* KeepAliveError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96C806AFB3348F78552890DE /* KeepAliveError.swift */; };
 		D0CC2A42F432A1A7D0DEEEE4 /* Uninstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF2BAA4DC2FE609833A597C3 /* Uninstaller.swift */; };
 		D50B72FD4279D758A75E2B7B /* IdleTime.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFD43F8F82DD114B7424CF91 /* IdleTime.swift */; };
+		D578413F8CDB698652A7CA7A /* ThermalMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE29964E7F239AC43FECBDCF /* ThermalMonitor.swift */; };
 		D9D2D9D844BE3193F3F15B18 /* KeepAliveHTTP.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E81D0012D0B46AA593CB7E5 /* KeepAliveHTTP.swift */; };
 		DD316DAE16D1AA3E9438FA15 /* AppRestartWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 599B624893AFA02A93639FAE /* AppRestartWatcher.swift */; };
 		DD4E960A423AD43036E88DBA /* QuarantineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD00E9A548D69A57CA1D30D5 /* QuarantineView.swift */; };
@@ -100,6 +113,7 @@
 		E3CD86EC4A9AF02878100043 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2650D41E2F701CBC6738B29 /* ContentView.swift */; };
 		E648F9B8460CA4DC6467A511 /* ProcessGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09942C2FCA248432F203B05D /* ProcessGuard.swift */; };
 		E6B30B55F1CF5DBAB648E548 /* KeepAliveClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69B10B1FADA3DF8080DA3076 /* KeepAliveClient.swift */; };
+		EB176F453E09BC7233F07626 /* AlertRuleEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65A74B9772DF7497322E7265 /* AlertRuleEngine.swift */; };
 		EDD6AC5A315B659622797185 /* UpdateManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03B58135C030FD6D97DD7D84 /* UpdateManager.swift */; };
 		EE3890A1A4901BA8921BC74E /* ServerModeIdlePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27F7A85603F8F24BB4412911 /* ServerModeIdlePolicy.swift */; };
 		EE8F090E23622184B5D04D17 /* UnixSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58014010D89130A9A194BE3F /* UnixSocket.swift */; };
@@ -126,6 +140,7 @@
 		005259E71AECD16B7A5CE1A1 /* NiceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NiceView.swift; sourceTree = "<group>"; };
 		0343C5752D94A72187E5078B /* DeepSleepApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepSleepApp.swift; sourceTree = "<group>"; };
 		03B58135C030FD6D97DD7D84 /* UpdateManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateManager.swift; sourceTree = "<group>"; };
+		07D54DD1D4D5168D7EA9FF30 /* AlertRulesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertRulesView.swift; sourceTree = "<group>"; };
 		09942C2FCA248432F203B05D /* ProcessGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessGuard.swift; sourceTree = "<group>"; };
 		09E4540A7ED2046DEB126599 /* DeepSleepIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepSleepIntents.swift; sourceTree = "<group>"; };
 		0DEE905EAF64EFC038DFC418 /* ControlView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlView.swift; sourceTree = "<group>"; };
@@ -136,6 +151,7 @@
 		178D52B0BEF95859AB8B6D88 /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
 		1DAFF6F4654DCF7056F1BA67 /* QuickQuit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickQuit.swift; sourceTree = "<group>"; };
 		1DFE7EA8FCC931540BB46584 /* URLCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = URLCommands.swift; sourceTree = "<group>"; };
+		208F03A64FF92975883CA9D7 /* SMCTemperatureIOHID.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SMCTemperatureIOHID.swift; sourceTree = "<group>"; };
 		214A9E90F394CC9723FD747F /* ProcessSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessSnapshot.swift; sourceTree = "<group>"; };
 		27F7A85603F8F24BB4412911 /* ServerModeIdlePolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerModeIdlePolicy.swift; sourceTree = "<group>"; };
 		2955F2519DCC800EC189D9EA /* WindowCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowCoordinator.swift; sourceTree = "<group>"; };
@@ -143,6 +159,7 @@
 		397AFF18E2E49FCA4EF4C9B6 /* NicePageSize.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NicePageSize.swift; sourceTree = "<group>"; };
 		3E1D45DC75AB25D3BC5214F5 /* HelperVersionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelperVersionManager.swift; sourceTree = "<group>"; };
 		3E81D0012D0B46AA593CB7E5 /* KeepAliveHTTP.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeepAliveHTTP.swift; sourceTree = "<group>"; };
+		3F135C3A75CFEA2A9867579F /* AlertRule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertRule.swift; sourceTree = "<group>"; };
 		410BF27C14819844BBBF1AD9 /* KeepAliveModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeepAliveModels.swift; sourceTree = "<group>"; };
 		432740AF96D744E5DAB258F4 /* AutoStartManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoStartManager.swift; sourceTree = "<group>"; };
 		43F312DABC0A8AAF435E103B /* ScheduleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleView.swift; sourceTree = "<group>"; };
@@ -157,16 +174,21 @@
 		584DF06C95A2B1C65C62BDDB /* ProcessNiceService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessNiceService.swift; sourceTree = "<group>"; };
 		596F4304321F89BFF2BEC9DB /* ExternalActivityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExternalActivityView.swift; sourceTree = "<group>"; };
 		599B624893AFA02A93639FAE /* AppRestartWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRestartWatcher.swift; sourceTree = "<group>"; };
+		5BA10B3137070A97BD3D9B30 /* FanDisclaimer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FanDisclaimer.swift; sourceTree = "<group>"; };
 		5BBF3FF9C3B4A0AA3E5A2493 /* UpdateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateView.swift; sourceTree = "<group>"; };
 		5BE799E3FF01373354EC7D76 /* BiometricAuth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BiometricAuth.swift; sourceTree = "<group>"; };
 		5C1DA8B6AFFE67CFA6EAD1A2 /* KeepAliveKeychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeepAliveKeychain.swift; sourceTree = "<group>"; };
 		5C4F13990352AAC1FC42479A /* uninstall-helper.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = "uninstall-helper.sh"; sourceTree = "<group>"; };
 		5CAA06BD31D3CA20982FDE4C /* HelperClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelperClient.swift; sourceTree = "<group>"; };
+		6012695D8816727E333287FF /* FanController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FanController.swift; sourceTree = "<group>"; };
 		64A44533D85F54CB2BC70D48 /* HelperInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelperInstaller.swift; sourceTree = "<group>"; };
+		6577DBB50BCE48AD868CB0EE /* ScheduledWakeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduledWakeManager.swift; sourceTree = "<group>"; };
+		65A74B9772DF7497322E7265 /* AlertRuleEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertRuleEngine.swift; sourceTree = "<group>"; };
 		65EE86101EAC650FBB5F0CBB /* AutomationEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationEngine.swift; sourceTree = "<group>"; };
 		68F588C53CC45F52D04A434B /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		69AD70CC1E39560226333763 /* QuickQuitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickQuitView.swift; sourceTree = "<group>"; };
 		69B10B1FADA3DF8080DA3076 /* KeepAliveClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeepAliveClient.swift; sourceTree = "<group>"; };
+		73544675806A1C9BE67304B3 /* FanControlView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FanControlView.swift; sourceTree = "<group>"; };
 		76A414E466231BC9EA4876AB /* SystemNotifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemNotifier.swift; sourceTree = "<group>"; };
 		7C643740D2392EB1F876E8BA /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		8F1CCE72967AB0DD99C9E36F /* KeepAliveStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeepAliveStore.swift; sourceTree = "<group>"; };
@@ -179,10 +201,12 @@
 		96ED86613A6A98B3C2D18307 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		9984708438247E1D6DD0C2DF /* ServerModeController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerModeController.swift; sourceTree = "<group>"; };
 		9A765E484E4DB325FDDA6E62 /* WeeklyRestartManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeeklyRestartManager.swift; sourceTree = "<group>"; };
+		9B2F82075D9BCAEBCCF8EA45 /* ThermalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThermalView.swift; sourceTree = "<group>"; };
 		A2DD20BF1CBB3194597701CA /* PowerWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerWatcher.swift; sourceTree = "<group>"; };
 		A4120515887C376197CCE7F9 /* AutomationRule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationRule.swift; sourceTree = "<group>"; };
 		A84DDB9E0CFBF5F7269C34B8 /* HostsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostsView.swift; sourceTree = "<group>"; };
 		A8EA071AFAF53B9AAEAEC928 /* KeepAliveView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeepAliveView.swift; sourceTree = "<group>"; };
+		AE02139511172EAC3BE83EDC /* FanModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FanModels.swift; sourceTree = "<group>"; };
 		B20EF4F84074F785EE30C16A /* QuarantineService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuarantineService.swift; sourceTree = "<group>"; };
 		B4F0B4163E1F57C80031517F /* UninstallView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UninstallView.swift; sourceTree = "<group>"; };
 		B527587ED1D0F7A77206BE2C /* AlertWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertWindowController.swift; sourceTree = "<group>"; };
@@ -199,6 +223,7 @@
 		D2908A142A34184EE666FF94 /* DiskUsage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiskUsage.swift; sourceTree = "<group>"; };
 		D6B81675C2A48027F8DF140A /* DeepSleepHelper */ = {isa = PBXFileReference; includeInIndex = 0; path = DeepSleepHelper; sourceTree = BUILT_PRODUCTS_DIR; };
 		DA7EDBC6464CD66EEAAC2519 /* MonitoringView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonitoringView.swift; sourceTree = "<group>"; };
+		DAE18F7C52D61C3E6970A309 /* FanDisclaimer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FanDisclaimer.swift; sourceTree = "<group>"; };
 		DBB5D215E2943FDD3FC7BEDB /* ProcessPriority.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessPriority.swift; sourceTree = "<group>"; };
 		DE3295E35F8D28B69A629A8F /* HelperProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelperProtocol.swift; sourceTree = "<group>"; };
 		DE95755CD1A5144551AD6774 /* ScheduledCommand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduledCommand.swift; sourceTree = "<group>"; };
@@ -208,7 +233,9 @@
 		E329CAE64699407C2EF03425 /* LogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogView.swift; sourceTree = "<group>"; };
 		E6450BE748FD8543755017DE /* HostsAllowedEditors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostsAllowedEditors.swift; sourceTree = "<group>"; };
 		E75BB13FF2F018F746DC727B /* MonitoringCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonitoringCoordinator.swift; sourceTree = "<group>"; };
+		E963C2A473DB611F7AB01326 /* SMCFanControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SMCFanControl.swift; sourceTree = "<group>"; };
 		ED60BFA7B2D37DD4613795ED /* ProcessStatsProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessStatsProvider.swift; sourceTree = "<group>"; };
+		EE29964E7F239AC43FECBDCF /* ThermalMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThermalMonitor.swift; sourceTree = "<group>"; };
 		F06EA4DBBBFC1FF8CA6C6DF4 /* HostsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostsService.swift; sourceTree = "<group>"; };
 		F2650D41E2F701CBC6738B29 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		F67CFF72B57B6842BFE84727 /* Version.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Version.swift; sourceTree = "<group>"; };
@@ -247,9 +274,12 @@
 		38B0F7B6872D64A4C6EE9E84 /* DeepSleepHelper */ = {
 			isa = PBXGroup;
 			children = (
+				5BA10B3137070A97BD3D9B30 /* FanDisclaimer.swift */,
 				96ED86613A6A98B3C2D18307 /* main.swift */,
 				4D53595CDD09B7293B6CF8F1 /* SelfUpdate.swift */,
+				E963C2A473DB611F7AB01326 /* SMCFanControl.swift */,
 				950C18882A5E056E157F7741 /* SMCTemperature.swift */,
+				208F03A64FF92975883CA9D7 /* SMCTemperatureIOHID.swift */,
 			);
 			path = DeepSleepHelper;
 			sourceTree = "<group>";
@@ -257,12 +287,16 @@
 		87CE46D332B4F3AF2889D27E /* Core */ = {
 			isa = PBXGroup;
 			children = (
+				3F135C3A75CFEA2A9867579F /* AlertRule.swift */,
+				65A74B9772DF7497322E7265 /* AlertRuleEngine.swift */,
 				B527587ED1D0F7A77206BE2C /* AlertWindowController.swift */,
 				599B624893AFA02A93639FAE /* AppRestartWatcher.swift */,
 				C0322343BBDEB6A664F907E5 /* AssertionKind.swift */,
 				65EE86101EAC650FBB5F0CBB /* AutomationEngine.swift */,
 				A4120515887C376197CCE7F9 /* AutomationRule.swift */,
 				432740AF96D744E5DAB258F4 /* AutoStartManager.swift */,
+				6012695D8816727E333287FF /* FanController.swift */,
+				DAE18F7C52D61C3E6970A309 /* FanDisclaimer.swift */,
 				566F4ACAAB91680B697CC74D /* GlobalHotkey.swift */,
 				3E1D45DC75AB25D3BC5214F5 /* HelperVersionManager.swift */,
 				F06EA4DBBBFC1FF8CA6C6DF4 /* HostsService.swift */,
@@ -275,10 +309,12 @@
 				B20EF4F84074F785EE30C16A /* QuarantineService.swift */,
 				1DAFF6F4654DCF7056F1BA67 /* QuickQuit.swift */,
 				DE95755CD1A5144551AD6774 /* ScheduledCommand.swift */,
+				6577DBB50BCE48AD868CB0EE /* ScheduledWakeManager.swift */,
 				9984708438247E1D6DD0C2DF /* ServerModeController.swift */,
 				93C5E4B4358BF400FACC53DC /* SleepController.swift */,
 				E13408104C16C642713945FC /* SystemMonitor.swift */,
 				76A414E466231BC9EA4876AB /* SystemNotifier.swift */,
+				EE29964E7F239AC43FECBDCF /* ThermalMonitor.swift */,
 				CF2BAA4DC2FE609833A597C3 /* Uninstaller.swift */,
 				03B58135C030FD6D97DD7D84 /* UpdateManager.swift */,
 				1DFE7EA8FCC931540BB46584 /* URLCommands.swift */,
@@ -310,6 +346,7 @@
 			children = (
 				16BB6D07F5EFD58141E50A48 /* CPUTemperatureSample.swift */,
 				D2908A142A34184EE666FF94 /* DiskUsage.swift */,
+				AE02139511172EAC3BE83EDC /* FanModels.swift */,
 				DE3295E35F8D28B69A629A8F /* HelperProtocol.swift */,
 				E6450BE748FD8543755017DE /* HostsAllowedEditors.swift */,
 				CFD43F8F82DD114B7424CF91 /* IdleTime.swift */,
@@ -392,6 +429,7 @@
 		FC4B385FCF1AA271879C9157 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				07D54DD1D4D5168D7EA9FF30 /* AlertRulesView.swift */,
 				CAB733FD825537CF3DA93F8A /* AutomationView.swift */,
 				13496FAE978C672E3F2EA8B8 /* AutoStartSettings.swift */,
 				178D52B0BEF95859AB8B6D88 /* Components.swift */,
@@ -399,6 +437,7 @@
 				0DEE905EAF64EFC038DFC418 /* ControlView.swift */,
 				571B5897312541D688A35CB1 /* DashboardView.swift */,
 				596F4304321F89BFF2BEC9DB /* ExternalActivityView.swift */,
+				73544675806A1C9BE67304B3 /* FanControlView.swift */,
 				A84DDB9E0CFBF5F7269C34B8 /* HostsView.swift */,
 				E329CAE64699407C2EF03425 /* LogView.swift */,
 				DA7EDBC6464CD66EEAAC2519 /* MonitoringView.swift */,
@@ -408,6 +447,7 @@
 				69AD70CC1E39560226333763 /* QuickQuitView.swift */,
 				43F312DABC0A8AAF435E103B /* ScheduleView.swift */,
 				E0CCA93C48A647DA76B5DF42 /* ServerModeView.swift */,
+				9B2F82075D9BCAEBCCF8EA45 /* ThermalView.swift */,
 				C4357ED9709A5548477BE6FE /* ToolboxLayout.swift */,
 				328414D1585DE241759D16C5 /* ToolboxView.swift */,
 				B4F0B4163E1F57C80031517F /* UninstallView.swift */,
@@ -535,6 +575,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B6A73FE056BDB671EA8AEAA3 /* AlertRule.swift in Sources */,
+				EB176F453E09BC7233F07626 /* AlertRuleEngine.swift in Sources */,
+				BC562F38039D60B8597B927C /* AlertRulesView.swift in Sources */,
 				78D179B4ACE0E28FB61B6555 /* AlertWindowController.swift in Sources */,
 				5CF047FA11D64F6D5A7CF6FB /* AppDelegate.swift in Sources */,
 				DD316DAE16D1AA3E9438FA15 /* AppRestartWatcher.swift in Sources */,
@@ -557,6 +600,10 @@
 				777A351396E1CB2C231820FD /* EmailChannel.swift in Sources */,
 				4FB227FEAF25239D85D96593 /* EmailThrottleStore.swift in Sources */,
 				7E9BB0ED0884AB7842D45981 /* ExternalActivityView.swift in Sources */,
+				3B1F3F21CD88DEA9B8881CA2 /* FanControlView.swift in Sources */,
+				45C95F7C8C6687B0080EB1FC /* FanController.swift in Sources */,
+				77342CE17E42BF9491EB9D30 /* FanDisclaimer.swift in Sources */,
+				697159DF6592C3DF33AFB152 /* FanModels.swift in Sources */,
 				4FCF72BA3A4B673DEBC24AD5 /* GlobalHotkey.swift in Sources */,
 				6F47FDDC8B8A8BCEF68E6621 /* HelperClient.swift in Sources */,
 				48A8411A91BC1725A62EAE46 /* HelperInstaller.swift in Sources */,
@@ -598,6 +645,7 @@
 				2CF3383D939893655F3DD14A /* QuickQuitView.swift in Sources */,
 				9429A1EB6266F9702E9D9158 /* ScheduleView.swift in Sources */,
 				293AAE69A3F01595AF98272F /* ScheduledCommand.swift in Sources */,
+				5D4E0D12589875B3246CCEFE /* ScheduledWakeManager.swift in Sources */,
 				017E43688EF7300FD313BCA4 /* ServerModeController.swift in Sources */,
 				EE3890A1A4901BA8921BC74E /* ServerModeIdlePolicy.swift in Sources */,
 				C9B76A5A6E3BC83B1DA8F016 /* ServerModeView.swift in Sources */,
@@ -605,6 +653,8 @@
 				8497605C3EFAAF988C2007FB /* SystemMonitor.swift in Sources */,
 				C0EB5F908D427F907D33B32D /* SystemNotifier.swift in Sources */,
 				355B12850D9D59EF6A64EDD2 /* TerminationReport.swift in Sources */,
+				D578413F8CDB698652A7CA7A /* ThermalMonitor.swift in Sources */,
+				7D67EE9A219FAB797919FF33 /* ThermalView.swift in Sources */,
 				962025AC87890118AA8A8109 /* ToolboxLayout.swift in Sources */,
 				DFD9AE12E2D5F98604466290 /* ToolboxView.swift in Sources */,
 				04AADB1A90517C6AFA89E030 /* URLCommands.swift in Sources */,
@@ -625,6 +675,8 @@
 			files = (
 				68BBD23F6A82CF25F557453C /* CPUTemperatureSample.swift in Sources */,
 				30B151DC27ACB9ECBD8AFEA4 /* DiskUsage.swift in Sources */,
+				3657D5DF6AC5D265032C1E81 /* FanDisclaimer.swift in Sources */,
+				739671A0C4D83A406D54898E /* FanModels.swift in Sources */,
 				373014038B076AA90C1FA300 /* HelperProtocol.swift in Sources */,
 				7B5449CB86A23F58E0331611 /* HostsAllowedEditors.swift in Sources */,
 				629AF9961611BE5DEBCFE641 /* IdleTime.swift in Sources */,
@@ -635,7 +687,9 @@
 				034839185EA8864A606DF6EF /* ProcessPriority.swift in Sources */,
 				E2F19718D39EDE8586292DC3 /* ProcessSnapshot.swift in Sources */,
 				89098C875F9DF3595B4F80F5 /* ProcessStats.swift in Sources */,
+				910627B4BEF3D19C697C5890 /* SMCFanControl.swift in Sources */,
 				CB745D9E5F4E7E41B2ACE70C /* SMCTemperature.swift in Sources */,
+				07869D7E846656DBC963A4CE /* SMCTemperatureIOHID.swift in Sources */,
 				A6FDF63D0FF8D8386787E0F5 /* SelfUpdate.swift in Sources */,
 				77AC54EAF737FDB032DEB3FA /* ServerModeIdlePolicy.swift in Sources */,
 				5CBBFE252FA1FF06D00A3222 /* TerminationReport.swift in Sources */,
@@ -831,11 +885,11 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 17;
+				CURRENT_PROJECT_VERSION = 18;
 				INFOPLIST_FILE = DeepSleep/Resources/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
-				MARKETING_VERSION = 1.8.2;
+				MARKETING_VERSION = 1.9.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.skyc8266.deepsleep;
 				PRODUCT_NAME = "Deep Sleep";
 				SDKROOT = macosx;
@@ -848,11 +902,11 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 17;
+				CURRENT_PROJECT_VERSION = 18;
 				INFOPLIST_FILE = DeepSleep/Resources/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
-				MARKETING_VERSION = 1.8.2;
+				MARKETING_VERSION = 1.9.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.skyc8266.deepsleep;
 				PRODUCT_NAME = "Deep Sleep";
 				SDKROOT = macosx;

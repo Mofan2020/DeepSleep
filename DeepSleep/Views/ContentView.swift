@@ -22,6 +22,12 @@ enum SidebarItem: String, CaseIterable, Identifiable {
     case update
     /// 系统监控：CPU/RAM 过载检测 + 内存泄漏告警。
     case systemMonitor
+    /// 温度监控：各传感器实时温度 + 90°C 安全兜底状态。
+    case thermal
+    /// 风扇控制：手动固定转速 / 交回系统 / 按规则调速。
+    case fan
+    /// 告警规则：用户自定义的告警条件与动作。
+    case alertRules
     /// 卸载 Deep Sleep：二级确认 + 全流程清理。
     case uninstall
     /// 服务器模式：永不睡眠 + 定时关屏锁屏。
@@ -54,6 +60,9 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .log:            return "运行日志"
         case .update:         return "更新"
         case .systemMonitor:  return "系统监控"
+        case .thermal:        return "温度监控"
+        case .fan:            return "风扇控制"
+        case .alertRules:     return "告警规则"
         case .uninstall:      return "卸载 Deep Sleep"
         case .serverMode:     return "服务器模式"
         case .nice:           return "进程优先级"
@@ -76,6 +85,9 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .log:            return "doc.text"
         case .update:         return "arrow.down.circle"
         case .systemMonitor:  return "waveform.path.ecg"
+        case .thermal:        return "thermometer.medium"
+        case .fan:            return "fan"
+        case .alertRules:     return "bell.badge"
         case .uninstall:      return "trash"
         case .serverMode:     return "powersleep"
         case .nice:           return "gauge.with.dots.needle.bottom.50percent"
@@ -111,6 +123,11 @@ struct ContentView: View {
                         .tag(SidebarItem.automation)
                     Label(SidebarItem.quickQuit.title, systemImage: SidebarItem.quickQuit.symbol)
                         .tag(SidebarItem.quickQuit)
+                }
+                Section("散热") {
+                    ForEach([SidebarItem.thermal, .fan, .alertRules]) { item in
+                        Label(item.title, systemImage: item.symbol).tag(item)
+                    }
                 }
                 Section("诊断") {
                     Label(SidebarItem.external.title, systemImage: SidebarItem.external.symbol)
@@ -192,6 +209,9 @@ struct ContentView: View {
         case .log:            LogView()
         case .update:         UpdateView()
         case .systemMonitor:  MonitoringView()
+        case .thermal:        ThermalView(monitor: ThermalMonitor.shared)
+        case .fan:            FanControlView(controller: FanController.shared)
+        case .alertRules:     AlertRulesView(engine: AlertRuleEngine.shared)
         case .uninstall:      UninstallView()
         case .serverMode:     ServerModeView()
         case .nice:           NiceView()

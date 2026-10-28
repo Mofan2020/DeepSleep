@@ -71,6 +71,35 @@ struct PowerSettingsView: View {
         }
 
         SectionCard(
+            title: "高级选项",
+            subtitle: nil,
+            symbol: "gearshape.2"
+        ) {
+            VStack(alignment: .leading, spacing: 10) {
+                Toggle(isOn: Binding(
+                    get: { controller.isManual(.preventDiskIdle) },
+                    set: { newValue in
+                        Task { await controller.setAssertion(.preventDiskIdle, enabled: newValue) }
+                    }
+                )) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("阻止外部磁盘空闲休眠")
+                            .font(.body)
+                        Text("外置硬盘不会因长时间无操作而转入低功耗态，避免传输中断与唤醒延迟。")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Text("这一项不需要完全控制权限。它阻止的是磁盘进入低功耗态，"
+                     + "不能阻止系统在电池耗尽时关机，也不同于「硬盘睡眠 = 0」"
+                     + "（后者会全局禁用内置盘的休眠计时）。")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+
+        SectionCard(
             title: "依赖关系提示",
             subtitle: nil,
             symbol: "info.circle"

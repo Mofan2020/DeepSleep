@@ -70,6 +70,10 @@ build_and_run "idle-time"            /tmp/t_idle     Shared/IdleTime.swift scrip
 build_and_run "selfupdate"           /tmp/t_selfupd  Shared/HelperProtocol.swift DeepSleepHelper/SelfUpdate.swift scripts/test-selfupdate.swift
 build_and_run "auto-start-manager"   /tmp/t_autostart DeepSleep/Core/AutoStartManager.swift scripts/test-auto-start-manager.swift
 build_and_run "cpu-temperature-decode" /tmp/t_cputemp DeepSleepHelper/SMCTemperature.swift Shared/CPUTemperatureSample.swift scripts/test-cpu-temperature-decode.swift
+build_and_run "fan-models"          /tmp/t_fanmodels Shared/FanModels.swift scripts/test-fan-models.swift
+build_and_run "fan-control"         /tmp/t_fanctl Shared/FanModels.swift Shared/HelperProtocol.swift Shared/UnixSocket.swift DeepSleep/Privileged/HelperClient.swift DeepSleep/Core/ThermalMonitor.swift DeepSleep/Core/FanController.swift DeepSleep/Core/FanDisclaimer.swift scripts/test-fan-control.swift
+build_and_run "alert-rules"         /tmp/t_alertrules DeepSleep/Core/AlertRule.swift DeepSleep/Core/AlertRuleEngine.swift scripts/test-alert-rules.swift
+build_and_run "disk-idle-assertion" /tmp/t_diskidle scripts/test-disk-idle-assertion.swift
 build_and_run_raw "cgeventtap"       /tmp/t_cgevtap  -parse-as-library -framework ApplicationServices scripts/test-cgeventtap.swift
 
 # check-docs.py 自身的负向测试：故意改坏文档，确认校验器会拦。

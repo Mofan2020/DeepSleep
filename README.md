@@ -20,12 +20,12 @@ macOS has never had a real answer to: *"I want my Mac to stay awake until this d
 - **App name**: Deep Sleep
 - **Minimum system**: macOS 26.0
 - **Language / framework**: Swift 5, SwiftUI + AppKit, IOKit, LocalAuthentication
-- **当前版本**：1.8.2
+- **当前版本**：1.9.0
 
 ## Highlights
 
 - **Keep awake** — block idle sleep, keep the display lit, prevent system sleep (lid closed too).
-- **Scheduled sleep & wake** — `pmset schedule wake`, executed by the system power service.
+- **Scheduled sleep & wake** — countdown sleep and scheduled wake, executed by the system power service. Schedule several one-off wake-ups or a repeating weekly one; cancelling removes only the entry Deep Sleep created.
 - **Server mode** — keep the system awake forever, auto-lock the screen every N minutes.
 - **Automation rules** — combine time windows, power source, and frontmost app into persistent rules evaluated every 5 seconds.
 - **Full control** — install a privileged helper once, never re-enter your password. It writes `pmset -a disablesleep 1` if you want it to actually stick.
@@ -35,7 +35,11 @@ macOS has never had a real answer to: *"I want my Mac to stay awake until this d
 - **Toolbox** — every tool lives on one page; pin the ones you use most to the top.
 - **AI keep-alive** — send a tiny request to a subscription AI service at set times each day, so its rolling usage window keeps moving.
 - **External activity** — see who else is blocking sleep or changing power settings (`--blockers`, `--changes`, `--rivals`).
-- **System monitor** — CPU/RAM overload alerts, single-process RSS threshold. CPU die temperature via SMC: temporarily unavailable on macOS 26/27 with Apple Silicon (the public SMC protocol returns `kIOReturnNotFound`/`Unsupported` or no data; rewrite is in progress, see [docs/notes.md](docs/notes.md) for the full diagnostic log); UI shows a "waiting for update" placeholder.
+- **System monitor** — CPU/RAM overload alerts, single-process RSS threshold.
+- **Temperature monitoring** — live readings from the SoC, battery, and storage sensors. Reads the IOHID private temperature channel, so it works with or without the privileged helper.
+- **Fan control** — hand the fans back to the system, pin them to a fixed RPM, or map temperature to RPM with a rule of your own (target fan, low temperature, high temperature). Fixed and rule modes need the privileged helper and an accepted disclaimer. At 90°C every fan is forced to maximum regardless of your settings.
+- **Custom alert rules** — your own thresholds on CPU load, memory use, per-process memory, CPU temperature, or disk usage, with a hold time before each one fires.
+- **Prevent external disk sleep** — keeps attached disks out of their low-power idle state so transfers don't stall. Optional, in Power settings.
 - **Menubar resident** — left-click opens main window, right-click opens quick settings, hides Dock icon when no windows are open.
 - **Auto-update** — Sparkle-style with edDSA verification; the privileged helper updates itself in place.
 
@@ -66,7 +70,7 @@ open -a "Deep Sleep" --args --status
 
 | Flag | Purpose |
 | --- | --- |
-| `--hold <kinds>` | Comma-separated: `idle-system` / `display` / `system` (aliases: `idle`, `screen`, `lid`, `all`) |
+| `--hold <kinds>` | Comma-separated: `idle-system` / `display` / `system` / `disk-idle` (aliases: `idle`, `screen`, `lid`, `all`) |
 | `--release` | Release all holds |
 | `--status` | Print current state with `powerWatcher=`, `audits=`, and other diagnostic fields |
 | `--wait <seconds>` | Used with `--status` to verify reconciliation frequency |

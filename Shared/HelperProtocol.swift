@@ -59,6 +59,71 @@ public enum HelperCommand: String, Codable, CaseIterable, Sendable {
     /// v3 协议才支持；旧版助手（v<=2）会回 `unknown command` 失败。
     case getCPUTemperature
 
+    // MARK: - 风扇控制（v1.9 起）
+
+    /// 读风扇实时状态：数量、每个风扇的当前转速 / 最低 / 最高 / 是否手动模式。
+    /// 返回 payload 见 `Shared/FanModels.swift` 的 `FanState.encode()`。
+    /// 无参数。
+    case getFanState
+
+    /// 写风扇目标转速 + 模式。
+    ///
+    /// 参数：
+    ///   `fan`   = 风扇序号（0 起）
+    ///   `rpm`   = 目标转速（整数；0 表示交回系统自动控制）
+    ///   `lease` = 租约秒数。助手在此秒数内没收到同风扇的新指令，
+    ///             自动把该风扇交回系统自动模式。传 0 = 不设租约
+    ///             （危险，应用侧禁止使用，只给诊断用）。
+    ///   `reason`= 可选，写入日志。
+    ///
+    /// 写入顺序必须是「先写模式键，后写目标键」（见 docs/SMC.md §2.6.1）。
+    case setFanSpeed
+
+    /// 读全部温度传感器（IOHID 私有事件通道，PrimaryUsagePage 0xFF00 / PrimaryUsage 5）。
+    /// 返回 payload 见 `Shared/FanModels.swift` 的 `TemperatureSnapshot.encode()`。
+    /// 无参数。
+    case getTemperatureSnapshot
+
+    /// 强制把所有风扇交回系统自动控制。
+    ///
+    /// 安全兜底：应用退出 / 崩溃 / 租约到期时都要调用。
+    /// 手动模式下风扇转速不再由 SMC 决定，不收回控制权就等于让一个
+    /// 可能已经不存在的进程决定散热。
+    /// 无参数。
+    case releaseFanControl
+
+    /// 同步「用户已同意风扇免责声明」的状态给助手。
+    ///
+    /// 参数 `accepted` = "true" / "false"。
+    ///
+    /// 为什么应用同意还不够、助手要自己存一份：应用层的同意状态拦不住
+    /// 「绕过 UI 直接构造协议包打助手」。助手侧独立持久化一份，
+    /// 未同意时直接拒绝一切写 SMC 的命令 —— 门禁必须在执行点，
+    /// 不能只在调用点。
+    case setFanDisclaimerAccepted
+
+    // MARK: - 排定唤醒增强（v1.9 起）
+
+    /// 读系统当前所有排定项。返回 payload：
+    ///   `entries` = 记录串 `kind|when|owner`，记录间 `,`
+    ///   `count`   = 条数
+    /// 无参数。
+    case listScheduledEvents
+
+    /// 排定一次唤醒，带 owner 标记（便于按条取消）。
+    /// 参数 `date`（MM/dd/yy HH:mm:ss）、`owner`（可选，默认 "Deep Sleep"）。
+    case scheduleWakeWithOwner
+
+    /// 按条取消排定。参数 `date`（MM/dd/yy HH:mm:ss）+ `kind`（默认 wake）。
+    /// 刻意不做 cancelall —— 那会连别的程序排的唤醒一起取消。
+    case cancelScheduledEvent
+
+    /// 循环排定唤醒。参数 `weekdays`（MTWRFSU 的子集）、`time`（HH:mm:ss）。
+    case scheduleRepeatWake
+
+    /// 取消全部循环排定。
+    case cancelRepeatWake
+
     // MARK: - 服务器模式（v1.6 起）
 
     /// 立刻关显示器（等价于 `pmset displaysleepnow`）。
