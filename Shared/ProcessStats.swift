@@ -45,8 +45,17 @@ public struct ProcessStats: Sendable, Equatable {
 
     public var records: [Record]
 
-    public init(records: [Record] = []) {
+    /// 整机 CPU 占用百分比（0–100，100% = 全机所有核都跑满）。
+    ///
+    /// 单独一个字段，**不是**各进程 cpuPercent 的和：
+    /// 内核时间（kernel_task）不属于任何用户进程，求和会漏掉。
+    /// 由助手用 host_statistics(HOST_CPU_LOAD_INFO) 的两次采样增量算出，
+    /// 跟 `top` 的口径一致。
+    public var systemCpuPercent: Double
+
+    public init(records: [Record] = [], systemCpuPercent: Double = 0) {
         self.records = records
+        self.systemCpuPercent = systemCpuPercent
     }
 
     // MARK: - 编解码
@@ -54,13 +63,15 @@ public struct ProcessStats: Sendable, Equatable {
     public func encode() -> [String: String] {
         [
             "records": Self.encodeRecords(records),
-            "count": "\(records.count)"
+            "count": "\(records.count)",
+            "systemCpuPercent": String(systemCpuPercent)
         ]
     }
 
     public static func decode(_ payload: [String: String]) -> ProcessStats {
         let records = decodeRecords(payload["records"])
-        return ProcessStats(records: records)
+        return ProcessStats(records: records,
+                            systemCpuPercent: Double(payload["systemCpuPercent"] ?? "") ?? 0)
     }
 
     private static func encodeRecords(_ records: [Record]) -> String {

@@ -163,12 +163,13 @@ final class SMCFanControl {
         case keyMissing(String)
         case statusFailure(key: String, status: UInt8)
         case lengthMismatch(key: String, expected: Int, actual: Int)
-        case verificationFailed(key: String, expected: Double, actual: Double)
+        case verificationFailed(key: String, expected: Double, actual: Double, attempts: Int)
         case unknownFan(Int)
         case noFansAvailable(String)
         case modeUnavailable
         case noTargetKey(Int)
         case emergencyActive(maxCelsius: Double)
+        case fanStalled(index: Int)
 
         var description: String {
             switch self {
@@ -180,8 +181,8 @@ final class SMCFanControl {
                 return "SMC 命令失败：键 \(key) 状态字节 0x\(String(status, radix: 16))"
             case .lengthMismatch(let key, let expected, let actual):
                 return "写入长度不匹配：键 \(key) 声明 \(expected) 字节，实际写了 \(actual) 字节（SMC 会回 0xE00002BC）"
-            case .verificationFailed(let key, let expected, let actual):
-                return "写后校验失败：键 \(key) 期望 \(expected)，读回 \(actual)"
+            case .verificationFailed(let key, let expected, let actual, let attempts):
+                return "写后校验失败：键 \(key) 期望 \(expected)，重试 \(attempts) 次后读回 \(actual)"
             case .unknownFan(let index):
                 return "没有编号为 \(index) 的风扇"
             case .noFansAvailable(let detail):
@@ -192,6 +193,8 @@ final class SMCFanControl {
                 return "风扇 \(index) 没有目标转速键（F\(index)Tg 不存在）"
             case .emergencyActive(let maxCelsius):
                 return "90°C 紧急兜底生效中（当前最高 \(String(format: "%.2f", maxCelsius))°C），不接受降速请求"
+            case .fanStalled(let index):
+                return "风扇 \(index) 连续写不进，已停止修改它的转速并交回系统控制"
             }
         }
     }
@@ -280,6 +283,15 @@ final class SMCFanControl {
     /// 紧急兜底状态。
     private var emergency: FanEmergencyState = .normal
 
+    /// 连续写不进的记录。满 60 秒 → 停止修改、交回系统。
+    private var writeFailures = FanWriteFailureTracker()
+
+    /// 已判定「停止修改转速」的风扇。这些风扇不再接受写请求。
+    private var stalledFans: Set<Int> = []
+
+    /// 连「交回系统控制」都失败的风扇 —— 严重问题，要警告用户。
+    private var releaseFailedFans: Set<Int> = []
+
     /// 故障降噪：同一类兜底失败只记一次日志，别把日志刷爆。
     private var lastEmergencyLogReason: String?
 
@@ -354,6 +366,7 @@ final class SMCFanControl {
     private func heartbeatTick() {
         checkThermalEmergency()
         expireLeases()
+        escalateStalledFans()
     }
 
     /// 租约到期 → 交回系统自动控制。
@@ -380,6 +393,93 @@ final class SMCFanControl {
             } catch {
                 FanLog.write("fan \(fan) 租约到期后交回自动失败：\(error)")
             }
+        }
+    }
+
+    // MARK: - 连续写不进 → 停止修改、交回系统
+
+    /// 某个风扇是否已被判定为「停止修改转速」。
+    private func isStalled(_ fan: Int) -> Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return stalledFans.contains(fan)
+    }
+
+    /// 记一次写成功 —— 这个风扇又听话了，连续失败清零。
+    private func recordWriteSuccess(fan: Int) {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        writeFailures.recordSuccess(fan: fan)
+    }
+
+    /// 清掉某个风扇的停摆状态（已交回系统，问题不再成立）。
+    private func clearStallState(fan: Int) {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        stalledFans.remove(fan)
+        releaseFailedFans.remove(fan)
+        writeFailures.clear(fan: fan)
+    }
+
+    /// 记一次写失败。
+    private func recordWriteFailure(fan: Int, reason: String) {
+        stateLock.lock()
+        let streak = writeFailures.streak(for: fan)
+        let due = writeFailures.recordFailure(fan: fan, reason: reason, now: Date())
+        stateLock.unlock()
+
+        if due, let streak {
+            let seconds = Int(Date().timeIntervalSince(streak.firstFailureAt))
+            FanLog.write("fan \(fan) 连续 \(seconds) 秒写不进，最后原因：\(streak.lastReason)")
+        }
+    }
+
+    /// 连续写不进满 60 秒 → 停止修改、交回系统控制。
+    ///
+    /// 交还系统控制也失败的话，风扇可能卡在我们控制不了的状态 ——
+    /// 那是要警告用户的严重问题（记在 releaseFailedFans 里，状态回传给应用）。
+    ///
+    /// 90°C 紧急兜底生效中时**不**做这件事：那时候风扇归兜底管，
+    /// 交回系统意味着转速可能掉下来，而那一档是「任何规则不可覆盖」的。
+    /// 这一轮跳过，等兜底解除后再处理。
+    private func escalateStalledFans() {
+        let now = Date()
+        stateLock.lock()
+        if emergency.isEngaged {
+            stateLock.unlock()
+            return
+        }
+        let due = writeFailures.fansDue(now: now)
+        stateLock.unlock()
+        guard !due.isEmpty else { return }
+
+        for fan in due {
+            stateLock.lock()
+            let streak = writeFailures.streak(for: fan)
+            stateLock.unlock()
+
+            let seconds = streak.map { Int(now.timeIntervalSince($0.firstFailureAt)) } ?? 0
+            FanLog.write("fan \(fan) 连续 \(seconds) 秒写不进，停止修改它的转速并交回系统控制")
+
+            var released = true
+            do {
+                try writeManualMode(fan: fan, manual: false)
+            } catch {
+                released = false
+                FanLog.write("fan \(fan) 交回系统控制失败（严重）：\(error)")
+            }
+
+            stateLock.lock()
+            stalledFans.insert(fan)
+            if !released {
+                releaseFailedFans.insert(fan)
+            }
+            // 已经交回系统，就不再持有控制权，也不再续租约。
+            manualFans.remove(fan)
+            lastRequested.removeValue(forKey: fan)
+            writeFailures.clear(fan: fan)
+            stateLock.unlock()
+            FanLeaseRegistry.shared.cancel(fan: fan)
         }
     }
 
@@ -624,7 +724,9 @@ final class SMCFanControl {
                 throw ControlError.noFansAvailable(
                     "读到 \(count) 个风扇，但没有一个给出有效的 min/max 转速区间")
             }
-            return FanState(fans: fans)
+            return FanState(fans: fans,
+                            stalledFans: stalledFans.sorted(),
+                            releaseFailedFans: releaseFailedFans.sorted())
         }
     }
 
@@ -642,11 +744,44 @@ final class SMCFanControl {
         try FanDisclaimer.shared.requireAccepted()
 
         guard rpm >= 0 else {
-            throw ControlError.verificationFailed(key: "rpm", expected: 0, actual: Double(rpm))
+            throw ControlError.verificationFailed(key: "rpm", expected: 0,
+                                                 actual: Double(rpm), attempts: 0)
+        }
+
+        // 已经因为连续写不进被判定为「停止修改」的风扇，不再写它的转速。
+        // 继续写只会一直失败，而且风扇可能卡在一个不合适的转速上。
+        //
+        // 但「交回系统」（rpm == 0）始终允许 —— 那是安全方向，
+        // 用户手动点交还、或者助手升级处理时都要能走通。
+        if rpm > 0, isStalled(fan) {
+            throw ControlError.fanStalled(index: fan)
         }
 
         try rejectIfEmergencyDownSpeed(fan: fan, requestedRPM: rpm)
 
+        do {
+            let result = try performSetSpeed(fan: fan, rpm: rpm,
+                                             leaseSeconds: leaseSeconds, reason: reason)
+            recordWriteSuccess(fan: fan)
+            // 交回系统成功 → 这个风扇已经回到系统手里，之前那些
+            // 「写不进 / 交不回去」的记录可以清了。要重新控制它，
+            // 用户再开一次规则就行（那时从头算）。
+            if rpm == 0 {
+                clearStallState(fan: fan)
+            }
+            return result
+        } catch {
+            // 只有「改转速」失败才算连续失败。
+            // 「交回系统」失败是另一类问题，单独处理（见 releaseFailedFans）。
+            if rpm > 0 {
+                recordWriteFailure(fan: fan, reason: "\(error)")
+            }
+            throw error
+        }
+    }
+
+    /// 真正写风扇的逻辑。失败会抛错，记账在 `setSpeed` 里做。
+    private func performSetSpeed(fan: Int, rpm: Int, leaseSeconds: Int, reason: String?) throws -> SpeedResult {
         let result = try withConnection { connection -> SpeedResult in
             let count = try fanCount(connection)
             guard count > 0 else {
@@ -690,10 +825,14 @@ final class SMCFanControl {
                 throw error
             }
 
-            // 写后读回校验。
-            let readback = try readRPM(connection, key: targetKey)
-            let actual = try readRPM(connection, key: keys.actualKey)
-            try verify(targetKey: targetKey, expected: Double(clamped), actual: Double(readback))
+            // 写后读回校验。**必须重试** —— SMC 写目标转速不是立刻生效的：
+            // 风扇要一两秒才爬到目标，这期间目标键读回来还是上一个值。
+            // 读一次就判失败会误报「写失败」，用户明明写成功了却被告知失败。
+            let (readback, actual) = try verifyTargetRPM(
+                connection: connection,
+                targetKey: targetKey,
+                actualKey: keys.actualKey,
+                expected: Double(clamped))
 
             return SpeedResult(
                 fan: fan,
@@ -780,6 +919,10 @@ final class SMCFanControl {
 
         manualFans.removeAll()
         lastRequested.removeAll()
+        // 全部交回系统了，之前那些「写不进」的记录也就没有意义 ——
+        // 下次重新开始控制时从零算起。
+        writeFailures.removeAll()
+        stalledFans.removeAll()
         FanLeaseRegistry.shared.cancelAll()
         FanLog.write("releaseAll（\(reason)）：\(released) 个风扇交回系统自动控制")
     }
@@ -913,8 +1056,50 @@ final class SMCFanControl {
     private func verify(targetKey: String, expected: Double, actual: Double) throws {
         let tolerance = max(2.0, abs(expected) * 0.02)
         guard abs(expected - actual) <= tolerance else {
-            throw ControlError.verificationFailed(key: targetKey, expected: expected, actual: actual)
+            throw ControlError.verificationFailed(key: targetKey, expected: expected,
+                                                 actual: actual, attempts: 1)
         }
+    }
+
+    /// 写后读回校验，**带重试**。
+    ///
+    /// 为什么必须重试：SMC 写目标转速不是立刻生效的。风扇从当前转速爬到目标要
+    /// 一两秒，这期间目标键（F0Tg）读回来还是**上一个值**。读一次就判失败，
+    /// 会把「写成功了」报成「写失败」——
+    /// 实测过：期望 1516 RPM、读回 2147 RPM，2147 正是写之前的转速，
+    /// 风扇其实已经在往 1516 爬了。
+    ///
+    /// 重试节奏：每次间隔 250ms，最多 8 次（约 2 秒）。这个窗口覆盖风扇的
+    /// 常规爬升时间；超时仍未收敛才算真的写失败。
+    ///
+    /// 返回 (目标键读回值, 实际转速)。实际转速不做校验 —— 它本来就滞后于目标，
+    /// 拿它判成败没有意义，只作为回执返回。
+    private func verifyTargetRPM(connection: io_connect_t,
+                                 targetKey: String,
+                                 actualKey: String?,
+                                 expected: Double,
+                                 attempts: Int = 8,
+                                 interval: TimeInterval = 0.25) throws -> (target: Int, actual: Int) {
+        let tolerance = max(2.0, abs(expected) * 0.02)
+        var last = 0.0
+
+        for attempt in 0..<attempts {
+            if attempt > 0 {
+                Thread.sleep(forTimeInterval: interval)
+            }
+            let value = try readRPM(connection, key: targetKey)
+            last = Double(value)
+            if abs(expected - last) <= tolerance {
+                // 实际转速键可能不存在（部分机型没有 F0Ac），读不到就报 0。
+                let actual = actualKey.flatMap { try? readRPM(connection, key: $0) } ?? 0
+                return (Int(last), actual)
+            }
+        }
+
+        // 重试到最后都没收敛：这次是真的没写进去（或者键的行为与预期不符）。
+        FanLog.write("写后校验失败：键 \(targetKey) 期望 \(expected)，重试 \(attempts) 次读回 \(last)")
+        throw ControlError.verificationFailed(key: targetKey, expected: expected,
+                                             actual: last, attempts: attempts)
     }
 
     // MARK: - 键探测

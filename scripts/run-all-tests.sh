@@ -62,7 +62,7 @@ build_and_run "nice-page-size"       /tmp/t_nice     Shared/NicePageSize.swift s
 build_and_run "hosts-allowed-editors" /tmp/t_hosts   Shared/HelperProtocol.swift Shared/HostsAllowedEditors.swift scripts/test-hosts-allowed-editors.swift
 build_and_run "pmset-parse"          /tmp/t_pmset    Shared/PMSetOutput.swift scripts/test-pmset-parse.swift
 build_and_run "process-guard"        /tmp/t_guard    Shared/ProcessInventory.swift Shared/ProcessGuard.swift Shared/ProcessPriority.swift Shared/TerminationReport.swift scripts/test-process-guard.swift
-build_and_run "process-snapshot"     /tmp/t_snap     Shared/ProcessStats.swift Shared/HelperProtocol.swift Shared/ProcessSnapshot.swift Shared/ProcessPriority.swift Shared/ProcessInventory.swift scripts/test-process-snapshot.swift
+build_and_run "process-snapshot"     /tmp/t_snap     Shared/ProcessStats.swift Shared/HelperProtocol.swift Shared/ProcessSnapshot.swift Shared/ProcessPriority.swift Shared/ProcessInventory.swift Shared/CPUAccounting.swift scripts/test-process-snapshot.swift
 build_and_run "process-stats"        /tmp/t_stats    Shared/ProcessStats.swift scripts/test-process-stats.swift
 build_and_run "servermode-fsm"       /tmp/t_smode    Shared/ServerModeIdlePolicy.swift scripts/test-servermode-fsm.swift
 build_and_run "monitor-config"       /tmp/t_mcfg     Shared/NicePageSize.swift DeepSleep/Core/MonitorConfig.swift scripts/test-monitor-config.swift
@@ -71,7 +71,10 @@ build_and_run "selfupdate"           /tmp/t_selfupd  Shared/HelperProtocol.swift
 build_and_run "auto-start-manager"   /tmp/t_autostart DeepSleep/Core/AutoStartManager.swift scripts/test-auto-start-manager.swift
 build_and_run "cpu-temperature-decode" /tmp/t_cputemp DeepSleepHelper/SMCTemperature.swift Shared/CPUTemperatureSample.swift scripts/test-cpu-temperature-decode.swift
 build_and_run "fan-models"          /tmp/t_fanmodels Shared/FanModels.swift scripts/test-fan-models.swift
-build_and_run "fan-control"         /tmp/t_fanctl Shared/FanModels.swift Shared/HelperProtocol.swift Shared/UnixSocket.swift DeepSleep/Privileged/HelperClient.swift DeepSleep/Core/ThermalMonitor.swift DeepSleep/Core/FanController.swift DeepSleep/Core/FanDisclaimer.swift scripts/test-fan-control.swift
+build_and_run "fan-mode-store"      /tmp/t_fanmodestore DeepSleep/Core/FanMode.swift DeepSleep/Core/FanModeStore.swift scripts/test-fan-mode-store.swift
+build_and_run "fan-stall"           /tmp/t_fanstall Shared/FanModels.swift Shared/FanWriteFailureTracker.swift scripts/test-fan-stall.swift
+build_and_run "cpu-accounting"      /tmp/t_cpuacct Shared/CPUAccounting.swift scripts/test-cpu-accounting.swift
+build_and_run "fan-control"         /tmp/t_fanctl Shared/FanModels.swift Shared/HelperProtocol.swift Shared/UnixSocket.swift DeepSleep/Privileged/HelperClient.swift DeepSleep/Core/ThermalMonitor.swift DeepSleep/Core/FanMode.swift DeepSleep/Core/FanModeStore.swift DeepSleep/Core/FanController.swift DeepSleep/Core/FanDisclaimer.swift scripts/test-fan-control.swift
 build_and_run "alert-rules"         /tmp/t_alertrules DeepSleep/Core/AlertRule.swift DeepSleep/Core/AlertRuleEngine.swift scripts/test-alert-rules.swift
 build_and_run "disk-idle-assertion" /tmp/t_diskidle scripts/test-disk-idle-assertion.swift
 build_and_run_raw "cgeventtap"       /tmp/t_cgevtap  -parse-as-library -framework ApplicationServices scripts/test-cgeventtap.swift

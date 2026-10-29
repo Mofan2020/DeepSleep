@@ -196,13 +196,14 @@ public final class SystemMonitor {
     }
 
     private func tick() async {
-        let records: [ProcessStats.Record]
+        let stats: ProcessStats
         do {
-            records = try await ProcessStatsProvider.shared.fetchStats()
+            stats = try await ProcessStatsProvider.shared.fetchStats()
         } catch {
             // 监控拿不到数据不算「过载」，下次再试。
             return
         }
+        let records = stats.records
 
         let now = Date()
 
@@ -225,7 +226,9 @@ public final class SystemMonitor {
 
         // 累计 CPU% 与 RAM% 持续超阈
         let totalRSS: UInt64 = records.reduce(0) { $0 + $1.rssBytes }
-        let totalCPU: Double = records.reduce(0) { $0 + $1.cpuPercent }
+        // 整机 CPU 占用由助手用 host_statistics 单独给 —— 不能用各进程求和：
+        // 内核时间不属于任何用户进程，求和会漏掉。
+        let totalCPU: Double = stats.systemCpuPercent
         let physicalMemoryBytes = Self.physicalMemory()
         let ramPercent = physicalMemoryBytes > 0
             ? Double(totalRSS) / Double(physicalMemoryBytes) * 100

@@ -14,7 +14,6 @@ import Foundation
 
 /// 一条自定义告警规则。
 struct AlertRule: Codable, Identifiable, Equatable {
-
     var id: UUID
     var name: String
     var isEnabled: Bool
@@ -45,6 +44,31 @@ struct AlertRule: Codable, Identifiable, Equatable {
         self.threshold = threshold
         self.durationSeconds = max(0, durationSeconds)
         self.action = action
+    }
+
+    /// 界面校验：返回 nil 表示这条规则可以直接保存，否则返回给用户看的原因。
+    ///
+    /// 放在模型上而不是视图里，是为了能单测 —— 这条校验曾经把「温度阈值不许
+    /// 超过 90°C」当成规则，而那个限制是错的：
+    ///
+    /// 90°C 兜底接管的是**风扇转速**（把风扇拉到最大），跟告警是两条独立的路。
+    /// 兜底生效的时候告警照样该报 —— 「温度已经到 90 了」正是最该报的时刻。
+    /// 把告警阈值也卡在 90 以下，等于在最该报警的时候禁止报警。
+    ///
+    /// 风扇那条路径上的 89°C 上限是另一回事、也仍然保留：那里的区间是
+    /// 「规则自己映射转速的范围」，超过 90 的部分会被兜底接管，写了也不生效，
+    /// 属于「配了死设置」的防护。
+    static func validationError(for rule: AlertRule) -> String? {
+        if rule.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "名称不能为空。"
+        }
+        if rule.durationSeconds < 0 {
+            return "持续时间不能为负。"
+        }
+        if rule.threshold < 0 {
+            return "阈值不能为负。"
+        }
+        return nil
     }
 }
 

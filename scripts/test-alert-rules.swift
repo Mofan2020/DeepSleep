@@ -343,6 +343,45 @@ struct AlertRuleTests {
         engine.metricsProvider = nil
         defaults.removeObject(forKey: AlertRuleStore.storageKey)
 
+        // ===================================================== 阈值校验
+        //
+        // 温度阈值不许超过 90°C 这条限制已经被去掉了。
+        // 90°C 兜底接管的是**风扇转速**（把风扇拉到最大），跟告警是两条独立的路：
+        // 兜底生效的时候告警照样该报，「温度已经到 90 了」正是最该报的时刻。
+        print("\n== 阈值校验：温度阈值不受 90°C 兜底限制 ==")
+
+        let hotRule = AlertRule(
+            name: "温度过高",
+            metric: .cpuTemperature,
+            comparison: .greaterThan,
+            threshold: 95,
+            durationSeconds: 30,
+            action: .notification)
+        check("温度阈值 95°C 可以保存（兜底管风扇，不管告警）",
+              AlertRule.validationError(for: hotRule) == nil,
+              AlertRule.validationError(for: hotRule) ?? "")
+
+        let hotterRule = AlertRule(
+            name: "温度更高",
+            metric: .cpuTemperature,
+            comparison: .greaterThan,
+            threshold: 120,
+            durationSeconds: 10,
+            action: .both)
+        check("温度阈值 120°C 也可以保存",
+              AlertRule.validationError(for: hotterRule) == nil,
+              AlertRule.validationError(for: hotterRule) ?? "")
+
+        // 反过来，真正该拦的还是得拦
+        check("空名称被拦",
+              AlertRule.validationError(for: AlertRule(
+                name: "  ", metric: .cpuPercent, comparison: .greaterThan,
+                threshold: 90, durationSeconds: 10)) != nil)
+        check("负阈值被拦",
+              AlertRule.validationError(for: AlertRule(
+                name: "负数", metric: .cpuPercent, comparison: .greaterThan,
+                threshold: -1, durationSeconds: 10)) != nil)
+
         // ===================================================== 汇总
         print(failures == 0 ? "\n测试结论: 全部通过" : "\n测试结论: \(failures) 项失败")
         exit(failures == 0 ? 0 : 1)

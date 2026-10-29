@@ -28,26 +28,6 @@ import Combine
 // MARK: - 模式
 
 /// 单个风扇的工作模式。
-enum FanMode: Codable, Equatable {
-    /// 交给系统（写 F<n>Md = 0）
-    case automatic
-    /// 固定转速
-    case fixed(rpm: Int)
-    /// 按温度线性调速：作用在 `targetFan` 上，温度区间 [minTempC, maxTempC]
-    /// 线性映射到该风扇的 [minRPM, maxRPM]。
-    case rule(targetFan: Int, minTempC: Double, maxTempC: Double)
-
-    /// 界面显示名。
-    var displayName: String {
-        switch self {
-        case .automatic:      return "交给系统"
-        case .fixed(let rpm): return "固定 \(rpm) RPM"
-        case .rule(let fan, let lo, let hi):
-            return String(format: "规则：风扇 %d，%.0f–%.0f°C", fan, lo, hi)
-        }
-    }
-}
-
 /// 写风扇失败的原因。UI 直接拿 `errorDescription` 显示。
 enum FanControlError: LocalizedError, Equatable {
     /// 未同意免责声明。
@@ -321,6 +301,12 @@ final class FanController: ObservableObject {
     @Published private(set) var isEnabled = false
     /// 最近一次错误（界面横幅用）。成功后清空。
     @Published private(set) var lastError: String?
+
+    /// 连续写不进、已被助手判定为「停止修改转速」的风扇序号。
+    @Published private(set) var stalledFans: [Int] = []
+
+    /// 连「交回系统控制」都失败的风扇序号 —— 严重问题，已经警告过用户。
+    @Published private(set) var releaseFailedFans: [Int] = []
     /// 免责声明是否已同意（镜像 FanDisclaimer，方便 SwiftUI 观察）。
     @Published private(set) var isDisclaimerAccepted = FanDisclaimer.isAccepted
 
@@ -330,6 +316,13 @@ final class FanController: ObservableObject {
 
     /// 兜底触发回调。MonitoringCoordinator 接到 SystemNotifier 上发告警通知。
     var onEmergencyTriggered: ((FanEmergencyEvent) -> Void)?
+
+    /// 风扇控制出问题时回调：`fans` 是出问题的风扇序号，
+    /// `released` 为 false 表示连交回系统控制都失败（严重问题）。
+    ///
+    /// 做成回调而不是直接调 SystemNotifier —— 这一层不该知道通知怎么发，
+    /// 也不该把 UserNotifications 拖进风扇控制的依赖里。
+    var onFanControlFailure: ((_ fans: [Int], _ released: Bool) -> Void)?
 
     // MARK: 内部状态
 
@@ -346,7 +339,26 @@ final class FanController: ObservableObject {
     /// 助手不认识风扇命令（旧助手）→ 静默降级并停掉控制循环。
     private var helperLacksFanCommands = false
 
-    private init() {}
+    private init() {
+        // 启动时把上次配好的模式读回来。用户配的调速规则不该因为退出应用就消失。
+        let saved = FanModeStore.load()
+        if !saved.isEmpty {
+            modes = saved
+        }
+    }
+
+    /// 当前生效的调速规则。界面用它回填「目标风扇 / 最低温度 / 最高温度」。
+    ///
+    /// 为什么界面不自己记一份：切到别的页面再回来，视图会重建，
+    /// 界面自己的 @State 就回到默认值了。真正的家在控制器里，界面只做回显。
+    var currentRule: (targetFan: Int, minTempC: Double, maxTempC: Double)? {
+        for (_, mode) in modes {
+            if case .rule(let target, let low, let high) = mode {
+                return (target, low, high)
+            }
+        }
+        return nil
+    }
 
     // MARK: - 免责声明
 
@@ -481,6 +493,8 @@ final class FanController: ObservableObject {
         }
 
         modes[fanIndex] = effective
+        // 落盘：调速规则是用户配的东西，切页、重启都不该丢。
+        FanModeStore.save(modes)
         lastError = nil
         log("风扇 \(fanIndex) 模式 → \(effective.displayName)", isError: false)
 
@@ -514,15 +528,40 @@ final class FanController: ObservableObject {
             fans = state.fans
             didLogHelperUnavailable = false
             helperLacksFanCommands = false
-            // 新出现 / 消失的风扇：把模式表对齐，避免留下无效键。
-            let alive = Set(state.fans.map(\.index))
-            modes = modes.filter { alive.contains($0.key) }
+            updateStallState(stalled: state.stalledFans, releaseFailed: state.releaseFailedFans)
+            // 这里**不**清理「读不到的序号」的旧模式。
+            //
+            // 以前会做 `modes.filter { alive.contains($0.key) }`，把消失的风扇的配置丢掉。
+            // 风扇暂时读不到（助手刚起、机器刚醒）是很正常的事，
+            // 那时把用户配好的规则删掉等于「读一次失败就丢配置」。
+            // 界面只渲染当前存在的风扇，多余的条目不会显示，留着无害。
         } catch {
             logHelperUnavailable(error, context: "读取风扇状态")
         }
     }
 
     // MARK: - 控制循环
+
+    /// 处理助手回报的「写不进 / 交不回去」状态。
+    ///
+    /// 交还系统控制都失败 = 风扇可能卡在我们控制不了的状态，这是严重问题，
+    /// 必须明确告诉用户 —— 不能只写在日志里让人自己去看。
+    private func updateStallState(stalled: [Int], releaseFailed: [Int]) {
+        let newStalled = stalled.sorted()
+        let newFailed = releaseFailed.sorted()
+        let failedIsNew = !newFailed.isEmpty && newFailed != releaseFailedFans
+
+        stalledFans = newStalled
+        releaseFailedFans = newFailed
+
+        if !newStalled.isEmpty {
+            log("风扇 \(newStalled) 连续写不进，已停止修改它们的转速并交回系统控制", isError: true)
+        }
+        if failedIsNew {
+            log("风扇 \(newFailed) 连交回系统控制都失败，风扇可能处于无法控制的状态，需要人工处理", isError: true)
+            onFanControlFailure?(newFailed, false)
+        }
+    }
 
     private func tick() async {
         guard isEnabled, FanDisclaimer.isAccepted else { return }
@@ -564,6 +603,11 @@ final class FanController: ObservableObject {
         // 3) 逐风扇算目标并下发
         let emergency = emergencyTracker.isActive
         for fan in fans {
+            // 连续写不进、已被判定「停止修改」的风扇：不下发。
+            // 助手那边也会拒写，这里跳过是为了不产生无意义的失败日志。
+            if !emergency, stalledFans.contains(fan.index) {
+                continue
+            }
             let mode = modes[fan.index] ?? .automatic
             await applyMode(fanIndex: fan.index, mode: mode, fan: fan,
                             emergency: emergency, force: false)

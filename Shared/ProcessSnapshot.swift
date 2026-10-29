@@ -16,6 +16,10 @@
 //      时间窗，得到百分比。窗口为 0 时写 0（不会除零）。
 //    - 多核机器上单进程 CPU% 可达 N×100；监控侧再做聚合。
 //
+//  CPU 计数来自 Mach 的 thread_info（见 CPUAccounting.swift）。
+//  原来用的 proc_taskinfo.pti_total_user 在本机 macOS 27.2 上少报 42 倍，
+//  跟 getrusage 对不上，已经换掉。
+//
 //  助手进程必须单线程访问这个快照（自身就有并发连接），用一个 actor 包裹。
 //
 
@@ -52,9 +56,8 @@ public actor ProcessSnapshotCache {
             let cpuPercent: Double
             if let last = lastSamples[raw.pid] {
                 let dt = now - last.timestamp
-                // pti_total_user / pti_total_system 单位是**纳秒**（mach 绝对时间）。
-                // per-core 单核 100% = 1 秒内 1e9 纳秒；多核可叠加 → per-core percent。
-                // whole-cpu = per-core / coreCount，锁在 0–100。
+                // CPU 计数单位是**纳秒**。per-core 单核 100% = 1 秒内 1e9 纳秒；
+                // 多核可叠加 → per-core percent。whole-cpu = per-core / coreCount。
                 let dCpu = raw.cpuTime >= last.cpuTime ? raw.cpuTime - last.cpuTime : 0
                 let perCore = dt > 0 ? Double(dCpu) / dt / 10_000_000.0 : 0
                 cpuPercent = coreCount > 0 ? perCore / Double(coreCount) : 0
@@ -136,8 +139,8 @@ public actor ProcessSnapshotCache {
             name = "pid \(pid)"
         }
 
-        // RSS 与 CPU 计数：走 proc_pidinfo. PROC_PIDTBSDINFO 拿 BSD info，
-        // PROC_PIDTASKINFO 拿 task 维度的 resident size 与 CPU 计数。
+        // RSS：走 proc_pidinfo. PROC_PIDTBSDINFO 拿 BSD info，
+        // PROC_PIDTASKINFO 拿 task 维度的 resident size。
         // 这两个 flavor 在 libproc.h 里定义；Swift 能直接看到 PROC_PIDTBSDINFO，
         // PROC_PIDTASKINFO 是按宏展开的常数。
         var info = proc_bsdinfo()
@@ -154,12 +157,11 @@ public actor ProcessSnapshotCache {
         // RSS 为 0 且 CPU 计数为 0 视为不可读。
         let rssBytes = taskResult == taskSize
             ? UInt64(tinfo.pti_resident_size) : 0
-        let cpuTime: UInt64
-        if taskResult == taskSize {
-            cpuTime = UInt64(tinfo.pti_total_system) + UInt64(tinfo.pti_total_user)
-        } else {
-            cpuTime = 0
-        }
+        // CPU 计数走 Mach 的 thread_info：pti_total_user / pti_total_system
+        // 在本机 macOS 27.2 上少报 42 倍，不能用。
+        // 拿不到 task 端口（别的用户的进程，非 root）时记 0 —— 宁可少报，
+        // 也不能拿一个错的数字去凑。
+        let cpuTime = ProcessCPUTime.nanoseconds(pid: pid) ?? 0
 
         let startTime = Int64(info.pbi_start_tvsec)
 

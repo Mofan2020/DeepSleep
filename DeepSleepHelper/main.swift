@@ -558,8 +558,11 @@ private final class CommandHandler {
     /// 第一次调用所有 cpuPercent=0（这是显式约定，不是计算失败）。
     private func getProcessStats() -> HelperResponse {
         let snapshot = self.collectSnapshotSync()
-        let payload = ProcessStats(records: snapshot).encode()
-        return .ok("已抓取 \(snapshot.count) 个进程", payload: payload)
+        // 整机占用单独取，不能用各进程 CPU% 求和 ——
+        // 内核时间不属于任何用户进程，求和会漏掉。
+        let systemCpu = SystemCPUSampler.shared.sample()
+        let payload = ProcessStats(records: snapshot, systemCpuPercent: systemCpu).encode()
+        return .ok("已抓取 \(snapshot.count) 个进程，整机 CPU \(String(format: "%.1f", systemCpu))%", payload: payload)
     }
 
     /// 抓快照。`ProcessSnapshotCache` 是 actor，这里同步取结果再立刻返回；

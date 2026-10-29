@@ -51,6 +51,20 @@ public enum FanControl {
     /// 冷却期内保持最大转速，等温度真正稳下来再交还控制权。
     public static let emergencyCooldownSeconds = 60.0
 
+    /// 风扇连续写不进多久算「持续改不动」（秒）。
+    ///
+    /// 超过这个时间还改不动，就不再继续修改它的转速，交回系统控制。
+    /// 定 60 秒的理由：SMC 写入偶发失败很常见（机器刚醒、SMC 重置、
+    /// 扩展坞热插拔），这些重试一次就好；连续一分钟还不行，说明不是抖动，
+    /// 是这台机器/这个风扇真的不接受我们的写。
+    public static let stallThresholdSeconds: TimeInterval = 60.0
+
+    /// 「还在持续失败」的宽限窗口（秒）。
+    ///
+    /// 最近一次失败超过这个时间，就认为已经不在持续失败了 —— 比如用户
+    /// 把规则关掉之后，那个失败记录不该在 60 秒后自己升级成「交还系统」。
+    public static let stallActivityGraceSeconds: TimeInterval = 30.0
+
     /// 免责声明版本号。正文有实质变化时 +1，老用户需要重新同意。
     public static let disclaimerVersion = 1
 }
@@ -87,10 +101,19 @@ public struct FanState: Sendable, Equatable {
     public let fans: [Fan]
     /// 读取时刻（unix epoch 秒）。
     public let timestamp: TimeInterval
+    /// 连续写不进、已被助手判定为「停止修改转速」的风扇序号。
+    public let stalledFans: [Int]
+    /// 连「交回系统控制」都失败的风扇序号 —— 严重问题，必须警告用户。
+    public let releaseFailedFans: [Int]
 
-    public init(fans: [Fan], timestamp: TimeInterval = Date().timeIntervalSince1970) {
+    public init(fans: [Fan],
+                timestamp: TimeInterval = Date().timeIntervalSince1970,
+                stalledFans: [Int] = [],
+                releaseFailedFans: [Int] = []) {
         self.fans = fans
         self.timestamp = timestamp
+        self.stalledFans = stalledFans
+        self.releaseFailedFans = releaseFailedFans
     }
 
     /// 转速区间合法的风扇才允许被写。
@@ -109,7 +132,9 @@ public struct FanState: Sendable, Equatable {
         [
             "fans": Self.encodeFans(fans),
             "count": "\(fans.count)",
-            "timestamp": String(timestamp)
+            "timestamp": String(timestamp),
+            "stalled": stalledFans.map(String.init).joined(separator: ","),
+            "releaseFailed": releaseFailedFans.map(String.init).joined(separator: ",")
         ]
     }
 
@@ -117,8 +142,16 @@ public struct FanState: Sendable, Equatable {
         FanState(
             fans: decodeFans(payload["fans"]),
             timestamp: payload["timestamp"].flatMap { TimeInterval($0) }
-                ?? Date().timeIntervalSince1970
+                ?? Date().timeIntervalSince1970,
+            stalledFans: decodeIndexList(payload["stalled"]),
+            releaseFailedFans: decodeIndexList(payload["releaseFailed"])
         )
+    }
+
+    /// 解一行逗号分隔的风扇序号。空串 → 空数组。
+    private static func decodeIndexList(_ raw: String?) -> [Int] {
+        guard let raw, !raw.isEmpty else { return [] }
+        return raw.split(separator: ",").compactMap { Int($0) }
     }
 
     private static func encodeFans(_ fans: [Fan]) -> String {

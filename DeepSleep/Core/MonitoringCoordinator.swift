@@ -69,6 +69,17 @@ final class MonitoringCoordinator {
                 String(format: "风扇已全部强制到最大转速（%.1f°C）", event.peakCelsius),
                 isError: true)
         }
+        // 风扇控制出问题时也要通知用户 —— 「风扇可能卡在无法控制的状态」
+        // 这种事只写日志等于没告诉。
+        fans.onFanControlFailure = { failedFans, released in
+            SystemNotifier.shared.notifyFanControlFailure(
+                fans: failedFans, released: released)
+            SleepController.shared.appendLog(
+                released
+                    ? "风扇 \(failedFans) 连续写不进，已停止修改并交回系统控制"
+                    : "风扇 \(failedFans) 连交回系统控制都失败，需要人工检查",
+                isError: true)
+        }
         // 启动控制循环：内部先清残留 → 同步免责声明 → 起心跳。
         // 注意它**不会**自动开启风扇控制（isEnabled 默认 false），
         // 用户必须在界面里显式打开。
@@ -118,13 +129,13 @@ final class MonitoringCoordinator {
         if needsSampling, processRAMSamping == nil {
             processRAMSamping = Task { [weak self] in
                 while !Task.isCancelled {
-                    guard let records = try? await ProcessStatsProvider.shared.fetchStats(),
-                          !records.isEmpty else {
+                    guard let stats = try? await ProcessStatsProvider.shared.fetchStats(),
+                          !stats.records.isEmpty else {
                         self?.cachedMaxProcessRAMGB = nil
                         try? await Task.sleep(nanoseconds: 30_000_000_000)
                         continue
                     }
-                    let maxRSS = records.map(\.rssBytes).max() ?? 0
+                    let maxRSS = stats.records.map(\.rssBytes).max() ?? 0
                     self?.cachedMaxProcessRAMGB =
                         Double(maxRSS) / 1_073_741_824
                     try? await Task.sleep(nanoseconds: 30_000_000_000)

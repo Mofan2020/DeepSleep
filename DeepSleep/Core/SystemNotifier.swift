@@ -153,6 +153,34 @@ public final class SystemNotifier: NSObject, UNUserNotificationCenterDelegate {
         UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
     }
 
+    /// 风扇控制出问题时通知用户。
+    ///
+    /// `released == false` 是最严重的那种：连「交回系统控制」都失败了，
+    /// 风扇可能卡在一个我们控制不了的状态。这必须让用户知道 ——
+    /// 只写日志等于没告诉。
+    public func notifyFanControlFailure(fans: [Int], released: Bool) {
+        guard !fans.isEmpty else { return }
+        let content = UNMutableNotificationContent()
+        let list = fans.map(String.init).joined(separator: "、")
+        if released {
+            content.title = "🌀 风扇已交回系统控制"
+            content.body = "风扇 \(list) 连续写不进，已停止修改它的转速，交回系统自动控制。"
+        } else {
+            content.title = "⚠️ 风扇控制失败"
+            content.body = "风扇 \(list) 连交回系统控制都失败，可能处于无法控制的状态，请检查机器。"
+        }
+        content.sound = released ? .default : .defaultCritical
+        content.categoryIdentifier = Self.actionDismiss
+        content.userInfo = ["kind": "fanControl", "fans": list]
+
+        let request = UNNotificationRequest(
+            identifier: "fanControl-\(fans.map(String.init).joined(separator: "-"))-\(Int(Date().timeIntervalSince1970))",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
+    }
+
     /// 用户在通知里点的 action：走 ProcessStatsProvider。
     public var onAction: ((_ kind: String, _ action: String, _ pids: [pid_t]) -> Void)?
 

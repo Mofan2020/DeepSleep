@@ -211,6 +211,8 @@ struct AlertRulesView: View {
                 BulletLine("选择邮件动作前需先配置好发信账号，否则邮件那一份发不出去。")
                 BulletLine("同一规则在条件持续满足期间只触发一次，回到条件内才重新武装。")
                 BulletLine("这些规则与「系统监控」页的固定阈值相互独立，两者都生效。")
+                BulletLine("温度阈值可以设到 90°C 以上。90°C 兜底只管风扇转速，不管告警 —— "
+                          + "温度到了就该报，兜底把风扇拉满是另一回事。")
             }
         }
     }
@@ -355,20 +357,8 @@ struct AlertRuleEditorSheet: View {
     }
 
     private var validationWarning: String? {
-        if draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return "名称不能为空。"
-        }
-        if draft.durationSeconds < 0 {
-            return "持续时间不能为负。"
-        }
-        if draft.threshold < 0 {
-            return "阈值不能为负。"
-        }
-        if draft.metric == .cpuTemperature,
-           draft.threshold >= FanControl.emergencyTemperatureCelsius {
-            return "温度阈值不应达到 \(Int(FanControl.emergencyTemperatureCelsius))°C —— "
-                 + "到该值后风扇兜底会先接管。"
-        }
-        return nil
+        // 校验放在模型上（AlertRule.validationError），这里只做展示。
+        // 温度阈值不受 90°C 兜底限制 —— 兜底管的是风扇转速，不是告警。
+        AlertRule.validationError(for: draft)
     }
 }

@@ -1714,3 +1714,124 @@ macOS 图标的体积感靠**边缘反光 + 投影**撑，不靠装饰圈。所�
   实际观感可能与生成图有出入，需要装到本机肉眼确认。
 - 没有做深色/浅色/单色（tinted）appearance 变体。Asset Catalog 只有默认一套，
   深色模式下由系统自动处理。
+
+## v1.9.2 — CPU 占用率的根因，以及风扇的放手机制
+
+### CPU 占用率：不是显示 bug，是数据源错了
+
+用户报「系统监控页 CPU 占用率显示疑似有误」。查下来是取数的地方错了。
+
+原来的算法是把所有进程的 `cpuPercent` 加起来当整机占用，单进程的 `cpuPercent`
+来自 `proc_taskinfo.pti_total_user + pti_total_system`。
+
+**这个内核计数在本机 macOS 27.2 上是错的。** 实测（全部在本机跑过）：
+
+| 口径 | 同一个进程烧 2.9 秒 CPU |
+|---|---|
+| `getrusage` / `CLOCK_PROCESS_CPUTIME_ID` | 2.867 s（真值） |
+| Mach `thread_info` | 2.867 s（比值 1.000） |
+| `proc_taskinfo.pti_total_user` | 0.0688 s（少 42 倍） |
+| `proc_pid_rusage(RUSAGE_INFO_V4)` | 0.0688 s（跟上面一致） |
+
+后两个一致，说明是内核这一条路径的问题，不是解码错。横向扫全机 300 多个进程，
+差值在 45×–832× 之间飘，**不是固定倍率**，标定不出修正系数。
+
+结构体布局本身没问题：`pti_virtual_size` 466 GB、`pti_resident_size` 4 MB，
+跟 `ps -o vsz,rss` 完全对得上。
+
+**改法**（`Shared/CPUAccounting.swift`）：
+
+- 整机占用 → `host_statistics(HOST_CPU_LOAD_INFO)`，两次采样取增量。
+  跟 `top` 对照：同一时刻 host_statistics 算 86.69%，top 报
+  64.12% user + 24.15% sys = 88.28% 忙，一致。
+- 单进程 → Mach `task_for_pid` → `task_threads` → `thread_info(THREAD_BASIC_INFO)`，
+  所有线程 user+system 求和。**需要 root**（别的用户的进程拿不到 task 端口），
+  所以只能在助手侧跑，应用侧进程不能自己做。
+- 整机占用**不再**由各进程相加得出：内核时间（kernel_task）不属于任何用户
+  进程，相加会漏；而且各进程 `cpuPercent` 口径是「占整机百分比」，相加没意义。
+
+#### Swift 侧 Mach API 的坑（写下来免得再踩）
+
+这个 SDK 里**没有 `Mach` Swift module**，Mach 的东西都在 Darwin 里，且几处跟 C 不一样：
+
+- `mach_host_self()` 是真函数；`mach_task_self()` 是宏，Swift 里只有变量
+  `mach_task_self_`（**没有括号**）。
+- `THREAD_BASIC_INFO_COUNT` 是带 cast 的宏，Swift 导不进来，要自己算：
+  `MemoryLayout<thread_basic_info_data_t>.size / MemoryLayout<natural_t>.size`。
+- `THREAD_BASIC_INFO` 在 Swift 里是 Int32，`thread_info` 要 UInt32，
+  得写 `thread_flavor_t(THREAD_BASIC_INFO)`。
+- `thread_info` 第三个参数是 `UnsafeMutablePointer<integer_t>`，不是 `thread_info_t`
+  （那是 `integer_t *`），要用 `withMemoryRebound(to: integer_t.self, ...)` 转。
+
+### 风扇：连续 60 秒改不动就放手
+
+用户要求：**风扇持续 60 秒无法修改转速时（写入失败，或写后读回的实际目标转速
+与预期不同），停止修改，交由系统控制；若交还控制权也失败，警告用户。**
+
+判定逻辑抽成纯类型 `Shared/FanWriteFailureTracker.swift`（不碰 SMC，可单测）：
+
+- 「改不动」两种都算：写入失败、写后校验不通过。
+- 一次成功就清零。
+- 升级条件：**距第一次失败 ≥ 60 秒** 且 **最近一次失败在 30 秒内**。
+  后半条是为了区分「持续改不动」和「早先失败过一次、之后一直没再试」——
+  用户把规则关掉之后，那个失败记录不该自己升级成「交还系统」。
+
+助手侧动作（心跳每 5 秒检查一次，不依赖应用还在发指令）：
+
+1. 标记「停止修改」→ 之后 `setSpeed`（rpm > 0）一律拒绝，返回 `fanStalled`。
+   `rpm == 0`（交回系统）**始终允许** —— 那是安全方向。
+2. 写模式键交回系统自动控制。
+3. 交还不成功 → 记进 `releaseFailedFans`，应用侧发通知 + 界面常驻警告。
+
+90°C 紧急兜底生效中**不**做升级交还：那时候风扇归兜底管，交回系统意味着
+转速可能掉下来，而那一档是「任何规则不可覆盖」的。等兜底解除后再处理。
+
+应用侧用回调 `FanController.onFanControlFailure` 接到 `SystemNotifier` ——
+不直接调 `SystemNotifier`，免得把 UserNotifications 拖进风扇控制的依赖里
+（`scripts/test-fan-control.swift` 编译的是纯逻辑子集）。
+
+### 告警规则 90°C 限制为什么是错的
+
+之前 `AlertRulesView` 里有一条校验：温度阈值不许 ≥ 90°C，理由是「90°C 兜底
+会接管风扇」。这是把两件独立的事混成一件：
+
+- 90°C 兜底管的是**风扇转速**（拉满），跟告警是两条路。
+- 兜底生效的时候告警照样该报 —— 「温度已经到 90 了」正是最该报的时刻。
+
+校验挪到模型上（`AlertRule.validationError`），这样能单测。风扇那条路径上的
+89°C 上限**保留**：那里的区间是「规则自己映射转速的范围」，超过 90 的部分会被
+兜底接管、写了也不生效，属于「配了死设置」的防护 —— 两者的性质不同。
+
+### 顺带修的
+
+- `FanMode` 从 `FanController.swift` 拆到 `FanMode.swift`：`FanController.swift`
+  依赖助手客户端与温度监控，没法单独编译，拆出来之后「模式」这一层能脱离
+  整个应用验证（`scripts/test-fan-mode-store.swift`）。
+- 风扇模式不再因「风扇暂时读不到」而被清掉（`FanController.refresh` 原来会
+  按当前可读风扇过滤 `modes`）。
+- `AlertRuleEngine` 的观察者与 `onTrigger` 分开：之前两条消费者共用一个回调，
+  后者把前者覆盖了 —— 表现为规则能触发、界面能记录，但系统通知和邮件不发。
+- SMC 写后校验改成最多 8 次、每次间隔 250ms：风扇要一两秒才爬到目标，
+  写完立刻读回来读到的是上一个值（用户实测「期望 1516、读回 2147」，
+  2147 是写入前的旧值，实际写入是成功的）。
+
+### 验证
+
+- `bash scripts/run-all-tests.sh`：684 项断言，0 失败（含新增
+  `cpu-accounting` 8 项、`fan-stall` 16 项、`fan-mode-store` 14 项）。
+- `xcodebuild ... build`：BUILD SUCCEEDED。
+- `scripts/test-cpu-accounting.sh`：Mach 路径跟 `getrusage` 比值 1.000；
+  烧 4 个线程时整机占用 92.3%。
+- `scripts/test-fan-stall.sh` 做了变异测试：把阈值改成 10 秒、去掉活动宽限判断，
+  两种坏实现都被测试抓住。
+
+### 未验证
+
+- **Mach 路径只在同 uid 的进程上验证过**（自己跟自己比，比值 1.000）。
+  助手是 root，对别的用户的进程能不能全部拿到 task 端口，本机没法验证 ——
+  sudo 要交互输密码。批量采集时的开销也没测（非 root 下 704 个进程里只有
+  2 个能拿到 task 端口，测不出 root 下的真实耗时）。
+- **风扇 60 秒停摆机制没有真机触发过**。SMC 写入要靠真实硬件失败才能触发，
+  本机风扇写不进的情况没出现过。判定逻辑本身有单测，但「助手心跳 → 升级 →
+  交还 → 状态回传 → 应用通知」这条链没跑过。
+- 90°C 强制最大转速仍未真机触发验证。

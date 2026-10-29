@@ -35,6 +35,7 @@ struct FanControlView: View {
             if !controller.isDisclaimerAccepted {
                 disclaimerCard
             }
+            stallWarningCard
             masterCard
             if controller.fans.isEmpty {
                 emptyCard
@@ -60,6 +61,7 @@ struct FanControlView: View {
             )
         }
         .task { await controller.refreshFanState() }
+        .onAppear { loadRuleFromController() }
     }
 
     // MARK: - 免责声明
@@ -369,6 +371,39 @@ struct FanControlView: View {
         }
     }
 
+    @ViewBuilder
+    private var stallWarningCard: some View {
+        let stalled = controller.stalledFans
+        let failed = controller.releaseFailedFans
+        if !stalled.isEmpty || !failed.isEmpty {
+            SectionCard(
+                title: "风扇控制异常",
+                subtitle: nil,
+                symbol: "exclamationmark.triangle.fill",
+                accent: .red
+            ) {
+                VStack(alignment: .leading, spacing: 8) {
+                    if !failed.isEmpty {
+                        Text("风扇 \(failed.map(String.init).joined(separator: "、")) 连交回系统控制都失败，可能处于无法控制的状态。")
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if !stalled.isEmpty {
+                        Text("风扇 \(stalled.map(String.init).joined(separator: "、")) 连续 \(Int(FanControl.stallThresholdSeconds)) 秒写不进，已停止修改它的转速并交回系统控制。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Text("重新开启一次风扇控制规则即可重新尝试接管。")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
     private var notesCard: some View {
         SectionCard(
             title: "说明",
@@ -383,6 +418,18 @@ struct FanControlView: View {
     }
 
     // MARK: - 模式映射
+
+    /// 从控制器回读已保存的规则。
+    ///
+    /// 为什么必须回读：切到别的页面再回来，SwiftUI 会重建这个视图，
+    /// @State 回到初始值（60/85），看起来就是「设置根本没保存」。
+    /// 真正的家在控制器（并且已经落盘），界面只做回显。
+    private func loadRuleFromController() {
+        guard let rule = controller.currentRule else { return }
+        ruleFanIndex = rule.targetFan
+        ruleMinTemp = rule.minTempC
+        ruleMaxTemp = rule.maxTempC
+    }
 
     private enum ModeKind {
         case automatic, fixed, rule

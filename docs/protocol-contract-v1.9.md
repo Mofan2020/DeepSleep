@@ -61,6 +61,8 @@ public struct FanState: Sendable, Equatable {
     }
     public let fans: [Fan]
     public let timestamp: TimeInterval
+    public let stalledFans: [Int]        // 连续写不进、已停止修改转速的
+    public let releaseFailedFans: [Int]   // 连交回系统控制都失败的（严重）
 }
 ```
 
@@ -69,8 +71,48 @@ payload 键：
   （`isManual` 写 `1` / `0`），记录间用 `,`
 - `count` = 风扇数量
 - `timestamp` = unix epoch 秒
+- `stalled` = 逗号分隔的风扇序号（已停止修改转速的），空则空串
+- `releaseFailed` = 逗号分隔的风扇序号（交还系统控制失败的），空则空串
 
-### 2.2 温度快照
+### 2.2 连续写不进 → 停止修改、交回系统
+
+用户硬要求：**风扇持续 60 秒改不动转速时，停止修改，交由系统控制；
+交还控制权都失败（严重问题）时必须警告用户。**
+
+判定口径（`Shared/FanWriteFailureTracker.swift`）：
+
+- 「改不动」= 写入操作失败，**或**写后读回的实际目标转速与预期目标转速不同。
+  两种都算，两种都由 `setSpeed` 的异常路径记账。
+- 一次成功就清零连续失败记录。
+- 升级条件：**距第一次失败 ≥ 60 秒**（`FanControl.stallThresholdSeconds`）
+  **且**最近一次失败在 30 秒内（`FanControl.stallActivityGraceSeconds`）。
+  后半条是为了区分「持续改不动」和「早先失败过一次、之后一直没再试」——
+  用户把规则关掉之后，那个失败记录不该自己升级成「交还系统」。
+- 升级动作（helper 侧，心跳每 5 秒检查一次）：
+  1. 该风扇标记为「停止修改」，之后 `setSpeed`（rpm > 0）一律拒绝，
+     返回 `fanStalled` 错误。`rpm == 0`（交回系统）始终允许 —— 那是安全方向。
+  2. 写模式键交回系统自动控制。
+  3. 交还不成功 → 记进 `releaseFailedFans`，应用侧发通知 + 界面常驻警告。
+- 90°C 紧急兜底生效中**不**做升级交还：那时候风扇归兜底管，
+  交回系统意味着转速可能掉下来。兜底解除后再处理。
+
+### 2.3 进程快照里的整机 CPU 占用
+
+`getProcessStats` 的 payload 除了 `records`，还带一个 `systemCpuPercent`：
+
+- `systemCpuPercent` = 整机 CPU 占用百分比（0–100，100% = 全机所有核都跑满）。
+
+**它不是各进程 `cpuPercent` 的和。** 内核时间（kernel_task）不属于任何用户
+进程，求和会漏掉；而且各进程 `cpuPercent` 的口径是「占整机百分比」，
+加起来没有意义。整机值由 helper 用 `host_statistics(HOST_CPU_LOAD_INFO)`
+的两次采样增量算出，跟 `top` 的口径一致。
+
+单进程 `cpuPercent` 的数据源也换了：不再用 `proc_taskinfo.pti_total_user`
+（在本机 macOS 27.2 上少报 42 倍，跟 `getrusage` 对不上），改用 Mach 的
+`task_for_pid` → `task_threads` → `thread_info(THREAD_BASIC_INFO)`，
+把进程所有线程的 user+system 加起来。这条路需要 root，所以只能在助手侧跑。
+
+### 2.4 温度快照
 
 ```swift
 public struct TemperatureSnapshot: Sendable, Equatable {

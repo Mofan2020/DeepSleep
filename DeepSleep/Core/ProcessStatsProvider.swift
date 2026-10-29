@@ -51,14 +51,17 @@ final class ProcessStatsProvider {
     private var helperSupportsCPUTemperature = false
 
     /// 抓一份进程快照。会自动校验助手协议版本。
-    func fetchStats() async throws -> [ProcessStats.Record] {
+    ///
+    /// 返回整个 `ProcessStats`（含整机 CPU 占用），不只是记录数组 ——
+    /// 整机占用不是各进程 CPU% 的和，得单独拿。
+    func fetchStats() async throws -> ProcessStats {
         try await ensureV2()
         let request = HelperRequest(command: .getProcessStats)
         let response = try await HelperClient.shared.send(request, timeout: 6)
         guard response.success else {
             throw ProcessStatsProviderError.helperUnavailable(response.message)
         }
-        return ProcessStats.decode(response.payload).records
+        return ProcessStats.decode(response.payload)
     }
 
     /// 抓一次 CPU 温度读数。助手必须支持 `getCPUTemperature`（v1.4.2+）。
