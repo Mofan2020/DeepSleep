@@ -45,6 +45,12 @@ enum SidebarItem: String, CaseIterable, Identifiable {
     case toolbox
     /// AI 保活：按计划给指定接口发一次请求。
     case aiKeepAlive
+    /// 图片超分：把图片放大，算法可选。从工具箱进入。
+    case imageUpscale
+    /// lsof：查端口 / 文件被哪个进程占用。从工具箱进入。
+    case lsof
+    /// Shell 配置：编辑 .zshrc 等启动文件。从工具箱进入。
+    case shellConfig
 
     var id: String { rawValue }
 
@@ -70,6 +76,9 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .quarantine:     return "Quarantine"
         case .toolbox:        return "工具箱"
         case .aiKeepAlive:    return "AI 保活"
+        case .imageUpscale:   return "图片超分"
+        case .lsof:           return "lsof 查询"
+        case .shellConfig:    return "Shell 配置"
         }
     }
 
@@ -95,6 +104,9 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .quarantine:     return "lock.shield"
         case .toolbox:        return "wrench.and.screwdriver.fill"
         case .aiKeepAlive:    return "bolt.heart.fill"
+        case .imageUpscale:   return "arrow.up.left.and.arrow.down.right"
+        case .lsof:           return "network"
+        case .shellConfig:    return "terminal"
         }
     }
 }
@@ -189,7 +201,8 @@ struct ContentView: View {
     /// 当前页是不是「从工具箱进来的工具页」。
     private var showsBackToToolbox: Bool {
         switch selection {
-        case .nice, .hosts, .quarantine, .aiKeepAlive:
+        case .nice, .hosts, .quarantine, .aiKeepAlive,
+             .imageUpscale, .lsof, .shellConfig:
             return true
         default:
             return false
@@ -222,6 +235,9 @@ struct ContentView: View {
                 selection = tool.sidebarItem
             }
         case .aiKeepAlive:    KeepAliveView()
+        case .imageUpscale:   ImageUpscaleView()
+        case .lsof:           LsofView()
+        case .shellConfig:    ShellConfigView()
         }
     }
 }

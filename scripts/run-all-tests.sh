@@ -41,6 +41,34 @@ build_and_run() {
     run "$name" "$outbin"
 }
 
+# 需要注入环境变量的测试。格式：build_and_run_env <名> <KEY=VAL> <输出路径> <源码...>
+# 用途：测试要写 UserDefaults，但键名跟 App 真实在用的撞了 ——
+#       拿 .standard 去写会改掉用户自己的配置，必须换个 suite。
+build_and_run_env() {
+    local name="$1"; local envspec="$2"; local outbin="$3"; shift 3
+    if ! swiftc -parse-as-library "$@" -o "$outbin" 2>/tmp/ds_compile_err.txt; then
+        printf '  ✗ %-42s 编译失败\n' "$name"
+        head -8 /tmp/ds_compile_err.txt | sed 's/^/      /'
+        FAILED_LIST+=("$name")
+        FAIL=$((FAIL + 1))
+        return
+    fi
+    local out code ok_count failed_count
+    out=$(env "$envspec" "$outbin" 2>&1)
+    code=$?
+    ok_count=$(printf '%s' "$out" | grep -cE '\[通过\]|^OK:')
+    failed_count=$(printf '%s' "$out" | grep -cE '\[失败\]|^FAIL')
+    if [ $code -eq 0 ]; then
+        printf '  ✓ %-42s 通过 %s 项\n' "$name" "$ok_count"
+        PASS=$((PASS + ok_count))
+    else
+        printf '  ✗ %-42s 退出码 %s（失败 %s 项）\n' "$name" "$code" "$failed_count"
+        printf '%s\n' "$out" | grep '\[失败\]' | head -5 | sed 's/^/      /'
+        FAILED_LIST+=("$name")
+        FAIL=$((FAIL + 1))
+    fi
+}
+
 # 需要额外 swiftc 参数的（比如 -framework）。参数原样传给 swiftc，
 # 不强制加 -parse-as-library —— 用例自己决定。
 build_and_run_raw() {
@@ -65,7 +93,8 @@ build_and_run "process-guard"        /tmp/t_guard    Shared/ProcessInventory.swi
 build_and_run "process-snapshot"     /tmp/t_snap     Shared/ProcessStats.swift Shared/HelperProtocol.swift Shared/ProcessSnapshot.swift Shared/ProcessPriority.swift Shared/ProcessInventory.swift Shared/CPUAccounting.swift scripts/test-process-snapshot.swift
 build_and_run "process-stats"        /tmp/t_stats    Shared/ProcessStats.swift scripts/test-process-stats.swift
 build_and_run "servermode-fsm"       /tmp/t_smode    Shared/ServerModeIdlePolicy.swift scripts/test-servermode-fsm.swift
-build_and_run "monitor-config"       /tmp/t_mcfg     Shared/NicePageSize.swift DeepSleep/Core/MonitorConfig.swift scripts/test-monitor-config.swift
+build_and_run_env "monitor-config" "DEEPSLEEP_MONITOR_CONFIG_SUITE=com.skyc8266.deepsleep.tests.monitor-config" /tmp/t_mcfg Shared/NicePageSize.swift DeepSleep/Core/MonitorConfig.swift scripts/test-monitor-config.swift
+build_and_run "cpu-temp-alert"       /tmp/t_cputempalert Shared/CPUTemperatureAlert.swift scripts/test-cpu-temperature-alert.swift
 build_and_run "idle-time"            /tmp/t_idle     Shared/IdleTime.swift scripts/test-idle-time.swift
 build_and_run "selfupdate"           /tmp/t_selfupd  Shared/HelperProtocol.swift DeepSleepHelper/SelfUpdate.swift scripts/test-selfupdate.swift
 build_and_run "auto-start-manager"   /tmp/t_autostart DeepSleep/Core/AutoStartManager.swift scripts/test-auto-start-manager.swift
@@ -107,10 +136,13 @@ if [ -f scripts/check-keepalive-isolation.py ]; then
     fi
 fi
 build_and_run "keepalive-url"        /tmp/t_kaurl    DeepSleep/AIKeepAlive/KeepAliveModels.swift scripts/test-keepalive-url.swift
+build_and_run "lsof-service"         /tmp/t_lsof    DeepSleep/Core/LsofService.swift scripts/test-lsof-service.swift
 build_and_run "toolbox-layout"       /tmp/t_tblay    DeepSleep/Views/ToolboxLayout.swift scripts/test-toolbox-layout.swift
 build_and_run "toolbox-gate"         /tmp/t_tbgate   DeepSleep/Views/ToolboxLayout.swift DeepSleep/AIKeepAlive/KeepAliveModels.swift DeepSleep/AIKeepAlive/KeepAliveError.swift DeepSleep/AIKeepAlive/KeepAliveStore.swift DeepSleep/AIKeepAlive/KeepAliveKeychain.swift scripts/test-toolbox-gate.swift
 build_and_run "keepalive-schedule"   /tmp/t_kasch    scripts/test-support/KeepAliveTestStubs.swift DeepSleep/AIKeepAlive/KeepAliveModels.swift DeepSleep/AIKeepAlive/KeepAliveError.swift DeepSleep/AIKeepAlive/KeepAliveStore.swift DeepSleep/AIKeepAlive/KeepAliveClient.swift DeepSleep/AIKeepAlive/KeepAliveEngine.swift scripts/test-keepalive-schedule.swift
 build_and_run "keepalive-backoff"    /tmp/t_kabk     scripts/test-support/KeepAliveTestStubs.swift DeepSleep/AIKeepAlive/KeepAliveModels.swift DeepSleep/AIKeepAlive/KeepAliveError.swift DeepSleep/AIKeepAlive/KeepAliveStore.swift DeepSleep/AIKeepAlive/KeepAliveClient.swift DeepSleep/AIKeepAlive/KeepAliveEngine.swift scripts/test-keepalive-backoff-timing.swift
+build_and_run "shell-config"         /tmp/t_shellcfg DeepSleep/Core/ShellConfigService.swift scripts/test-shell-config.swift
+build_and_run_raw "image-upscaler"  /tmp/t_upscale -sdk $(xcrun --show-sdk-path --sdk macosx) -target arm64-apple-macos26.0 DeepSleep/Core/ImageUpscaler.swift scripts/test-image-upscaler.swift
 
 echo
 echo "=== 结果 ==="

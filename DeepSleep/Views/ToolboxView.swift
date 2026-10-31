@@ -28,6 +28,9 @@ extension ToolboxTool {
         case .hosts:          return .hosts
         case .quarantine:     return .quarantine
         case .aiKeepAlive:    return .aiKeepAlive
+        case .imageUpscale:   return .imageUpscale
+        case .lsof:           return .lsof
+        case .shellConfig:    return .shellConfig
         }
     }
 }
@@ -142,6 +145,12 @@ struct ToolboxView: View {
                 : ToolCard.Status(text: "助手未就绪", isActive: false, color: .orange)
         case .quarantine:
             return ToolCard.Status(text: "可用", isActive: true, color: .green)
+        case .imageUpscale, .shellConfig:
+            // 纯本地能力：不依赖助手，也不依赖网络。
+            return ToolCard.Status(text: "可用", isActive: true, color: .green)
+        case .lsof:
+            // lsof 本身任何权限都能跑，但非 root 只能看到自己进程的文件与端口。
+            return ToolCard.Status(text: "可用", isActive: true, color: .green)
         case .aiKeepAlive:
             switch keepAlive.status {
             case .running:
@@ -166,6 +175,9 @@ struct ToolboxView: View {
             // 放在这一页会卡住整页。
             return "共 \(ToolboxProcessCounter.count) 个进程"
         case .hosts, .quarantine:
+            return nil
+        case .imageUpscale, .lsof, .shellConfig:
+            // 这三个工具不做常驻采样，卡片上不放数字（工具箱页不触发任何重 IO）。
             return nil
         case .aiKeepAlive:
             if case .unavailable = keepAlive.status { return nil }

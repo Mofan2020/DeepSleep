@@ -1835,3 +1835,310 @@ macOS 图标的体积感靠**边缘反光 + 投影**撑，不靠装饰圈。所�
   本机风扇写不进的情况没出现过。判定逻辑本身有单测，但「助手心跳 → 升级 →
   交还 → 状态回传 → 应用通知」这条链没跑过。
 - 90°C 强制最大转速仍未真机触发验证。
+
+## v1.9.3 — 温度监控「不刷新」的根因：校准参考通道
+
+用户报「温度监控疑似无法正常刷新」。查下来采集链是好的，**坏的是取最高温
+这件事本身** —— 界面上那个数字被一个恒定值钉死了，看起来就像不刷新。
+
+### 采集链是活的（先排除这条）
+
+- 助手日志 `/var/log/com.skyc8266.deepsleep.helper.log`：502 次
+  `getTemperatureSnapshot` 请求里 478 次间隔正好 10.0 秒，没有断流。
+- 直连助手 socket 连采 13 次，每次都拿到 36 个传感器；`PMU tdie*` /
+  `PMU2 tdie*` / `PMU tdev*` 全部在动（65 秒内 31 条通道里 27 条变了，
+  幅度 0.1–1.8°C）。
+- 结论：请求发出去了、助手回了、数据是真的。
+
+### 真正的病根：`tcal` 校准参考通道参与取最高温
+
+`PMU tcal` / `PMU2 tcal` 是 IOHID 报出来的**校准基准**，不是实时温度 ——
+本机实测它们恒为 51.85°C，几十分钟一动不动。而 `maxCelsius` 原来直接
+`readings.map(\.celsius).max()`，把这两条算进去了，于是：
+
+- 496 条历史采样里 **483 条**的「最高温度」都是 51.85°C；
+- 13 次连采里，含 tcal 只有 2 种不同的最高值，去掉 tcal 有 12 种。
+
+真实 die 温度在 45–53°C 之间浮动，但只要 tcal 的 51.85 压在上面，
+界面上的「最高温度」就永远不变。**用户看到的「不刷新」是这个。**
+
+修法（`Shared/FanModels.swift`）：
+
+- `TemperatureSnapshot.isReferenceSensor(_:)` —— 名字含 `tcal` 即校准参考；
+- `maxCelsius` 与 `triggersEmergency` 改用 `liveReadings`（去掉校准通道）；
+- 界面上仍显示它们，但单独归到「校准参考」组并说明不参与判定 ——
+  用户有权知道这台机器报了什么，只是不该让它冒充最高温。
+
+`ThermalSensorGroup` 新增 `.reference` case。**分类顺序要 tcal 最先判**：
+`PMU2 tcal` 也含 "pmu2"，晚判会被 SoC 组吞掉。
+
+### 顺带订正的：温度到底走不走助手
+
+v1.9.0 那节写的是「温度不走助手」（IOHID 通道普通进程就能读）。**实际实现
+不是这样** —— `ThermalMonitor` 一开始就调助手的 `getTemperatureSnapshot`。
+`Shared/FanModels.swift` 与 `ThermalMonitor.swift` 的文件头注释都写着这个
+决定，界面文案却还写着「不需要特权权限」，两处对不上。
+
+现在统一成走助手，理由是应用侧与助手侧需要**同一份数据源**：助手要在应用
+退出后独立做 90°C 兜底，两边读数不一致会出现「应用说没超、助手说超了」
+或反过来。`ThermalView` 的注释与界面文案一并改正。
+
+### 顺带修的：同名通道没合并
+
+`gas gauge battery` 一次会来 6 条（实测 31.0 ×4、29.6、29.0）。
+`ThermalView` 的副标题写着「同名通道已合并，显示其中的最高值」——
+但 `ThermalMonitor.apply()` 里**根本没做合并**。文档承诺了没实现。
+
+新增 `TemperatureSnapshot.mergingDuplicates()`，同名取最大值（保守方向：
+宁可显示偏高一档，也不漏掉偏热的那一路），保留原始顺序。
+
+### 顺带修的：「N 秒前更新」自己不走
+
+`updatedText` 按当前时间算，但视图只在 `@Published` 变化时重算 ——
+采样周期 10 秒，所以这个计时器平时一直停在「刚刚更新」，反而加重了
+「没在刷新」的观感。改用 `TimelineView(.periodic(from: .now, by: 1))`，
+每秒自己走一次。
+
+### 验证
+
+- `scripts/test-fan-models.swift`：新增 13 项断言（tcal 识别、最高温排除、
+  校准超阈不触发兜底、同名合并规则、合并后顺序与时间戳）。
+- `scripts/test-fan-control.swift`：新增 2 项断言（tcal → 校准参考组）。
+- `bash scripts/run-all-tests.sh`：全绿。
+- `xcodebuild -configuration Debug`：BUILD SUCCEEDED。
+
+### 未验证
+
+- **界面上「最高温度」会不会真的跳动，没在真机上看过**。判定逻辑与数据
+  都验过了（12/13 次采样最高值不同），但 SwiftUI 层的实际刷新表现要用户
+  打开温度监控页确认。
+- 90°C 兜底判定改成只看真实传感器后，**没有真机触发过**（本机跑不到
+  90°C）。校准通道本来也到不了 90°C，所以这条改动对兜底行为的影响是
+  「理论上不变」，但没实测。
+
+## v1.9.3 — 系统监控页接回温度（同一件事故的另一半）
+
+上一节修的是「温度页显示的最高温不动」。这一节修的是**另一处**：系统监控页
+上的 CPU 温度那一格，从 v1.7.4 起一直写着「等待后续更新」。
+
+### 为什么是「等待后续更新」
+
+不是没做完，是**做不了**。v1.7.3 那版 CPU 温度走 SMC
+（`DeepSleepHelper/SMCTemperature.swift`），Apple Silicon 上 firmware 根本不
+回 SMC 温度 key —— 实测 `dataSize = 0`，读出来永远是空。
+
+v1.7.3 的对策是「读到空采样 → 自动把 `cpuTempEnabled` 写成 false 并落盘」，
+v1.7.4 干脆把界面上那个开关锁成 `.constant(false)` + `.disabled(true)`，
+文案改成「等待后续更新」。功能就这么下架了。
+
+### 但用户存档里的 false 是自动写进去的
+
+本机 `monitorConfig.v1` 实测（升级前）：
+
+```json
+{ "cpuTempEnabled": false, "cpuTempHighCelsius": 90,
+  "ramHighPercent": 95.52, "cpuHighPercent": 95.75,
+  "singleProcessRAMBytes": 8589934592, "sampleIntervalSeconds": 5, ... }
+```
+
+`cpuTempEnabled: false` **不是用户关的** —— 那版界面上它是锁死的，用户改不了。
+是这个 false 一路躺在存档里，等着功能回来时被一起带上。
+
+所以光改代码不够：光改代码的话，升级后开关还是关的，功能等于没接回来。
+
+### 迁移：为什么用独立 key，而不是加个版本字段
+
+最自然的做法是给 `MonitorConfig` 加一个 `schemaVersion: Int`。**不能这么干** ——
+`MonitorConfig` 的 `Codable` 是合成出来的，加一个非可选字段会让**所有老存档
+解码失败**（缺 key → decode 抛错 → `load()` 回落 `.default`），等于把用户改过
+的 RAM/CPU 阈值、单进程阈值、采样间隔全冲成默认值。
+
+改用独立的 UserDefaults key `monitorConfig.migrated.cpuTempIOHID` 存迁移标记：
+
+- 不碰存档格式，老配置照常读；
+- 标记落盘后不再重复执行 —— 用户之后自己把开关关掉，`load()` 不会改回来；
+- **只动 `cpuTempEnabled` 一个字段**，其余用户改过的值原样保留。
+
+迁移挂在 `MonitorConfig.load()` 上（`SystemMonitor.start()` 和系统监控页都走它）。
+
+### 取数：订阅 `ThermalMonitor`，不再自己读
+
+`SystemMonitor` 原来在 `tick()` 里每 5 个 tick 调
+`ProcessStatsProvider.shared.fetchCPUTemperature()`（SMC 那条死路）。现在改成
+订阅 `ThermalMonitor.shared.$hottestCelsius`。
+
+**为什么用 Combine 订阅，而不是直接读 `ThermalMonitor.shared.hottestCelsius`**：
+
+`ThermalMonitor` 是 `@MainActor` 上的单例，`SystemMonitor.tick()` 跑在**自己的
+串行队列**上。跨队列同步读 MainActor 隔离的状态有死锁风险 —— 而
+`SystemMonitor.liveSnapshot()` 里已经有 `queue.sync`，两条路撞上就是死锁。
+
+订阅拿到的回调天然在 MainActor 上（`@Published` 变化在主线程发出），回调里把
+判定投递到自己的队列，和 `tick()` 互斥。
+
+温度来源与 90°C 兜底**同一份数据**（助手侧 IOHID 私有温度事件通道），应用侧
+和助手侧读数不会打架。
+
+### 判定逻辑抽到 Shared/
+
+阈值和冷却是这块唯一会「静默出错」的地方：阈值取错 → 正常温度下弹窗轰炸；
+冷却写错 → 温度在阈值附近抖动时反复告警。两者都不 crash，只让人觉得「这功能
+有问题」，很难定位。
+
+新增 `Shared/CPUTemperatureAlert.swift`（纯逻辑，只依赖 Foundation）：
+
+- `decide(observedCelsius:now:isEnabled:)` 返回 `.belowThreshold` /
+  `.suppressedByCooldown` / `.report`；
+- **判定本身不改状态**，`markReported(at:)` 显式调用 —— 这样「更新冷却时间戳」
+  这一步是显式的，不会在一次纯判定里悄悄改了状态。
+
+### 顺带修的：测试在改用户自己的配置
+
+`scripts/test-monitor-config.swift` 原来用 `UserDefaults.standard` 读写
+`monitorConfig.v1` —— **跑一次测试就把用户真的监控配置改了**（阈值、采样间隔
+全丢）。这是既有行为，不是这次引入的，但迁移逻辑会往真实偏好域里写标记，
+必须隔离。
+
+改法：测试注入独立的 suite。存储位置通过环境变量
+`DEEPSLEEP_MONITOR_CONFIG_SUITE` 传 —— 因为 `MonitorConfig` 的存储位置是
+`static let`，**类加载时只算一次**，测试代码在运行时改不了它，环境变量是唯一
+能在进程启动前定好它的入口。
+
+跑完确认过真实域没被碰：`cpuTempEnabled` 仍是 false、没有迁移标记。
+
+### 验证
+
+- `scripts/test-cpu-temperature-alert.swift`（新，15 项断言）：阈值判定、冷却
+  边界（299 秒压住 / 300 秒放行）、读数缺失、开关关闭、阈值为 0、判定不改状态。
+- `scripts/test-monitor-config.swift`：新增 9 项断言（迁移把开关还回去、不碰
+  其它阈值、标记落盘、用户主动关掉后不改回）。
+- **变异测试 3 处，全部被抓住**：迁移不还开关 → 红；迁移顺手重置 RAM 阈值 →
+  红；标记判断写反 → 红。源码已恢复。
+- `bash scripts/run-all-tests.sh`：769 项断言全过，0 失败。
+- `swiftc -typecheck`：`MonitorConfig.swift` + `CPUTemperatureAlert.swift` 干净。
+
+### 未验证
+
+- 界面上温度数字会不会真的跳动，仍要用户打开系统监控页确认。
+- 迁移只在**本机这份存档**上验过（单元测试用的是构造出来的老存档）。真机
+  上跑一遍迁移、确认用户改过的阈值还在，才算端到端验过。
+
+## v1.9.3 — 工具箱三个新工具的落地与实测坑
+
+三个工具（图片超分 / lsof 查询 / Shell 配置）由三个工程师并行实现。
+验收时逐个跑真实路径，抓到几个**不跑就发现不了**的问题。
+
+### lsof：退出码非 0 不等于「没找到」
+
+**现象**：查一个明明在监听的端口，界面显示「没有占用」。
+
+**根因**：lsof 在**混合查询**时，只要有一个分支没匹配上就返回退出码 1，
+但另一个分支的结果照常输出到 stdout。实测 `-iTCP:49217 -iUDP:49217`
+（TCP 有、UDP 没有）：退出码 1、stderr 空、**stdout 里有 9 行有效记录**。
+
+原实现是「退出码非 0 且 stderr 空 → 返回空列表」，正好把有结果的查询
+报成「没找到」。
+
+修法（`LsofService.interpret(_:)`）：**先看 stdout**。stdout 有内容就照常
+解析，stdout 空才看 stderr 决定是「没找到」还是「真出错」。
+
+改成独立的纯函数是为了能单独测 —— 原来的 `query` 是 private 且要真的跑
+lsof 才能触发。
+
+### lsof：错误文案是系统那句废话
+
+`LsofError` 只实现了 `CustomStringConvertible`，没实现 `LocalizedError`。
+`error.localizedDescription` 给的是系统默认的
+"The operation couldn't be completed. (… error 0.)" —— 用户看到的是
+一个错误码，不是「端口号必须是 1–65535 之间的整数」。
+
+补上 `LocalizedError` + `errorDescription`。
+
+### CoreImage 没有独立的 bicubic / nearest 缩放滤镜
+
+**现象**：双三次和最近邻放大出来的图**全黑**。
+
+**根因**：CoreImage 里没有 `CICubicTransform` 和 `CINearestNeighborScale`
+（实测 `CIFilter(name:)` 都返回 nil）。`applyingFilter` 对不存在的滤镜名
+**静默返回空图**，不报错 —— 于是放大结果一片黑，界面上还显示「成功」。
+
+CoreImage 缩放类滤镜只有 `CILanczosScaleTransform`。所以：
+
+- Lanczos → `CILanczosScaleTransform`；
+- 双三次 → CoreGraphics 的 `kCGInterpolationHigh`；
+- 最近邻 → CoreGraphics 的 `kCGInterpolationNone`。
+
+后两条直接 `CGContext.draw(_:in:)`，不经过 CoreImage。
+
+**「滤镜名写错不报错」这件事本身值得记** —— 以后用 `applyingFilter`
+拼字符串滤镜名，务必先确认它存在。
+
+### CIContext 没有「渲到 CGContext」的重载
+
+`CIContext.render` 只有 `toBitmap:` / `toCVPixelBuffer:` / `toIOSurface:` /
+`toMTLTexture:`，没有直接渲到 `CGContext` 的。
+
+Lanczos 那条路走 `CVPixelBuffer` 中转（CIImage → BGRA pixel buffer →
+CGImage）。这跟 VideoToolbox 那条路共用一套像素缓冲代码 —— 两条路都用
+`kCVPixelFormatType_32BGRA`。
+
+### 读像素别用手搓的 CGBitmapContext
+
+**现象**：测试里读放大图的像素，红区读出来是 `(255,255,51)`（黄），
+蓝区读出来是 `(4,51,255)` —— 颜色明显串了。
+
+**根因**：`premultipliedLast + byteOrder32Little` 这个组合在 CoreGraphics
+里语义很别扭 —— 写入时颜色被预乘过，读回来时又按另一套解释，还带一堆
+舍入残渣（红像素读成 `(255,38,0,255)`、蓝像素读成 `(4,51,255,255)`，
+那 38/51/4 全是预乘舍入残留）。用它写断言就变成在测舍入误差。
+
+改用 CoreImage 的 `CIFormat.RGBA8` 读 —— **非预乘、字节序确定的 RGBA**，
+读出来就是通道本身。
+
+### 纯色分块图区分不了插值核
+
+第一版测试用「左半红右半蓝」的图，断言「放大后颜色没串」。这个断言能抓
+通道错位，但**抓不到用错插值核**：纯色区里任何插值方式输出都一样。
+
+实测把最近邻换成双三次，纯色分块图的断言**全绿**。
+
+改成再加一张**渐变图**，数「连续三像素值完全相同」的次数：
+
+| 算法 | 三连相等处数 / 256 像素 |
+|---|---|
+| Lanczos | 2 |
+| 双三次 | 10 |
+| 最近邻 | 64 |
+
+最近邻是阶梯（每个源像素放大成一整块），高质量插值是平滑过渡。这个
+指标能分辨三者。
+
+### 神经网络超分的实际限制
+
+`VTSuperResolutionScalerConfiguration`：
+
+- `init()` 不可用，必须用 `initWithFrameWidth:frameHeight:scaleFactor:inputType:usePrecomputedFlow:qualityPrioritization:revision:`，返回 nullable；
+- `scaleFactor` 只读；
+- `configurationModelStatus` 在 **configuration** 上，不在 `VTFrameProcessor` 上；
+- 图片输入的**边长上限 1920**（视频输入宽 1920、高 1080）；
+- 只支持 4 倍（`supportedScaleFactors` 可查）；
+- 模型没下载完时 `configurationModelStatus == .downloadRequired`，此时应该早退
+  并提示用户，而不是硬跑。
+
+### 图片超分的验证
+
+- `scripts/test-image-upscaler.swift`（新，84 项断言）：四种算法 × 各支持倍数
+  的真实放大，断言输出尺寸、像素总数、**像素颜色没串**、竖直方向没串；
+  渐变图区分插值核；神经网络超分的超限报错、倍数报错；PNG 读写往返。
+- **变异测试 3 处，全部被抓住**：最近邻→双三次（红）、Lanczos→最近邻（红）、
+  pixel buffer 格式搞错（9 项红）。
+- lsof 的变异测试 2 处：退回旧退出码语义（3 项红）、去掉 `LocalizedError`
+  （8 项红）。
+
+### Shell 配置：真实文件确认没被碰
+
+跑完整测试前后对比 `~/.zshrc` / `~/.zprofile` / `~/.zshenv` 的 md5 与
+修改时间：**三个文件的指纹完全没变**，也没多出新的备份文件。
+
+这条是这个工具最该验的 —— 它直接动用户的启动文件，测试跑一次就改一次
+用户配置的话，这个工具本身就是危险的。

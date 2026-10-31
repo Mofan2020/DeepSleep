@@ -20,7 +20,7 @@ macOS has never had a real answer to: *"I want my Mac to stay awake until this d
 - **App name**: Deep Sleep
 - **Minimum system**: macOS 26.0
 - **Language / framework**: Swift 5, SwiftUI + AppKit, IOKit, LocalAuthentication
-- **当前版本**：1.9.2
+- **当前版本**：1.9.3
 
 ## Highlights
 
@@ -35,8 +35,8 @@ macOS has never had a real answer to: *"I want my Mac to stay awake until this d
 - **Toolbox** — every tool lives on one page; pin the ones you use most to the top.
 - **AI keep-alive** — send a tiny request to a subscription AI service at set times each day, so its rolling usage window keeps moving.
 - **External activity** — see who else is blocking sleep or changing power settings (`--blockers`, `--changes`, `--rivals`).
-- **System monitor** — CPU/RAM overload alerts, single-process RSS threshold.
-- **Temperature monitoring** — live readings from the SoC, battery, and storage sensors. Reads the IOHID private temperature channel, so it works with or without the privileged helper.
+- **System monitor** — CPU/RAM overload alerts, single-process RSS threshold, and live CPU temperature with an adjustable alert threshold (40–105°C). A temperature alert notifies you; it never freezes or kills a process.
+- **Temperature monitoring** — live readings from the SoC, battery, and storage sensors. Reads the IOHID private temperature channel through the privileged helper, so the app and the 90°C fan fallback always agree on the numbers.
 - **Fan control** — hand the fans back to the system, pin them to a fixed RPM, or map temperature to RPM with a rule of your own (target fan, low temperature, high temperature). Fixed and rule modes need the privileged helper and an accepted disclaimer. At 90°C every fan is forced to maximum regardless of your settings.
 - **Custom alert rules** — your own thresholds on CPU load, memory use, per-process memory, CPU temperature, or disk usage, with a hold time before each one fires.
 - **Prevent external disk sleep** — keeps attached disks out of their low-power idle state so transfers don't stall. Optional, in Power settings.
@@ -118,6 +118,9 @@ Every tool sits on one page. The sidebar has a single **Toolbox** entry; each to
 | Hosts editor | Read and write `/etc/hosts`, manage who is allowed to change it. |
 | Quarantine manager | Scan a directory and clear the `com.apple.quarantine` attribute from its files. |
 | AI keep-alive | Send a tiny request to a subscription AI service at set times each day. |
+| Image upscaler | Enlarge an image 2–4×: neural super-resolution, Lanczos, bicubic, or nearest neighbour. |
+| lsof query | Find which process holds a port or file — by port, PID, or path. |
+| Shell config | Edit `.zshrc` and friends, with a backup and a syntax check before saving. |
 
 ## AI Keep-Alive
 

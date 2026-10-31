@@ -39,11 +39,11 @@ struct ToolboxLayoutTests {
         checkEqual("无置顶", 0, ToolboxLayout.default.pinned.count)
         checkEqual(
             "rest 是 canonical 顺序",
-            ["nice", "hosts", "quarantine", "aiKeepAlive"],
+            ["nice", "hosts", "quarantine", "aiKeepAlive", "imageUpscale", "lsof", "shellConfig"],
             ToolboxLayout.default.rest
         )
         check("默认布局 isDefault", ToolboxLayout.default.isDefault)
-        checkEqual("orderedTools 数量", 4, ToolboxLayout.default.orderedTools.count)
+        checkEqual("orderedTools 数量", 7, ToolboxLayout.default.orderedTools.count)
 
         // ------------------------------------------------------- 网关已隐藏
         print("\n== 网关已从工具箱移除 ==")
@@ -53,8 +53,8 @@ struct ToolboxLayoutTests {
             "实际 \(ToolboxTool.allCases.map(\.rawValue))"
         )
         checkEqual(
-            "工具总数是 4",
-            4,
+            "工具总数是 7",
+            7,
             ToolboxTool.allCases.count
         )
         check(
@@ -69,7 +69,7 @@ struct ToolboxLayoutTests {
         layout = layout.togglingPin(.aiKeepAlive)
         checkEqual("置顶后 pinned 有一个", ["aiKeepAlive"], layout.pinned)
         check("置顶后 isPinned 成立", layout.isPinned(.aiKeepAlive))
-        checkEqual("置顶后 rest 少一个", 3, layout.rest.count)
+        checkEqual("置顶后 rest 少一个", 6, layout.rest.count)
         check("置顶后不再是默认布局", !layout.isDefault)
         checkEqual("置顶组排在最前", ToolboxTool.aiKeepAlive, layout.orderedTools.first)
 
@@ -82,12 +82,17 @@ struct ToolboxLayoutTests {
         checkEqual("取消置顶落到 rest 末尾", "aiKeepAlive", layout2.rest.last)
         checkEqual(
             "取消置顶后 rest 顺序是「原来的 + 它」",
-            ["nice", "hosts", "quarantine", "aiKeepAlive"],
+            ["nice", "hosts", "quarantine", "imageUpscale", "lsof", "shellConfig", "aiKeepAlive"],
             layout2.rest
         )
-        // aiKeepAlive 本来就在 canonical 顺序的最后，所以取消置顶后
-        // 顺序没变 → 仍然是默认布局。要测「顺序变了」，得动中间的工具。
-        check("取消置顶一个末尾工具 → 顺序没变 → 仍是默认布局", layout2.isDefault)
+        // aiKeepAlive 在 canonical 顺序中间（后面还有三个工具），取消置顶后
+        // 它被挪到末尾 → 顺序变了 → 不再是默认布局。
+        check("取消置顶一个中间工具 → 顺序变了 → 不再是默认布局", !layout2.isDefault)
+        // canonical 顺序里真正的最后一个工具，取消置顶后原位不动。
+        let tailTool = ToolboxTool.allCases.last!
+        let layout2c = ToolboxLayout.default.togglingPin(tailTool).togglingPin(tailTool)
+        check("取消置顶末尾工具 → 顺序没变 → 仍是默认布局", layout2c.isDefault,
+              "实际 rest=\(layout2c.rest)")
         let layout2b = ToolboxLayout.default.togglingPin(.hosts).togglingPin(.hosts)
         check(
             "取消置顶一个中间工具 → 顺序变了 → 不再是默认布局",
@@ -97,7 +102,7 @@ struct ToolboxLayoutTests {
         // 「重置排序」= 恢复 canonical 顺序 + 清空置顶。
         checkEqual(
             "重置排序后恢复 canonical 顺序",
-            ["nice", "hosts", "quarantine", "aiKeepAlive"],
+            ["nice", "hosts", "quarantine", "aiKeepAlive", "imageUpscale", "lsof", "shellConfig"],
             ToolboxLayout.default.orderedTools.map(\.rawValue)
         )
         check("重置排序后是默认布局", ToolboxLayout.default.isDefault)
@@ -118,11 +123,11 @@ struct ToolboxLayoutTests {
         print("\n== 全部置顶 ==")
         var layout4 = ToolboxLayout.default
         for tool in ToolboxTool.allCases { layout4 = layout4.togglingPin(tool) }
-        checkEqual("全部置顶", 4, layout4.pinned.count)
+        checkEqual("全部置顶", 7, layout4.pinned.count)
         checkEqual("rest 空", 0, layout4.rest.count)
         checkEqual(
             "显示顺序与置顶顺序一致",
-            ["nice", "hosts", "quarantine", "aiKeepAlive"],
+            ["nice", "hosts", "quarantine", "aiKeepAlive", "imageUpscale", "lsof", "shellConfig"],
             layout4.orderedTools.map(\.rawValue)
         )
         check("全部置顶不是默认布局", !layout4.isDefault)
@@ -133,19 +138,19 @@ struct ToolboxLayoutTests {
         checkEqual("未知 ID 被丢弃", ["nice"], unknown.pinned)
         checkEqual(
             "缺失的按 canonical 顺序补到 rest 末尾",
-            ["hosts", "quarantine", "aiKeepAlive"],
+            ["hosts", "quarantine", "aiKeepAlive", "imageUpscale", "lsof", "shellConfig"],
             unknown.rest
         )
 
         let duplicate = ToolboxLayout(pinned: ["nice", "nice"], rest: ["nice"])
         checkEqual("重复 ID 只留一个", ["nice"], duplicate.pinned)
-        checkEqual("重复的 rest 也只留一个", 3, duplicate.rest.count)
-        checkEqual("总数仍是 4", 4, duplicate.orderedTools.count)
+        checkEqual("重复的 rest 也只留一个", 6, duplicate.rest.count)
+        checkEqual("总数仍是 7", 7, duplicate.orderedTools.count)
 
         // ---------------------------------------------------- 空存储 → 默认
         print("\n== 空存储 → 默认布局 ==")
         let empty = ToolboxLayout(pinned: [], rest: [])
-        checkEqual("空存储补齐全部 4 个", 4, empty.orderedTools.count)
+        checkEqual("空存储补齐全部 7 个", 7, empty.orderedTools.count)
         check("空存储等价于默认布局", empty.isDefault)
 
         // -------------------------------------------------------- Codable
@@ -165,8 +170,8 @@ struct ToolboxLayoutTests {
             "实际 \(legacyDecoded.orderedTools.map(\.rawValue))"
         )
         checkEqual(
-            "旧存储解码后总数仍是 4",
-            4,
+            "旧存储解码后总数仍是 7",
+            7,
             legacyDecoded.orderedTools.count
         )
 
@@ -176,7 +181,7 @@ struct ToolboxLayoutTests {
         defaults.removeObject(forKey: ToolboxStore.storageKey)
         checkEqual(
             "没有记录时读回默认布局",
-            ["nice", "hosts", "quarantine", "aiKeepAlive"],
+            ["nice", "hosts", "quarantine", "aiKeepAlive", "imageUpscale", "lsof", "shellConfig"],
             ToolboxStore.load().orderedTools.map(\.rawValue)
         )
         ToolboxStore.save(layout4)
@@ -188,7 +193,7 @@ struct ToolboxLayoutTests {
         check("存盘后仍是置顶状态", ToolboxStore.load().isPinned(.nice))
         // 手改过 UserDefaults 的脏数据不能崩，也不能少工具。
         defaults.set(Data("garbage".utf8), forKey: ToolboxStore.storageKey)
-        checkEqual("数据损坏时回落到默认布局", 4, ToolboxStore.load().orderedTools.count)
+        checkEqual("数据损坏时回落到默认布局", 7, ToolboxStore.load().orderedTools.count)
         defaults.removeObject(forKey: ToolboxStore.storageKey)
 
         // ------------------------------------------- 默认值判断的稳定性（键序）
