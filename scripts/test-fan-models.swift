@@ -145,6 +145,56 @@ struct FanModelsTests {
         let noReading = TemperatureSnapshot(readings: [])
         check("没有读数不触发", !noReading.triggersEmergency)
 
+        // MARK: - 校准参考通道（tcal）
+
+        // 本机实测：`PMU tcal` / `PMU2 tcal` 恒定 51.85°C，长期不动。
+        // 它们参与取最高会把「最高温度」钉死，界面看起来像不刷新。
+        let withReference = TemperatureSnapshot(readings: [
+            TemperatureSnapshot.Reading(sensorID: "PMU tcal", celsius: 51.85),
+            TemperatureSnapshot.Reading(sensorID: "PMU2 tcal", celsius: 51.85),
+            TemperatureSnapshot.Reading(sensorID: "PMU tdie1", celsius: 46.21)
+        ])
+        check("tcal 被识别为校准参考", TemperatureSnapshot.isReferenceSensor("PMU tcal"))
+        check("PMU2 tcal 也被识别", TemperatureSnapshot.isReferenceSensor("PMU2 tcal"))
+        check("普通传感器不是校准参考", !TemperatureSnapshot.isReferenceSensor("PMU tdie1"))
+        checkEqual("最高温排除 tcal", withReference.maxCelsius ?? -1, 46.21)
+        checkEqual("liveReadings 只留真实传感器", withReference.liveReadings.count, 1)
+
+        let referenceOverThreshold = TemperatureSnapshot(readings: [
+            TemperatureSnapshot.Reading(sensorID: "PMU tcal", celsius: 95.0),
+            TemperatureSnapshot.Reading(sensorID: "PMU tdie1", celsius: 46.0)
+        ])
+        check("校准参考超阈不触发兜底", !referenceOverThreshold.triggersEmergency)
+
+        let onlyReference = TemperatureSnapshot(readings: [
+            TemperatureSnapshot.Reading(sensorID: "PMU tcal", celsius: 51.85)
+        ])
+        check("只有校准参考时没有最高温", onlyReference.maxCelsius == nil)
+
+        // MARK: - 同名通道合并
+
+        // 本机实测 `gas gauge battery` 一次来 6 条（31.0 ×4、29.6、29.0）。
+        let duplicated = TemperatureSnapshot(readings: [
+            TemperatureSnapshot.Reading(sensorID: "gas gauge battery", celsius: 31.0),
+            TemperatureSnapshot.Reading(sensorID: "gas gauge battery", celsius: 29.6),
+            TemperatureSnapshot.Reading(sensorID: "gas gauge battery", celsius: 29.0),
+            TemperatureSnapshot.Reading(sensorID: "gas gauge battery", celsius: 30.4),
+            TemperatureSnapshot.Reading(sensorID: "PMU tdie1", celsius: 46.2)
+        ], timestamp: 1_700_000_002)
+        let merged = duplicated.mergingDuplicates()
+        checkEqual("合并后只剩两路", merged.readings.count, 2)
+        checkEqual("同名取最大值", merged.readings[0].celsius, 31.0)
+        checkEqual("合并保留原顺序", merged.readings[0].sensorID, "gas gauge battery")
+        checkEqual("合并保留时间戳", merged.timestamp, 1_700_000_002)
+        checkEqual("没有重复名的快照合并不变", withReference.mergingDuplicates().readings.count, 3)
+
+        // 带通道数的版本：界面要标「N 通道」。
+        let withCounts = duplicated.mergingDuplicatesWithCounts()
+        checkEqual("合并后读数条数", withCounts.readings.count, 2)
+        checkEqual("电池通道数是 4", withCounts.channelCounts["gas gauge battery"] ?? -1, 4)
+        checkEqual("单路传感器通道数是 1", withCounts.channelCounts["PMU tdie1"] ?? -1, 1)
+        checkEqual("没有重复名时通道数不变", withReference.mergingDuplicatesWithCounts().channelCounts["PMU tcal"], 1)
+
         // MARK: - 租约常量
 
         print("\n== 租约常量 ==")

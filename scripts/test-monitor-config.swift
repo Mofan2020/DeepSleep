@@ -36,7 +36,24 @@ struct MonitorConfigTests {
             check(name, expected == actual, "期望 \(expected)，实际 \(actual)")
         }
 
-        let defaults = UserDefaults.standard
+        // 用**独立的 suite**而不是 `UserDefaults.standard`。
+        //
+        // `monitorConfig.v1` 是 App 真实在用的键名 —— 拿 standard 去写，
+        // 跑一次测试就把用户真的监控配置改了（阈值、采样间隔全丢）。
+        // 独立 suite 有自己的偏好域，跟 App 那边互不干扰。
+        //
+        // suite 名通过环境变量注入：`MonitorConfig` 的存储位置在**类加载时**
+        // 就定下来了（static let 只算一次），测试代码没法在运行时再改它。
+        // 环境变量是唯一能在进程启动前就把它定好的入口。
+        //
+        // 结束前必须清干净：suite 里的东西留在磁盘上，下次跑会读到上次的残留。
+        let suiteName = "com.skyc8266.deepsleep.tests.monitor-config"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            print("  [失败] 建不出独立的 UserDefaults suite")
+            print("\n测试结论: 1 项失败")
+            exit(1)
+        }
+        defaults.removePersistentDomain(forName: suiteName)
         let key = "monitorConfig.v1"
         defaults.removeObject(forKey: key)
 
@@ -132,6 +149,53 @@ struct MonitorConfigTests {
         defaults.set(Data("这不是 JSON".utf8), forKey: key)
         check("数据损坏时读回默认配置", MonitorConfig.load() == MonitorConfig.default)
         defaults.removeObject(forKey: key)
+
+        // ------------------------------------------------- CPU 温度开关迁移
+        //
+        // v1.7.2 那版 CPU 温度走 SMC，Apple Silicon 上读不到任何 key，
+        // 于是「读到空采样 → 自动把 cpuTempEnabled 写成 false 并落盘」。
+        // v1.7.4 又把界面开关锁死成 false，用户改不回来。
+        // v1.9.3 温度改走 IOHID 通道后，这个 false 必须还回去。
+        print("\n== CPU 温度开关迁移 ==")
+
+        let migrationFlag = "monitorConfig.migrated.cpuTempIOHID"
+        defaults.removeObject(forKey: key)
+        defaults.removeObject(forKey: migrationFlag)
+
+        // 模拟老存档：cpuTempEnabled 被自动关成 false，其它字段是用户改过的值。
+        var legacy = MonitorConfig.default
+        legacy.cpuTempEnabled = false
+        legacy.ramHighPercent = 95.5
+        legacy.cpuHighPercent = 95.7
+        legacy.singleProcessRAMBytes = 8 * 1024 * 1024 * 1024
+        legacy.sampleIntervalSeconds = 5
+        legacy.saveIfNotDefault()
+
+        let migrated = MonitorConfig.load()
+        check("迁移后 CPU 温度开关恢复为开启", migrated.cpuTempEnabled)
+        check("迁移不碰 RAM 阈值", migrated.ramHighPercent == 95.5,
+              "实际 \(migrated.ramHighPercent)")
+        check("迁移不碰 CPU 阈值", migrated.cpuHighPercent == 95.7,
+              "实际 \(migrated.cpuHighPercent)")
+        check("迁移不碰单进程 RAM 阈值",
+              migrated.singleProcessRAMBytes == 8 * 1024 * 1024 * 1024,
+              "实际 \(migrated.singleProcessRAMBytes)")
+        check("迁移不碰采样间隔", migrated.sampleIntervalSeconds == 5,
+              "实际 \(migrated.sampleIntervalSeconds)")
+        check("迁移标记已落盘", defaults.object(forKey: migrationFlag) != nil)
+
+        // 迁移只做一次：用户之后自己把开关关掉，load() 不该再把它打开。
+        var userDisabled = migrated
+        userDisabled.cpuTempEnabled = false
+        userDisabled.saveIfNotDefault()
+        check("用户主动关掉后不会被迁移改回", !MonitorConfig.load().cpuTempEnabled)
+
+        // 没有老存档时（全新安装）不该凭空写迁移标记以外的东西。
+        defaults.removeObject(forKey: key)
+        defaults.removeObject(forKey: migrationFlag)
+        check("没有存档时读回默认配置", MonitorConfig.load() == MonitorConfig.default)
+        check("默认配置的 CPU 温度开关本来就是开的",
+              MonitorConfig.default.cpuTempEnabled)
 
         // --------------------------------------------------------- 汇总
         print(failures == 0 ? "\n测试结论: 全部通过" : "\n测试结论: \(failures) 项失败")

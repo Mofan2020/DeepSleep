@@ -83,6 +83,59 @@ public struct MonitorConfig: Codable, Sendable, Equatable {
 extension MonitorConfig {
     private static let storageKey = "monitorConfig.v1"
 
+    /// 迁移标记。**独立于存档本体**存在 UserDefaults 里。
+    ///
+    /// 为什么不用存档里的版本号字段：`MonitorConfig` 的 Codable 是合成出来的，
+    /// 加一个非可选字段会让所有老存档解不出来（缺 key → decode 失败 →
+    /// 整份配置回落默认值），等于把用户改过的 RAM/CPU 阈值全冲掉。
+    /// 独立 key 不碰存档格式，老配置照常读。
+    private static let migrationFlagKey = "monitorConfig.migrated.cpuTempIOHID"
+
+    /// 存档落在哪个 UserDefaults。
+    ///
+    /// 默认是 `.standard`（App 真实在用的偏好域）。留这个口子是为了测试：
+    /// `monitorConfig.v1` 是真实键名，测试拿 `.standard` 去写就会把用户
+    /// 自己的监控配置改掉（阈值、采样间隔全丢）。测试注入自己的 suite，
+    /// 两边互不干扰。
+    ///
+    /// 整个进程内共用一个 —— 改存储位置是全局的事，不该一处一个。
+    private static let defaultsOverride: UserDefaults? = {
+        if let suite = ProcessInfo.processInfo.environment["DEEPSLEEP_MONITOR_CONFIG_SUITE"],
+           !suite.isEmpty,
+           let suiteDefaults = UserDefaults(suiteName: suite) {
+            return suiteDefaults
+        }
+        return nil
+    }()
+
+    /// 实际使用的 UserDefaults。
+    static var storage: UserDefaults { defaultsOverride ?? .standard }
+
+    /// 把老存档里被「自动关掉」的 CPU 温度开关恢复成开启。
+    ///
+    /// v1.7.2 那版 CPU 温度走 SMC，Apple Silicon 上 firmware 根本不回 key
+    /// （实测 `dataSize = 0`），于是「读到空采样 → 自动把 `cpuTempEnabled`
+    /// 写成 false 并落盘」。v1.7.4 又把界面上的开关锁成 `.constant(false)`，
+    /// 用户根本改不回来 —— 于是这个 false 一路躺在存档里。
+    ///
+    /// v1.9.3 温度改走 IOHID 通道，读数是真的了，这个 false 得还回去。
+    /// 迁移只做一次：标记 key 落盘后不再重复执行。
+    ///
+    /// **只动 `cpuTempEnabled` 这一个字段**，用户改过的其它阈值（RAM 95.5%、
+    /// CPU 95.7%、单进程 8GB 之类）原样保留。
+    private static func migrateCPUTempEnabledIfNeeded(_ config: MonitorConfig) -> MonitorConfig {
+        let defaults = storage
+        guard defaults.object(forKey: migrationFlagKey) == nil else {
+            return config
+        }
+        // 标记先落：即使这次迁移中途出问题，下次也不会重复跑。
+        defaults.set(true, forKey: migrationFlagKey)
+
+        var migrated = config
+        migrated.cpuTempEnabled = true
+        return migrated
+    }
+
     /// 默认配置的 JSON 形式，用于比较「是否还是默认值」以决定是否落盘。
     /// 避免每次启动都把默认值写一遍 UserDefaults（污染磁盘）。
     ///
@@ -98,12 +151,16 @@ extension MonitorConfig {
     }()
 
     /// 从 UserDefaults 读。读不到或损坏时返回 .default。
+    ///
+    /// 读到之后会跑一次迁移（见 `migrateCPUTempEnabledIfNeeded`）——
+    /// 把老版本自动关掉的 CPU 温度开关还回去。
     public static func load() -> MonitorConfig {
-        guard let data = UserDefaults.standard.data(forKey: storageKey) else {
+        guard let data = storage.data(forKey: storageKey) else {
             return .default
         }
         do {
-            return try JSONDecoder().decode(MonitorConfig.self, from: data)
+            let config = try JSONDecoder().decode(MonitorConfig.self, from: data)
+            return migrateCPUTempEnabledIfNeeded(config)
         } catch {
             return .default
         }
@@ -115,9 +172,9 @@ extension MonitorConfig {
         encoder.outputFormatting = [.sortedKeys]
         guard let mine = try? encoder.encode(self) else { return }
         if let defaultData = Self.defaultJSON, mine == defaultData {
-            UserDefaults.standard.removeObject(forKey: Self.storageKey)
+            Self.storage.removeObject(forKey: Self.storageKey)
             return
         }
-        UserDefaults.standard.set(mine, forKey: Self.storageKey)
+        Self.storage.set(mine, forKey: Self.storageKey)
     }
 }

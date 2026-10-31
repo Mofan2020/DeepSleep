@@ -100,9 +100,9 @@ struct MonitoringView: View {
                     Divider().frame(height: 36)
                     metricBlock(
                         title: "CPU 温度",
-                        value: "等待后续更新",
-                        caption: "等待后续更新",
-                        tint: .secondary
+                        value: snapshot.cpuTempC.map { String(format: "%.1f°C", $0) } ?? "—",
+                        caption: temperatureCaption,
+                        tint: cpuTempColor
                     )
                     Divider().frame(height: 36)
                     metricBlock(
@@ -194,6 +194,16 @@ struct MonitoringView: View {
             return .secondary
         }
         return t >= config.cpuTempHighCelsius ? .orange : .primary
+    }
+
+    /// 温度那一格的副标题。
+    ///
+    /// 读不到数时要说清是「没读到」还是「功能关着」—— 两者的处置完全不同：
+    /// 前者要去查助手，后者在界面上改开关就行。
+    private var temperatureCaption: String {
+        if !config.cpuTempEnabled { return "已关闭" }
+        guard snapshot.cpuTempC != nil else { return "助手未就绪时读不到" }
+        return "最高传感器读数"
     }
 
     private var diskColor: Color {
@@ -296,22 +306,20 @@ struct MonitoringView: View {
 
                 Divider()
 
-                Toggle("CPU 温度告警（等待后续更新）", isOn: .constant(false))
-                    .disabled(true)
-                    .help("CPU 温度读取功能正在重写，等下次更新放出。\n"
-                          + "在此之前开关被锁定为关闭，"
-                          + "不会触发误告警；其它监控项目不受影响。")
+                Toggle("CPU 温度告警", isOn: $config.cpuTempEnabled)
+                    .help("任一传感器达到阈值就告警。温度读数来自 IOHID 私有温度事件通道，"
+                          + "与 90°C 风扇兜底同一份数据。\n"
+                          + "这一档只告警，不冻结进程 —— 温度问题不是杀进程能解决的。")
                 HStack {
                     Text("CPU 温度阈值")
                     Spacer()
-                    Text("等待后续更新")
+                    Text(String(format: "%.0f°C", config.cpuTempHighCelsius))
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
                 }
-                Slider(value: .constant(90), in: 0...105, step: 1)
-                    .disabled(true)
-                Text("CPU 温度功能暂时不可用 —— 系统监控本身（RAM、CPU 占用、"
-                     + "Top-N 进程）不受影响。")
+                Slider(value: $config.cpuTempHighCelsius, in: 40...105, step: 1)
+                Text("温度达到 \(Int(config.cpuTempHighCelsius))°C 就告警。"
+                     + "告警时只发通知与邮件，不会冻结进程。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

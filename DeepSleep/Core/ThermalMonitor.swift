@@ -30,17 +30,21 @@ enum ThermalSensorGroup: String, CaseIterable, Identifiable {
     case gpu
     case battery
     case storage
+    /// 校准参考通道（`PMU tcal` / `PMU2 tcal`）。读数恒定，不代表实时温度，
+    /// 单独成组是为了不去污染 SoC 分组的「最高温」印象。
+    case reference
     case other
 
     var id: String { rawValue }
 
     var displayName: String {
         switch self {
-        case .soc:     return "SoC"
-        case .gpu:     return "GPU"
-        case .battery: return "电池"
-        case .storage: return "存储"
-        case .other:   return "其它"
+        case .soc:       return "SoC"
+        case .gpu:       return "GPU"
+        case .battery:   return "电池"
+        case .storage:   return "存储"
+        case .reference: return "校准参考"
+        case .other:     return "其它"
         }
     }
 
@@ -48,8 +52,10 @@ enum ThermalSensorGroup: String, CaseIterable, Identifiable {
     ///
     /// 判定顺序有讲究：先看最具体的（gas gauge / NAND / GPU），再看芯片类，
     /// 最后落到其它。否则 "gas gauge battery" 之类会被更宽的模式吸走。
+    /// 校准参考（tcal）要排在最前：`PMU2 tcal` 也含 "pmu2"，晚判会被 SoC 组吞掉。
     static func classify(sensorID: String) -> ThermalSensorGroup {
         let name = sensorID.lowercased()
+        if name.contains("tcal") { return .reference }
         if name.contains("gas gauge") { return .battery }
         if name.contains("nand") { return .storage }
         if name.contains("gpu") { return .gpu }
@@ -66,6 +72,9 @@ struct GroupedTemperatureReading: Identifiable, Equatable {
     let sensorID: String
     let celsius: Double
     let group: ThermalSensorGroup
+    /// 这一路传感器在原始快照里出现了几条通道。合并之后大于 1 时，
+    /// 界面上要标出来 —— 用户看到一行电池温度，得知道背后是 6 路通道。
+    let channelCount: Int
 
     var id: String { sensorID }
 
@@ -178,21 +187,28 @@ final class ThermalMonitor: ObservableObject {
         isAvailable = true
         lastUpdatedAt = Date()
 
+        // 同名通道合并：IOHID 会把同一路传感器以同一个 Product 名重复报多次
+        // （本机实测 `gas gauge battery` 一次来 6 条）。界面上列 6 行同名同值
+        // 没有信息量，副标题也写了「同名通道已合并」—— 就在这里真的合。
+        // 合并规则本身在 `Shared/FanModels.swift`（纯逻辑，可单独测），
+        // 这一层只负责把它变成界面要的形状。
+        let merged = snapshot.mergingDuplicatesWithCounts()
         var grouped: [ThermalSensorGroup: [GroupedTemperatureReading]] = [:]
-        for reading in snapshot.readings {
+        for reading in merged.readings {
             let group = ThermalSensorGroup.classify(sensorID: reading.sensorID)
             grouped[group, default: []].append(GroupedTemperatureReading(
                 sensorID: reading.sensorID,
                 celsius: reading.celsius,
-                group: group))
+                group: group,
+                channelCount: merged.channelCounts[reading.sensorID] ?? 1))
         }
         for key in grouped.keys {
             grouped[key]?.sort { $0.celsius > $1.celsius }
         }
         groupedReadings = grouped
 
-        let hottest = snapshot.maxCelsius
-        hottestCelsius = hottest
+        // 最高温 / 兜底判定都只看真实传感器（maxCelsius 已排除 tcal 校准参考通道）。
+        hottestCelsius = snapshot.maxCelsius
         isOverEmergencyThreshold = snapshot.triggersEmergency
     }
 }

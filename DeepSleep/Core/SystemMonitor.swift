@@ -11,6 +11,7 @@
 //
 
 import Foundation
+import Combine
 import Darwin
 
 
@@ -61,10 +62,19 @@ public final class SystemMonitor {
     private let queue = DispatchQueue(label: "com.skyc8266.deepsleep.monitor")
     private var timer: DispatchSourceTimer?
     private var config: MonitorConfig
-    /// CPU 温度采样节流计数器。每 N 个 tick 读一次 SMC(N 见 `cpuTempEveryNTicks`)。
-    /// 温度是秒级缓变,15s 一次足够。
-    private var cpuTempTickCounter: Int = 0
-    private let cpuTempEveryNTicks: Int = 5
+    /// 订阅 `ThermalMonitor` 的温度读数。
+    ///
+    /// **温度不再自己读** —— v1.7.2 那版走 SMC，在 Apple Silicon 上
+    /// firmware 根本不回 key（实测 `dataSize = 0`），所以整条路是死的，
+    /// 功能被下架。现在改用 IOHID 私有温度事件通道（助手侧
+    /// `getTemperatureSnapshot`），`ThermalMonitor` 已经在那儿按 10 秒
+    /// 一拍读着，这里订阅它的 `@Published` 就行。
+    ///
+    /// 用 Combine 订阅而不是直接读 `ThermalMonitor.shared.hottestCelsius`：
+    /// `ThermalMonitor` 是 MainActor 上的单例，本类的 `tick()` 跑在自己的
+    /// 串行队列上 —— 跨队列同步读 MainActor 状态有死锁风险。
+    /// 订阅拿到的是「值变了」的回调，天然在 MainActor 上，不需要跨线程读。
+    private var thermalSubscription: AnyCancellable?
     /// 当前 RAM%/CPU% 持续超过阈值的开始时间；为 nil 表示当前未在超阈。
     private var overloadStartedAt: Date?
     /// 已发出的过载事件 cooldown 起点；防止 4/24s 内连发两条同样的过载。
@@ -164,11 +174,38 @@ public final class SystemMonitor {
         // 启动时从 UserDefaults 读持久化的 config（之前版本在这里丢：
         // UI 改了 enable 但 SystemMonitor 永远是 .default。）
         self.config = MonitorConfig.load()
+        subscribeToThermal()
         queue.async { [weak self] in
             guard let self else { return }
             guard self.config.enabled else { return }
             guard self.timer == nil else { return }
             self.startTimerLocked()
+        }
+    }
+
+    /// 订阅 `ThermalMonitor` 的读数变化，驱动 CPU 温度告警判定。
+    ///
+    /// `ThermalMonitor` 是 `@MainActor` 单例 —— 连**建立订阅**这一步都得在
+    /// MainActor 上做（`$hottestCelsius` 是 MainActor 隔离的属性，
+    /// 在非隔离上下文里读它编译不过）。
+    ///
+    /// 订阅回调本身也在 MainActor 上（`@Published` 的变化在主线程发出），
+    /// 回调里把判定丢到自己的串行队列 —— `tick()` 也在那个队列上跑，
+    /// 两边不会并发。
+    ///
+    /// `start()` 是从界面层调的（MainActor），但它本身不是 MainActor 隔离的
+    /// （`SystemMonitor` 是个普通 final class，队列在后台）。所以这里用
+    /// `Task { @MainActor in }` 把订阅的建立挪到主线程。
+    private func subscribeToThermal() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.thermalSubscription = ThermalMonitor.shared.$hottestCelsius
+                .sink { [weak self] celsius in
+                    guard let self else { return }
+                    self.queue.async { [weak self] in
+                        self?.handleTemperature(celsius)
+                    }
+                }
         }
     }
 
@@ -258,76 +295,60 @@ public final class SystemMonitor {
             overloadStartedAt = nil
         }
 
-        // CPU 温度超阈判定（节流:每 N 个 tick 读一次 SMC）
-        if config.cpuTempEnabled, config.cpuTempHighCelsius > 0 {
-            cpuTempTickCounter += 1
-            if cpuTempTickCounter >= cpuTempEveryNTicks {
-                cpuTempTickCounter = 0
-                await checkCPUTemperature(now: now)
-            }
-        }
+        // CPU 温度超阈判定走 `handleTemperature` —— 由 `ThermalMonitor`
+        // 的读数变化驱动，不在本 tick 里读温度。这里不再做节流计数。
 
-        // 实时快照：CPU 温度在 CPU 温度检测路径里更新；这里只填 RAM/CPU/Top3。
+        // 实时快照：CPU 温度在温度处理路径里更新；这里只填 RAM/CPU/Top3。
         _latestRamPercent = ramPercent
         _latestCpuPercent = totalCPU
         _latestTopThree = Array(records.sorted { $0.cpuPercent > $1.cpuPercent }.prefix(3))
         _latestUpdateAt = now
     }
 
-    /// 单独抽出来的 CPU 温度检查。失败不报错（旧的 v2 助手没有这个命令,
-    /// `unsupportedHelper` 是预期情况不是故障）。
-    private func checkCPUTemperature(now: Date) async {
-        let sample: CPUTemperatureSample
-        do {
-            sample = try await ProcessStatsProvider.shared.fetchCPUTemperature()
-        } catch ProcessStatsProviderError.unsupportedHelper {
-            // 旧助手。一次性静默关闭本子开关,避免每 15s 报错一次。
-            // 走主线程是为了避开 self 在 @Sendable closure 里的捕获,
-            // 同时和 saveIfNotDefault() 走的串行写入路径保持一致。
-            Task { @MainActor in
-                guard self.config.cpuTempEnabled else { return }
-                var c = self.config
-                c.cpuTempEnabled = false
-                self.config = c
-                c.saveIfNotDefault()
-            }
-            return
-        } catch {
-            // 其它错误(助手不可用 / SMC 失败):不告警也不写盘,等下次 tick 再试。
+    /// 处理一次温度读数：填缓存 + 超阈告警。
+    ///
+    /// 温度来源是 `ThermalMonitor`（助手侧 IOHID 私有温度事件通道）。
+    /// **不再是 SMC** —— Apple Silicon 的 firmware 不回 SMC 温度 key
+    /// （实测 `dataSize = 0`），那条路读出来永远是空的，v1.7.2 因此把
+    /// 整个 CPU 温度功能下架了。
+    ///
+    /// 跑在自己的串行队列上（订阅回调投递过来的），与 `tick()` 互斥。
+    private func handleTemperature(_ celsius: Double?) {
+        guard config.cpuTempEnabled, config.cpuTempHighCelsius > 0 else {
+            // 功能关着就把缓存也清掉 —— 界面上的温度不该继续跳。
+            _latestCPUTempC = nil
             return
         }
-        // 若 helper 端成功但本次 sample 全是 nil(SMC firmware 当前读不到任何 key;
-        // 当前 macOS 26/27 + Apple Silicon 实测就是这样,见 docs/notes.md)。
-        // 这里也按"自动关闭子开关"处理,避免每 15s 重复 IO + 用户 UI 上 toggle 与
-        // 实际行为不一致(显示开启但永远拿不到温度)。
-        guard sample.hasAnyReading else {
-            Task { @MainActor in
-                guard self.config.cpuTempEnabled else { return }
-                var c = self.config
-                c.cpuTempEnabled = false
-                self.config = c
-                c.saveIfNotDefault()
-            }
-            return
-        }
-        // 取三个读数的最大值,作为判定值
-        let candidates: [Double] = [sample.maxC, sample.averageC, sample.aggregateC].compactMap { $0 }
-        guard !candidates.isEmpty else { return }
-        guard let observedMax = candidates.max() else { return }
-        let threshold = config.cpuTempHighCelsius
-        guard observedMax >= threshold else {
+        guard let observedMax = celsius else { return }
+
+        // 阈值与冷却的判定放在 `CPUTemperatureAlert`（Shared/，可单独测）。
+        let now = Date()
+        var alert = CPUTemperatureAlert(
+            thresholdCelsius: config.cpuTempHighCelsius,
+            lastReportedAt: lastCPUTempReportAt)
+        switch alert.decide(observedCelsius: observedMax,
+                            now: now,
+                            isEnabled: config.cpuTempEnabled) {
+        case .belowThreshold:
             // 不超阈也填缓存：UI 实时显示温度就算不告警也要刷新。
             _latestCPUTempC = observedMax
             return
+        case .suppressedByCooldown:
+            // 冷却期内不重复报，但温度照样刷到界面上。
+            _latestCPUTempC = observedMax
+            return
+        case .report:
+            break
         }
-        // cooldown:5 分钟内同阈值不重发
-        if let last = lastCPUTempReportAt, now.timeIntervalSince(last) < 300 { return }
-        lastCPUTempReportAt = now
+
+        alert.markReported(at: now)
+        lastCPUTempReportAt = alert.lastReportedAt
         _latestCPUTempC = observedMax
+        let threshold = config.cpuTempHighCelsius
         let event = CPUTemperatureEvent(
-            maxC: sample.maxC,
-            averageC: sample.averageC,
-            aggregateC: sample.aggregateC,
+            maxC: observedMax,
+            averageC: nil,
+            aggregateC: nil,
             observedMaxC: observedMax,
             thresholdC: threshold,
             timestamp: now

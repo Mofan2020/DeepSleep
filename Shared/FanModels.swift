@@ -210,13 +210,74 @@ public struct TemperatureSnapshot: Sendable, Equatable {
     }
 
     /// 最高读数。没有任何读数时为 nil。
+    ///
+    /// **不含校准参考通道**：`PMU tcal` / `PMU2 tcal` 这类校准值恒定不变，
+    /// 参与取最高会把「最高温度」永久钉在它们那个数上（本机实测一直是
+    /// 51.85°C，真实 die 温度在 45–53 之间浮动），界面看起来就是「不刷新」。
     public var maxCelsius: Double? {
-        readings.map(\.celsius).max()
+        liveReadings.map(\.celsius).max()
     }
 
     /// 是否触发了紧急兜底（任一传感器 ≥ 阈值）。
+    ///
+    /// 同样只看真实传感器 —— 校准参考通道的恒定值不该参与保命判定。
     public var triggersEmergency: Bool {
-        readings.contains { $0.celsius >= FanControl.emergencyTemperatureCelsius }
+        liveReadings.contains { $0.celsius >= FanControl.emergencyTemperatureCelsius }
+    }
+
+    // MARK: - 校准参考通道
+
+    /// 这个通道是不是「校准参考值」而不是实时温度。
+    ///
+    /// IOHID 在 Apple Silicon 上会把 PMU 的校准基准一并报出来（`PMU tcal`、
+    /// `PMU2 tcal`），两者读数长期恒定（本机实测恒为 51.85°C）。它们既不代表
+    /// 任何一路硅片的实时温度，也不会随负载变化，因此：
+    ///   - 不参与「最高温度」与 90°C 兜底判定；
+    ///   - 界面上仍然显示（用户想知道这台机器报了什么），但单独标注含义。
+    public static func isReferenceSensor(_ sensorID: String) -> Bool {
+        sensorID.lowercased().contains("tcal")
+    }
+
+    /// 参与温度判定的读数（去掉校准参考通道）。
+    public var liveReadings: [Reading] {
+        readings.filter { !Self.isReferenceSensor($0.sensorID) }
+    }
+
+    /// 同名通道合并后的一份快照（同名取最大值）。
+    ///
+    /// IOHID 会把同一路传感器以同一个 Product 名重复报多次 —— 本机实测
+    /// `gas gauge battery` 一次来 6 条。界面上列 6 行同名没有信息量。
+    /// 合并取最大值：保守方向，宁可显示偏高一档，也不漏掉偏热的那一路。
+    public func mergingDuplicates() -> TemperatureSnapshot {
+        let merged = mergingDuplicatesWithCounts()
+        return TemperatureSnapshot(readings: merged.readings, timestamp: timestamp)
+    }
+
+    /// 同名通道合并的结果：合并后的读数 + 每个名字原本有几条通道。
+    ///
+    /// 通道数要单独返回：界面上合并过的那一行要标「N 通道」，用户得知道
+    /// 这一行背后是几路传感器，而不是以为只有一路。
+    ///
+    /// 规则留在这一层（`Shared/`），是因为它是纯逻辑 —— 应用层那个类
+    /// 依赖助手客户端，没法脱离整个应用编译，逻辑放那儿就测不了。
+    public func mergingDuplicatesWithCounts() -> (readings: [Reading], channelCounts: [String: Int]) {
+        var best: [String: Reading] = [:]
+        var order: [String] = []
+        var counts: [String: Int] = [:]
+
+        for reading in readings {
+            counts[reading.sensorID, default: 0] += 1
+            if let existing = best[reading.sensorID] {
+                if reading.celsius > existing.celsius {
+                    best[reading.sensorID] = reading
+                }
+            } else {
+                best[reading.sensorID] = reading
+                order.append(reading.sensorID)
+            }
+        }
+
+        return (order.compactMap { best[$0] }, counts)
     }
 
     // MARK: - 编解码

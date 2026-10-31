@@ -4,10 +4,10 @@
 //
 //  温度监控页：各传感器实时读数 + 90°C 安全兜底状态。
 //
-//  温度不走特权助手 —— IOHID 私有温度事件通道普通进程就能读
-//  （实测 PrimaryUsagePage 0xFF00 / PrimaryUsage 5，38 条有效读数、
-//  去重后 33 个传感器名）。所以这一页在助手没装、没启动、没授权时
-//  依然完全可用，页面上不该出现任何「需要完全控制」的提示。
+//  读数走特权助手：IOHID 私有温度事件通道（PrimaryUsagePage 0xFF00 /
+//  PrimaryUsage 5）虽然普通进程也能读，但应用侧与助手侧需要**同一份数据源**
+//  —— 助手要在应用退出后独立做 90°C 兜底，两边读数不一致会出现「应用说没超、
+//  助手说超了」或反过来。所以统一走助手的 getTemperatureSnapshot。
 //
 //  读数已经在 ThermalMonitor 里按 ThermalSensorGroup 分好组、同名通道
 //  合并取最高值、负值与零值过滤过了。这里只负责呈现，不重复做过滤 ——
@@ -37,7 +37,7 @@ struct ThermalView: View {
     private var summaryCard: some View {
         SectionCard(
             title: "温度概览",
-            subtitle: "读数来自 IOHID 私有温度事件通道，不需要特权权限。",
+            subtitle: "读数来自 IOHID 私有温度事件通道，与 90°C 兜底判定同源。",
             symbol: "thermometer.medium",
             accent: summaryTint
         ) {
@@ -62,9 +62,15 @@ struct ThermalView: View {
                             isActive: !monitor.isOverEmergencyThreshold,
                             color: statusColor
                         )
-                        Text(updatedText)
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
+                        // 「N 秒前更新」必须自己走。它是按当前时间算的，但视图
+                        // 只在 @Published 变化时重算 —— 10 秒才动一次，平时就
+                        // 一直停在「刚刚更新」，反而容易被判成「没在刷新」。
+                        TimelineView(.periodic(from: .now, by: 1)) { context in
+                            Text(updatedText(now: context.date))
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                                .monospacedDigit()
+                        }
                     }
                 }
 
@@ -186,6 +192,13 @@ struct ThermalView: View {
                 .font(.system(.callout, design: .monospaced))
                 .lineLimit(1)
                 .truncationMode(.middle)
+            if reading.channelCount > 1 {
+                // 合并过的通道标一下数量：用户看到一行电池温度，
+                // 得知道背后是几路通道，而不是以为只有一路。
+                Text("\(reading.channelCount) 通道")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
             Spacer(minLength: 8)
             Text(String(format: "%.1f", reading.celsius))
                 .font(.system(.body, design: .monospaced).weight(.semibold))
@@ -208,8 +221,9 @@ struct ThermalView: View {
             symbol: "info.circle"
         ) {
             VStack(alignment: .leading, spacing: 7) {
-                BulletLine("温度读取不需要完全控制权限，也不依赖特权助手。")
+                BulletLine("温度由特权助手读取，助手未就绪时这一页读不到数。")
                 BulletLine("负读数与零读数代表该通道不是温度传感器，已在采集层过滤。")
+                BulletLine("「校准参考」组的读数长期恒定，是 PMU 的校准基准，不参与最高温与 \(Int(FanControl.emergencyTemperatureCelsius))°C 兜底判定。")
                 BulletLine("\(Int(FanControl.emergencyTemperatureCelsius))°C 兜底由应用与特权助手两侧独立判定，应用退出后助手仍会保命。")
                 BulletLine("本页显示传感器原始读数，不做平滑，因此会有小幅跳动。")
             }
@@ -253,10 +267,10 @@ struct ThermalView: View {
         return .green
     }
 
-    private var updatedText: String {
+    private func updatedText(now: Date) -> String {
         guard let updated = monitor.lastUpdatedAt else { return "尚未采样" }
-        let seconds = Int(Date().timeIntervalSince(updated))
-        if seconds < 5 { return "刚刚更新" }
+        let seconds = Int(now.timeIntervalSince(updated))
+        if seconds < 2 { return "刚刚更新" }
         if seconds < 60 { return "\(seconds) 秒前更新" }
         return updated.formatted(date: .omitted, time: .standard)
     }

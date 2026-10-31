@@ -315,6 +315,11 @@ struct FanControlTests {
                    ThermalSensorGroup.classify(sensorID: "GPU0 temp"))
         checkEqual("不认识的名字 → 其它", ThermalSensorGroup.other,
                    ThermalSensorGroup.classify(sensorID: "Tp09z"))
+        // 校准参考通道单独成组：tcal 恒定不动，混进 SoC 组会误导「芯片最高温」。
+        checkEqual("PMU tcal → 校准参考", ThermalSensorGroup.reference,
+                   ThermalSensorGroup.classify(sensorID: "PMU tcal"))
+        checkEqual("PMU2 tcal → 校准参考（不是 SoC）", ThermalSensorGroup.reference,
+                   ThermalSensorGroup.classify(sensorID: "PMU2 tcal"))
 
         // ============================================ 汇总
         print(failures == 0 ? "\n测试结论: 全部通过" : "\n测试结论: \(failures) 项失败")
