@@ -30,6 +30,10 @@ enum ToolboxTool: String, CaseIterable, Identifiable, Hashable {
     case lsof
     /// Shell 配置：读写 .zshrc / .zprofile 等启动文件。
     case shellConfig
+    /// 设备诊断：对本机做一次全面体检，产出分组报告与处理建议。
+    case deviceDiagnostics
+    /// WOL：扫描局域网设备，向选定设备发送唤醒魔术包。
+    case wakeOnLAN
 
     var id: String { rawValue }
 
@@ -42,6 +46,8 @@ enum ToolboxTool: String, CaseIterable, Identifiable, Hashable {
         case .imageUpscale:   return "图片超分"
         case .lsof:           return "lsof 查询"
         case .shellConfig:    return "Shell 配置"
+        case .deviceDiagnostics: return "设备诊断"
+        case .wakeOnLAN:      return "网络唤醒"
         }
     }
 
@@ -55,6 +61,8 @@ enum ToolboxTool: String, CaseIterable, Identifiable, Hashable {
         case .imageUpscale:   return "放大图片，可选神经网络超分、Lanczos、双三次、最近邻。"
         case .lsof:           return "查端口或文件被哪个进程占用，支持按端口、PID、路径查询。"
         case .shellConfig:    return "编辑 .zshrc / .zprofile 等启动文件，保存前语法检查并自动备份。"
+        case .deviceDiagnostics: return "全面检查硬件、系统与配置，给出每一项的结论和处理建议。"
+        case .wakeOnLAN:      return "扫描局域网设备，向选定设备发送 WOL 魔术包（需对方开启网络唤醒）。"
         }
     }
 
@@ -68,6 +76,8 @@ enum ToolboxTool: String, CaseIterable, Identifiable, Hashable {
         case .imageUpscale:   return "arrow.up.left.and.arrow.down.right"
         case .lsof:           return "network"
         case .shellConfig:    return "terminal"
+        case .deviceDiagnostics: return "stethoscope"
+        case .wakeOnLAN:      return "bolt.horizontal.circle"
         }
     }
 }

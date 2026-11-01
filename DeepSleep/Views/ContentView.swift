@@ -51,6 +51,12 @@ enum SidebarItem: String, CaseIterable, Identifiable {
     case lsof
     /// Shell 配置：编辑 .zshrc 等启动文件。从工具箱进入。
     case shellConfig
+    /// 设备诊断：全面体检本机硬件 / 系统 / 配置。从工具箱进入。
+    case deviceDiagnostics
+    /// 未响应应用检测：自动发现卡死的应用并给出处理选项。
+    case hangDetection
+    /// WOL：扫描局域网设备并发送唤醒魔术包。从工具箱进入。
+    case wakeOnLAN
 
     var id: String { rawValue }
 
@@ -79,6 +85,9 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .imageUpscale:   return "图片超分"
         case .lsof:           return "lsof 查询"
         case .shellConfig:    return "Shell 配置"
+        case .deviceDiagnostics: return "设备诊断"
+        case .hangDetection:  return "未响应应用"
+        case .wakeOnLAN:      return "网络唤醒"
         }
     }
 
@@ -107,6 +116,9 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .imageUpscale:   return "arrow.up.left.and.arrow.down.right"
         case .lsof:           return "network"
         case .shellConfig:    return "terminal"
+        case .deviceDiagnostics: return "stethoscope"
+        case .hangDetection:  return "app.badge"
+        case .wakeOnLAN:      return "bolt.horizontal.circle"
         }
     }
 }
@@ -144,6 +156,8 @@ struct ContentView: View {
                 Section("诊断") {
                     Label(SidebarItem.external.title, systemImage: SidebarItem.external.symbol)
                         .tag(SidebarItem.external)
+                    Label(SidebarItem.hangDetection.title, systemImage: SidebarItem.hangDetection.symbol)
+                        .tag(SidebarItem.hangDetection)
                     Label(SidebarItem.log.title, systemImage: SidebarItem.log.symbol)
                         .tag(SidebarItem.log)
                     Label(SidebarItem.systemMonitor.title, systemImage: SidebarItem.systemMonitor.symbol)
@@ -202,7 +216,7 @@ struct ContentView: View {
     private var showsBackToToolbox: Bool {
         switch selection {
         case .nice, .hosts, .quarantine, .aiKeepAlive,
-             .imageUpscale, .lsof, .shellConfig:
+             .imageUpscale, .lsof, .shellConfig, .deviceDiagnostics, .wakeOnLAN:
             return true
         default:
             return false
@@ -238,6 +252,9 @@ struct ContentView: View {
         case .imageUpscale:   ImageUpscaleView()
         case .lsof:           LsofView()
         case .shellConfig:    ShellConfigView()
+        case .deviceDiagnostics: DiagnosticsView()
+        case .hangDetection:  HangDetectionView()
+        case .wakeOnLAN:      WakeOnLANView()
         }
     }
 }
