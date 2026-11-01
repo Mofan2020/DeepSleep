@@ -30,6 +30,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             QuickQuitEngine.shared.activate()
             // 系统监控：把 SystemMonitor 的事件接到 AlertWindow + Notifier
             MonitoringCoordinator.shared.wire()
+            // 未响应应用检测：事件从检测器出来，提示面板贴在菜单栏按钮下方。
+            HangDetector.shared.onHangDetected = { [weak self] event in
+                self?.menuBar?.presentHangAlert(event)
+            }
+            HangDetector.shared.start()
             await Self.handleLaunchArguments()
         }
     }

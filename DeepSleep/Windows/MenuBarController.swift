@@ -187,6 +187,30 @@ final class MenuBarController: NSObject {
         WindowCoordinator.shared.showMainWindow()
     }
 
+    // MARK: - 未响应应用提示
+
+    /// 菜单栏按钮在屏幕坐标系里的位置。
+    ///
+    /// 未响应应用的提示面板要贴在按钮下方，所以需要真实坐标。
+    /// 取不到时返回 nil —— 面板会退到主屏右上角，不能因为取不到坐标就不提示。
+    var statusButtonFrameInScreen: NSRect? {
+        guard let button = statusItem.button else { return nil }
+        return button.window?.convertToScreen(button.frame)
+    }
+
+    /// 把检测到的未响应应用交给提示面板。
+    ///
+    /// 三个按钮的行为都交给检测器自己执行，这里只负责呈现与定位。
+    func presentHangAlert(_ event: HangEvent) {
+        HangAlertPresenter.shared.present(
+            event: event,
+            anchor: statusButtonFrameInScreen,
+            onIgnore: { HangDetector.shared.ignore(event: event) },
+            onForceQuit: { HangDetector.shared.forceQuit(event: event) },
+            onRestart: { HangDetector.shared.restart(event: event) }
+        )
+    }
+
     @objc private func quit() {
         NSApp.terminate(nil)
     }
