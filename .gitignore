@@ -1,6 +1,8 @@
 # XcodeGen 的产物与构建缓存，可由 project.yml 重新生成
 build/
 DerivedData/
+# 并行任务各自用的独立构建目录（build-<名字>/），同样是可再生的缓存
+build-*/
 
 # Xcode 用户态数据
 xcuserdata/

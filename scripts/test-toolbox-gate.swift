@@ -54,6 +54,10 @@ struct ToolboxGateTests {
 
     static func main() {
         let defaults = UserDefaults.standard
+        // 工具数量与 canonical 顺序从枚举取，不写死 —— 每加一个工具
+        // 不该要求改十几处断言。
+        let canonicalIDs = ToolboxTool.allCases.map(\.rawValue)
+        let toolCount = ToolboxTool.allCases.count
 
         // ============================================ 网关彻底不可见
         print("== 网关已隐藏：工具清单里没有它 ==")
@@ -62,7 +66,7 @@ struct ToolboxGateTests {
             !ToolboxTool.allCases.contains { $0.rawValue == "aiGateway" },
             "实际 \(ToolboxTool.allCases.map(\.rawValue))"
         )
-        checkEqual("工具清单是 7 项", 7, ToolboxTool.allCases.count)
+        checkEqual("工具清单数量与枚举一致", toolCount, ToolboxTool.allCases.count)
         check(
             "没有叫「网关」的工具",
             !ToolboxTool.allCases.contains { $0.title.contains("网关") },
@@ -77,7 +81,7 @@ struct ToolboxGateTests {
             !legacyLayout.orderedTools.contains { $0.rawValue == "aiGateway" },
             "实际 \(legacyLayout.orderedTools.map(\.rawValue))"
         )
-        checkEqual("清理后仍是 7 项", 7, legacyLayout.orderedTools.count)
+        checkEqual("清理后工具数不变", toolCount, legacyLayout.orderedTools.count)
 
         // 直接解码一份含 aiGateway 的 JSON。
         let legacyJSON = Data(#"{"pinned":["aiGateway"],"rest":["nice"]}"#.utf8)
@@ -89,7 +93,7 @@ struct ToolboxGateTests {
         )
         checkEqual(
             "直接 decode 出来的数据补齐了全部工具",
-            7,
+            toolCount,
             decoded.orderedTools.count
         )
         check(
@@ -103,13 +107,13 @@ struct ToolboxGateTests {
         checkEqual("未知 ID 被丢弃", ["nice"], unknown.pinned)
         checkEqual(
             "缺失的按 canonical 顺序补齐",
-            ["hosts", "quarantine", "aiKeepAlive", "imageUpscale", "lsof", "shellConfig"],
+            canonicalIDs.filter { $0 != "nice" },
             unknown.rest
         )
 
         let dup = ToolboxLayout(pinned: ["nice", "nice", "hosts"], rest: ["nice", "hosts"])
         checkEqual("重复 ID 只留一个", ["nice", "hosts"], dup.pinned)
-        checkEqual("总数仍是 7", 7, dup.orderedTools.count)
+        checkEqual("总数不变", toolCount, dup.orderedTools.count)
         checkEqual(
             "pinned + rest 没有交集",
             0,
@@ -188,7 +192,7 @@ struct ToolboxGateTests {
         // 脏数据经 load() 后必须归一化。
         defaults.set(Data(#"{"pinned":["nice","ghost"],"rest":[]}"#.utf8), forKey: ToolboxStore.storageKey)
         let dirtyLoaded = ToolboxStore.load()
-        checkEqual("脏数据经 load() 后总数正确", 7, dirtyLoaded.orderedTools.count)
+        checkEqual("脏数据经 load() 后总数正确", toolCount, dirtyLoaded.orderedTools.count)
         check(
             "脏数据经 load() 后没有未知 ID",
             !dirtyLoaded.pinned.contains("ghost") && !dirtyLoaded.rest.contains("ghost")
@@ -199,7 +203,7 @@ struct ToolboxGateTests {
         defaults.set(Data("garbage".utf8), forKey: ToolboxStore.storageKey)
         checkEqual(
             "非 JSON 数据 → 默认布局",
-            7,
+            toolCount,
             ToolboxStore.load().orderedTools.count
         )
         check("非 JSON 数据 → 默认布局且无置顶", ToolboxStore.load().pinned.isEmpty)

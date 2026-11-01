@@ -144,6 +144,19 @@ build_and_run "keepalive-backoff"    /tmp/t_kabk     scripts/test-support/KeepAl
 build_and_run "shell-config"         /tmp/t_shellcfg DeepSleep/Core/ShellConfigService.swift scripts/test-shell-config.swift
 build_and_run_raw "image-upscaler"  /tmp/t_upscale -sdk $(xcrun --show-sdk-path --sdk macosx) -target arm64-apple-macos26.0 DeepSleep/Core/ImageUpscaler.swift scripts/test-image-upscaler.swift
 
+# ---------------------------------------------------------------- v1.10.0
+# 系统监控的换算与格式化（纯逻辑，Shared/ 里那份）。
+build_and_run "system-metrics"      /tmp/t_sysmetrics Shared/SystemMetrics.swift scripts/test-system-metrics.swift
+# 设备诊断的判定层（纯逻辑，构造「事实」驱动，不碰真机状态）。
+build_and_run "diagnostic-rules"    /tmp/t_diag    Shared/DiagnosticModel.swift scripts/test-diagnostic-rules.swift
+# WOL 的魔术包构造与 MAC 解析：发错了在界面上看不出来，只能在这里挡。
+build_and_run "wol-packet"          /tmp/t_wol     DeepSleep/Core/WakeOnLANService.swift scripts/test-wol-packet.swift
+# 未响应检测的过滤器与配置。
+build_and_run "hang-config"         /tmp/t_hangcfg DeepSleep/Core/HangDetectionConfig.swift scripts/test-hang-config.swift
+# 未响应判据本身：符号可用性 + 正常应用不许被误报。
+# 这条要 AppKit，所以带 sdk 与 target。
+build_and_run_raw "hang-verdict"    /tmp/t_hangverdict -parse-as-library -sdk $(xcrun --show-sdk-path --sdk macosx) -target arm64-apple-macos26.0 DeepSleep/Core/HangDetector.swift DeepSleep/Core/HangDetectionConfig.swift scripts/test-hang-verdict.swift
+
 echo
 echo "=== 结果 ==="
 echo "  断言通过: $PASS"

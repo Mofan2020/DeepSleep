@@ -132,12 +132,36 @@ CASES = [
 ]
 
 
+# 复制仓库时要排除的东西，**只在仓库根目录判定**。
+#
+# 为什么不用 `ignore_patterns("build-*")`：那个函数拿 fnmatch 对所有层级的
+# 名字做匹配，`build-*` 会连 `scripts/build-release.sh` 一起排掉 ——
+# 副本里少了这个脚本，`check-docs.py` 的文件引用检查就会报「引用了
+# 不存在的文件」，看起来像文档错了，其实是复制时漏了。
+#
+# 并行开发时每个人自己的 derivedDataPath（build-eng-xxx / build-main）
+# 各有几百 M，必须排除，否则又慢又容易在删除时撞上
+# 「Directory not empty」——副本里的 .app 可能还在被别的进程写。
+ROOT_IGNORED_NAMES = (".git", ".hermes", "release")
+ROOT_IGNORED_PREFIXES = ("build",)          # build、build-eng-xxx、build-main …
+ROOT_IGNORED_SUFFIXES = (".xcodeproj",)
+
+
+def _ignore(directory, names):
+    if os.path.abspath(directory) != os.path.abspath(ROOT):
+        return set()
+    return {
+        name for name in names
+        if name in ROOT_IGNORED_NAMES
+        or name.startswith(ROOT_IGNORED_PREFIXES)
+        or name.endswith(ROOT_IGNORED_SUFFIXES)
+    }
+
+
 def prepare(work):
     if os.path.exists(work):
-        shutil.rmtree(work)
-    shutil.copytree(
-        ROOT, work,
-        ignore=shutil.ignore_patterns(".git", "build", "release", "*.xcodeproj"))
+        shutil.rmtree(work, ignore_errors=True)
+    shutil.copytree(ROOT, work, ignore=_ignore)
 
 
 def run_checker(work):
