@@ -5,9 +5,16 @@
 //  AI 保活功能页：任务列表 + 新建 / 编辑表单。
 //
 //  这一页是独立的功能页，不挂侧边栏 —— 挂载到工具箱是后续阶段的事。
-// 入口：把 `KeepAliveView()` 放进任何 NavigationStack / sheet 里即可。
+//  入口：把 `KeepAliveView()` 放进任何 NavigationStack / sheet 里即可。
 //
 //  安全：API Key 用 SecureField 输入，落 Keychain。列表里只显示「已配置 / 未配置」。
+//
+//  2026-11 界面换新：
+//    - 间距、圆角走 DS.Space / DS.Radius。
+//    - 任务列表每条压成一行：名称 / 接口 / 频率 / 下次执行 / 开关。
+//    - 引擎状态用 StatusPill + 文字双编码（运行中 / 已暂停 / 未配置 / 引擎未就绪）。
+//    - 新建与编辑走 sheet：detail 列里没有 NavigationStack，不能用
+//      NavigationLink 推栈。
 //
 
 import SwiftUI
@@ -39,34 +46,47 @@ struct KeepAliveView: View {
     @State private var editorTarget: KeepAliveEditorTarget?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: DS.Space.lg) {
             SectionCard(
                 title: "AI 保活",
                 subtitle: "在每天固定时刻给订阅制 AI 服务发一条超短请求，把「按最后一次使用起算」的滚动窗口钉成固定窗口。Deep Sleep 退出后保活停止。",
                 symbol: "bolt.horizontal.circle",
                 accent: .teal
             ) {
-                HStack(spacing: 10) {
-                    StatusPill(text: engine.isRunning ? "调度运行中" : "调度已停止", isActive: engine.isRunning)
-                    StatusPill(
-                        text: "共 \(engine.tasks.count) 条，启用 \(engine.tasks.filter(\.isEnabled).count) 条",
-                        isActive: !engine.tasks.isEmpty
-                    )
-                    Spacer()
+                HStack(spacing: DS.Space.sm) {
+                    StatusPill(text: engineStatusText,
+                               isActive: engineStatusIsRunning,
+                               color: engineStatusColor)
+                    StatusPill(text: "共 \(engine.tasks.count) 条，启用 \(engine.tasks.filter(\.isEnabled).count) 条",
+                               isActive: !engine.tasks.isEmpty,
+                               color: engine.tasks.isEmpty ? DS.Tone.idle : DS.Tone.info)
+                    Spacer(minLength: DS.Space.sm)
                 }
             }
 
             SectionCard(
                 title: "保活任务",
-                subtitle: engine.tasks.isEmpty ? "还没有任务。点下方「新建任务」配置一条。" : nil,
-                symbol: "list.bullet.rectangle"
+                subtitle: engine.tasks.isEmpty ? nil : "每条一行：接口、频率、下次执行。",
+                symbol: "list.bullet.rectangle",
+                accessory: AnyView(
+                    Button {
+                        editorTarget = KeepAliveEditorTarget(task: nil)
+                    } label: {
+                        Label("新建任务", systemImage: "plus")
+                    }
+                    .buttonStyle(.borderedProminent)
+                )
             ) {
-                VStack(alignment: .leading, spacing: 12) {
-                    if engine.tasks.isEmpty {
-                        Text("暂无任务")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                    } else {
+                if engine.tasks.isEmpty {
+                    EmptyStateView(
+                        title: "还没有保活任务",
+                        message: "新建一条，填上服务地址、模型名和 API Key，再定下每天要发请求的时刻。",
+                        systemImage: "bolt.slash",
+                        actionTitle: "新建任务",
+                        action: { editorTarget = KeepAliveEditorTarget(task: nil) }
+                    )
+                } else {
+                    VStack(alignment: .leading, spacing: DS.Space.xxs) {
                         ForEach(engine.tasks) { task in
                             KeepAliveTaskRow(
                                 task: task,
@@ -83,19 +103,6 @@ struct KeepAliveView: View {
                             }
                         }
                     }
-
-                    Divider()
-
-                    HStack(spacing: 10) {
-                        Button {
-                            editorTarget = KeepAliveEditorTarget(task: nil)
-                        } label: {
-                            Label("新建任务", systemImage: "plus")
-                        }
-                        .buttonStyle(.borderedProminent)
-
-                        Spacer()
-                    }
                 }
             }
 
@@ -103,7 +110,7 @@ struct KeepAliveView: View {
                 title: "说明",
                 symbol: "info.circle"
             ) {
-                VStack(alignment: .leading, spacing: 7) {
+                VStack(alignment: .leading, spacing: DS.Space.sm) {
                     BulletLine("时刻按本机时区算，到点后最多 15 秒内发出。")
                     BulletLine("选中的星期之外不发，那几天的窗口会自然重置。")
                     BulletLine("滚动窗口的重置规则由服务端决定，本地无法验证；能否真的延长窗口需要你自己实测。")
@@ -122,10 +129,42 @@ struct KeepAliveView: View {
             }
         }
     }
+
+    // MARK: - 引擎状态
+
+    /// 引擎状态文案。颜色 + 文字双编码，光看颜色分不出「暂停」和「没配」。
+    private var engineStatusText: String {
+        switch engine.status {
+        case .running:
+            return "调度运行中"
+        case .paused:
+            return "调度已暂停"
+        case .notConfigured:
+            return "未配置任务"
+        case .unavailable(let reason):
+            return "引擎未就绪：\(reason)"
+        }
+    }
+
+    private var engineStatusColor: Color {
+        switch engine.status {
+        case .running:      return DS.Tone.good
+        case .paused:       return DS.Tone.idle
+        case .notConfigured: return DS.Tone.caution
+        case .unavailable:  return DS.Tone.critical
+        }
+    }
+
+    /// 状态灯是否亮。只有「调度运行中」算亮着。
+    private var engineStatusIsRunning: Bool {
+        if case .running = engine.status { return true }
+        return false
+    }
 }
 
 // MARK: - 任务行
 
+/// 一条保活任务，压成一行：名称 / 接口 / 频率 / 下次执行 / 开关。
 struct KeepAliveTaskRow: View {
 
     let task: KeepAliveTask
@@ -139,33 +178,48 @@ struct KeepAliveTaskRow: View {
         task.name.isEmpty ? (task.model.isEmpty ? "未命名任务" : task.model) : task.name
     }
 
+    /// 接口地址。空的话显示占位文案，不显示空白。
+    private var endpointText: String {
+        task.baseURL.isEmpty ? "未填地址" : task.baseURL
+    }
+
+    /// 频率：每天几次 + 哪几天。
+    private var frequencyText: String {
+        let times = task.schedule.times.count
+        let countText = times == 0 ? "未设时刻" : "每天 \(times) 次"
+        return "\(countText) · \(task.schedule.weekdayDescription)"
+    }
+
+    /// 下次执行时刻。引擎只在 15 秒粒度上判定，界面显示的是计划时刻。
+    private var nextRunText: String {
+        guard let next = task.schedule.nextSlot(after: Date()) else { return "未排期" }
+        return next.formatted(date: .abbreviated, time: .shortened)
+    }
+
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .center, spacing: DS.Space.md) {
             Toggle("", isOn: Binding(
                 get: { task.isEnabled },
                 set: { onToggle($0) }
             ))
-            .toggleStyle(.checkbox)
+            .toggleStyle(.switch)
+            .controlSize(.small)
             .labelsHidden()
 
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: DS.Space.xxs) {
+                HStack(spacing: DS.Space.sm) {
                     Text(title).font(.body.weight(.medium))
                     Tag(text: task.format.title, color: .teal)
                     if !task.isEnabled {
-                        Tag(text: "已停用", color: .secondary)
+                        Tag(text: "已停用", color: DS.Tone.idle)
                     }
                 }
 
-                Text("\(task.baseURL.isEmpty ? "未填地址" : task.baseURL) · \(task.model.isEmpty ? "未选模型" : task.model)")
+                Text("接口 \(endpointText) · \(frequencyText)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-
-                Text(task.scheduleDescription)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
 
                 if let last = task.lastRunAt {
                     Text("上次：\(Self.formatTimestamp(last))")
@@ -175,47 +229,53 @@ struct KeepAliveTaskRow: View {
                 if let result = task.lastResult {
                     Text(result)
                         .font(.caption2)
-                        .foregroundStyle(result.hasPrefix("失败") ? Color.red : Color.secondary)
+                        .foregroundStyle(result.hasPrefix("失败") ? DS.Tone.critical : .secondary)
                 }
             }
 
-            Spacer(minLength: 8)
+            Spacer(minLength: DS.Space.sm)
 
-            HStack(spacing: 6) {
+            VStack(alignment: .trailing, spacing: DS.Space.xxs) {
+                Text("下次执行")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Text(nextRunText)
+                    .font(.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(.primary)
+            }
+
+            Menu {
                 Button {
                     onTrigger()
                 } label: {
-                    Image(systemName: "paperplane")
+                    Label("立即发送一次", systemImage: "paperplane")
                 }
-                .buttonStyle(.borderless)
-                .help("立即发送一次")
-
                 Button {
                     onRestoreTemplate()
                 } label: {
-                    Image(systemName: "arrow.uturn.backward")
+                    Label("恢复默认请求内容", systemImage: "arrow.uturn.backward")
                 }
-                .buttonStyle(.borderless)
-                .help("恢复默认请求内容")
-
                 Button {
                     onEdit()
                 } label: {
-                    Image(systemName: "pencil")
+                    Label("编辑", systemImage: "pencil")
                 }
-                .buttonStyle(.borderless)
-                .help("编辑")
-
+                Divider()
                 Button(role: .destructive) {
                     onDelete()
                 } label: {
-                    Image(systemName: "trash")
+                    Label("删除", systemImage: "trash")
                 }
-                .buttonStyle(.borderless)
-                .help("删除")
+            } label: {
+                Image(systemName: "ellipsis.circle")
             }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("更多操作")
         }
-        .padding(.vertical, 3)
+        .padding(.vertical, DS.Space.xs)
     }
 
     private static func formatTimestamp(_ date: Date) -> String {
@@ -262,42 +322,41 @@ struct KeepAliveTaskEditor: View {
     @State private var draftID: UUID = UUID()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: DS.Space.md) {
             Text(isEdit ? "编辑保活任务" : "新建保活任务")
                 .font(.title3.weight(.semibold))
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text("名称").font(.caption).foregroundStyle(.secondary)
+            LabeledContent("名称") {
                 TextField("例如：Claude Code", text: $name)
                     .textFieldStyle(.roundedBorder)
             }
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text("服务地址").font(.caption).foregroundStyle(.secondary)
-                TextField("https://api.anthropic.com", text: $baseURL)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(.body, design: .monospaced))
+            VStack(alignment: .leading, spacing: DS.Space.xs) {
+                LabeledContent("服务地址") {
+                    TextField("https://api.anthropic.com", text: $baseURL)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(.body, design: .monospaced))
+                }
                 Text("末尾有没有 /v1 都行，会自动补齐。")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .caption2()
             }
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text("请求格式").font(.caption).foregroundStyle(.secondary)
-                Picker("", selection: $format) {
-                    ForEach(KeepAliveFormat.allCases, id: \.self) { f in
-                        Text(f.title).tag(f)
+            VStack(alignment: .leading, spacing: DS.Space.xs) {
+                LabeledContent("请求格式") {
+                    Picker("", selection: $format) {
+                        ForEach(KeepAliveFormat.allCases, id: \.self) { f in
+                            Text(f.title).tag(f)
+                        }
                     }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
                 Text(format.detail)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .caption2()
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: DS.Space.xs) {
                 HStack {
                     Text("模型名").font(.caption).foregroundStyle(.secondary)
                     Spacer()
@@ -328,46 +387,45 @@ struct KeepAliveTaskEditor: View {
                     }
                     .labelsHidden()
                     Text("拉到 \(fetchedModels.count) 个模型，可直接选。")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .caption2()
                 }
 
                 if let msg = fetchMessage {
                     Text(msg)
-                        .font(.caption2)
-                        .foregroundStyle(msg.hasPrefix("失败") ? Color.red : Color.secondary)
+                        .caption2()
+                        .foregroundStyle(msg.hasPrefix("失败") ? DS.Tone.critical : .secondary)
                 }
             }
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text("API Key").font(.caption).foregroundStyle(.secondary)
-                HStack {
-                    Group {
-                        if revealKey {
-                            TextField("sk-...", text: $apiKey)
-                        } else {
-                            SecureField("sk-...", text: $apiKey)
+            VStack(alignment: .leading, spacing: DS.Space.xs) {
+                LabeledContent("API Key") {
+                    HStack(spacing: DS.Space.sm) {
+                        Group {
+                            if revealKey {
+                                TextField("sk-...", text: $apiKey)
+                            } else {
+                                SecureField("sk-...", text: $apiKey)
+                            }
                         }
-                    }
-                    .textFieldStyle(.roundedBorder)
+                        .textFieldStyle(.roundedBorder)
 
-                    Button {
-                        revealKey.toggle()
-                    } label: {
-                        Image(systemName: revealKey ? "eye.slash" : "eye")
+                        Button {
+                            revealKey.toggle()
+                        } label: {
+                            Image(systemName: revealKey ? "eye.slash" : "eye")
+                        }
+                        .buttonStyle(.borderless)
+                        .help(revealKey ? "隐藏" : "显示")
                     }
-                    .buttonStyle(.borderless)
-                    .help(revealKey ? "隐藏" : "显示")
                 }
                 if isEdit {
                     Text("留空表示不修改原 Key。Key 存在系统钥匙串里。")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .caption2()
                 }
             }
 
             // -------------------------------------------------- 时刻
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: DS.Space.xs) {
                 HStack {
                     Text("发送时刻").font(.caption).foregroundStyle(.secondary)
                     Spacer()
@@ -378,12 +436,12 @@ struct KeepAliveTaskEditor: View {
 
                 if times.isEmpty {
                     Text("还没设时刻。任务不会自动发送。")
-                        .font(.caption2)
-                        .foregroundStyle(.orange)
+                        .caption2()
+                        .foregroundStyle(DS.Tone.caution)
                 } else {
                     // 每个时刻一行：时间 + 删除。
                     ForEach(times) { time in
-                        HStack(spacing: 8) {
+                        HStack(spacing: DS.Space.sm) {
                             DatePicker(
                                 "",
                                 selection: binding(for: time),
@@ -414,15 +472,14 @@ struct KeepAliveTaskEditor: View {
                 .disabled(times.count >= KeepAliveDefaults.maxTimesPerDay)
 
                 Text("到点后最多 15 秒内发出。时刻按本机时区算。")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .caption2()
             }
 
             // -------------------------------------------------- 星期
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: DS.Space.xs) {
                 Text("运行日").font(.caption).foregroundStyle(.secondary)
 
-                HStack(spacing: 6) {
+                HStack(spacing: DS.Space.xs) {
                     ForEach(KeepAliveSchedule.weekdayOrder, id: \.self) { weekday in
                         let selected = weekdays.contains(weekday)
                         Button {
@@ -432,8 +489,8 @@ struct KeepAliveTaskEditor: View {
                                 .font(.callout.weight(selected ? .semibold : .regular))
                                 .frame(width: 28, height: 26)
                                 .background(
-                                    selected ? Color.accentColor : Color.secondary.opacity(0.14),
-                                    in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    selected ? DS.Tone.info : Color.secondary.opacity(0.14),
+                                    in: RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous)
                                 )
                                 .foregroundStyle(selected ? Color.white : Color.primary)
                         }
@@ -443,7 +500,7 @@ struct KeepAliveTaskEditor: View {
                     Spacer()
                 }
 
-                HStack(spacing: 10) {
+                HStack(spacing: DS.Space.sm) {
                     Button("工作日") { weekdays = [2, 3, 4, 5, 6] }
                         .controlSize(.small)
                     Button("每天") { weekdays = KeepAliveSchedule.allWeekdays }
@@ -456,11 +513,11 @@ struct KeepAliveTaskEditor: View {
                 Text(weekdays.isEmpty
                      ? "没选任何一天，这条任务不会自动发送。"
                      : "只在选中的日子发送。没选的日子窗口会自然重置。")
-                    .font(.caption2)
-                    .foregroundStyle(weekdays.isEmpty ? Color.orange : Color.secondary)
+                    .caption2()
+                    .foregroundStyle(weekdays.isEmpty ? DS.Tone.caution : .secondary)
             }
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: DS.Space.xs) {
                 HStack {
                     Text("请求内容").font(.caption).foregroundStyle(.secondary)
                     Spacer()
@@ -475,8 +532,7 @@ struct KeepAliveTaskEditor: View {
                     .textFieldStyle(.roundedBorder)
                     .lineLimit(1...4)
                 Text("默认模板：\(KeepAliveDefaults.defaultRequestTemplate)")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .caption2()
             }
 
             Toggle(isOn: $isEnabled) {
@@ -488,7 +544,7 @@ struct KeepAliveTaskEditor: View {
             if let saveError {
                 Text(saveError)
                     .font(.caption)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(DS.Tone.critical)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -502,7 +558,7 @@ struct KeepAliveTaskEditor: View {
                     .disabled(!canSave)
             }
         }
-        .padding(22)
+        .padding(DS.Space.xl)
         .frame(width: 540)
         .onAppear { loadExisting() }
     }

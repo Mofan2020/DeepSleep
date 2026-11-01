@@ -13,6 +13,12 @@
 //  AlertRuleEngine 是普通类（不是 ObservableObject），规则读不到变化通知，
 //  所以这里用本地副本 —— 每次改动后从引擎重新读一次，界面才会跟着变。
 //
+//  界面约定（2026 换新）：
+//  - 一条规则一行，不再一行规则堆成一张小卡片 —— 规则多起来以后，
+//    竖着摞的卡片比表格难扫得多。
+//  - 新建与编辑都用 sheet。详情列没有 NavigationStack，推栈会无处可推。
+//  - 空列表用 EmptyStateView，不要自己画图标加一行字。
+//
 
 import SwiftUI
 
@@ -26,7 +32,7 @@ struct AlertRulesView: View {
     @State private var observerToken: UUID?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: DS.Space.lg) {
             rulesCard
             if !firings.isEmpty {
                 recentCard
@@ -74,36 +80,33 @@ struct AlertRulesView: View {
     private var rulesCard: some View {
         SectionCard(
             title: "告警规则",
-            subtitle: "条件连续满足设定时长才触发，掉回条件内即重新计时。",
+            subtitle: engine.rules.isEmpty
+                ? "条件连续满足设定时长才触发，掉回条件内即重新计时。"
+                : "共 \(engine.rules.count) 条 · 条件连续满足设定时长才触发，掉回条件内即重新计时。",
             symbol: "bell.badge",
-            accent: .purple
-        ) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text(engine.rules.isEmpty ? "还没有规则" : "共 \(engine.rules.count) 条规则")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button {
-                        isCreating = true
-                    } label: {
-                        Label("新建规则", systemImage: "plus")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
+            accent: DS.Tone.info,
+            accessory: AnyView(
+                Button {
+                    isCreating = true
+                } label: {
+                    Label("新建规则", systemImage: "plus")
                 }
-
-                if engine.rules.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("常见用法：")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        BulletLine("CPU 温度高于 85°C 持续 30 秒 → 通知")
-                        BulletLine("单进程内存高于 8GB 持续 60 秒 → 通知 + 邮件")
-                        BulletLine("磁盘使用率高于 90% 持续 300 秒 → 通知")
-                    }
-                    .padding(.top, 4)
-                } else {
+                .controlSize(.small)
+            )
+        ) {
+            if engine.rules.isEmpty {
+                EmptyStateView(
+                    title: "还没有规则",
+                    message: "常见用法：CPU 温度高于 85°C 持续 30 秒 → 通知；"
+                           + "单进程内存高于 8GB 持续 60 秒 → 通知 + 邮件；"
+                           + "磁盘使用率高于 90% 持续 300 秒 → 通知。",
+                    systemImage: "bell.badge",
+                    actionTitle: "新建规则",
+                    action: { isCreating = true }
+                )
+                .frame(minHeight: 140)
+            } else {
+                VStack(spacing: 0) {
                     ForEach(engine.rules) { rule in
                         ruleRow(rule)
                         if rule.id != engine.rules.last?.id {
@@ -115,8 +118,35 @@ struct AlertRulesView: View {
         }
     }
 
+    /// 一条规则一行：标题 + 条件摘要 + 阈值 + 开关。
+    ///
+    /// 全在一行上，不堆成小卡片 —— 规则多起来以后，竖着摞的卡片比一行行
+    /// 扫过去难找得多。阈值单独一列，不挤进条件摘要里：条件摘要会随指标
+    /// 变长（「单进程内存 大于 · 持续 60 秒」），而阈值是最常被扫的一眼
+    /// 信息，挤在句子末尾就找不到了。
     private func ruleRow(_ rule: AlertRule) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: DS.Space.md) {
+            Text(rule.name)
+                .font(.callout.weight(.medium))
+                .foregroundStyle(rule.isEnabled ? .primary : .secondary)
+                .lineLimit(1)
+                .frame(width: 130, alignment: .leading)
+
+            Text(conditionText(rule))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+
+            Text(thresholdText(rule))
+                .font(.system(.callout, design: .monospaced).weight(.semibold))
+                .monospacedDigit()
+                .foregroundStyle(rule.isEnabled ? DS.Tone.info : DS.Tone.idle)
+
+            Tag(text: rule.action.displayName, color: rule.isEnabled ? DS.Tone.info : DS.Tone.idle)
+
+            Spacer(minLength: DS.Space.sm)
+
             Toggle("", isOn: Binding(
                 get: { rule.isEnabled },
                 set: { newValue in
@@ -126,19 +156,6 @@ struct AlertRulesView: View {
             .labelsHidden()
             .toggleStyle(.switch)
             .controlSize(.mini)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(rule.name)
-                    .font(.callout)
-                    .foregroundStyle(rule.isEnabled ? .primary : .secondary)
-                Text(conditionText(rule))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            Tag(text: rule.action.displayName, color: .purple)
 
             Button {
                 editingRule = rule
@@ -160,15 +177,20 @@ struct AlertRulesView: View {
             .buttonStyle(.borderless)
             .help("删除")
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, DS.Space.xs)
     }
 
+    /// 条件摘要：指标 + 持续时长（阈值单独一列）。
     private func conditionText(_ rule: AlertRule) -> String {
+        "\(rule.metric.displayName) · 持续 \(rule.durationSeconds) 秒"
+    }
+
+    /// 阈值单独显示：比较方式 + 数值 + 单位。
+    private func thresholdText(_ rule: AlertRule) -> String {
         let threshold = rule.metric == .singleProcessRAMGB
             ? String(format: "%.1f", rule.threshold)
             : String(format: "%.0f", rule.threshold)
-        return "\(rule.metric.displayName) \(rule.operator.displayName) \(threshold)\(rule.metric.unit)"
-             + " · 持续 \(rule.durationSeconds) 秒"
+        return "\(rule.operator.displayName) \(threshold)\(rule.metric.unit)"
     }
 
     // MARK: - 触发记录
@@ -178,14 +200,14 @@ struct AlertRulesView: View {
             title: "最近的触发",
             subtitle: nil,
             symbol: "clock.arrow.circlepath",
-            accent: .orange
+            accent: DS.Tone.caution
         ) {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: DS.Space.sm) {
                 ForEach(Array(firings.prefix(8).enumerated()), id: \.offset) { _, firing in
-                    HStack(spacing: 8) {
+                    HStack(spacing: DS.Space.sm) {
                         Image(systemName: "bell.fill")
                             .font(.caption)
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(DS.Tone.caution)
                         Text(firing.rule.name)
                             .font(.callout)
                         Text(String(format: "%.1f", firing.observedValue) + firing.rule.metric.unit)
@@ -206,7 +228,7 @@ struct AlertRulesView: View {
             title: "说明",
             symbol: "info.circle"
         ) {
-            VStack(alignment: .leading, spacing: 7) {
+            VStack(alignment: .leading, spacing: DS.Space.sm) {
                 BulletLine("规则只做告警，不会结束进程 —— 温度与内存类阈值下杀进程容易误伤。")
                 BulletLine("选择邮件动作前需先配置好发信账号，否则邮件那一份发不出去。")
                 BulletLine("同一规则在条件持续满足期间只触发一次，回到条件内才重新武装。")
@@ -243,17 +265,17 @@ struct AlertRuleEditorSheet: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: DS.Space.lg) {
             Text(isNew ? "新建告警规则" : "编辑告警规则")
                 .font(.title3.weight(.semibold))
 
-            VStack(alignment: .leading, spacing: 12) {
-                labeledRow("名称") {
+            VStack(alignment: .leading, spacing: DS.Space.md) {
+                LabeledContent("名称") {
                     TextField("例如：CPU 过热", text: $draft.name)
                         .textFieldStyle(.roundedBorder)
                 }
 
-                labeledRow("指标") {
+                LabeledContent("指标") {
                     Picker("", selection: $draft.metric) {
                         ForEach(AlertMetric.allCases, id: \.self) { metric in
                             Text(metric.displayName).tag(metric)
@@ -267,8 +289,8 @@ struct AlertRuleEditorSheet: View {
                     }
                 }
 
-                labeledRow("条件") {
-                    HStack(spacing: 8) {
+                LabeledContent("条件") {
+                    HStack(spacing: DS.Space.sm) {
                         Picker("", selection: $draft.operator) {
                             ForEach(AlertOperator.allCases, id: \.self) { op in
                                 Text(op.displayName).tag(op)
@@ -285,8 +307,8 @@ struct AlertRuleEditorSheet: View {
                     }
                 }
 
-                labeledRow("持续") {
-                    HStack(spacing: 8) {
+                LabeledContent("持续") {
+                    HStack(spacing: DS.Space.sm) {
                         TextField("", value: $draft.durationSeconds, format: .number)
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 70)
@@ -299,7 +321,7 @@ struct AlertRuleEditorSheet: View {
                     }
                 }
 
-                labeledRow("动作") {
+                LabeledContent("动作") {
                     Picker("", selection: $draft.action) {
                         ForEach(AlertAction.allCases, id: \.self) { action in
                             Text(action.displayName).tag(action)
@@ -313,7 +335,7 @@ struct AlertRuleEditorSheet: View {
             if let warning = validationWarning {
                 Label(warning, systemImage: "exclamationmark.triangle")
                     .font(.caption)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(DS.Tone.caution)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -333,17 +355,8 @@ struct AlertRuleEditorSheet: View {
                 .disabled(validationWarning != nil)
             }
         }
-        .padding(24)
+        .padding(DS.Space.xl)
         .frame(width: 480)
-    }
-
-    private func labeledRow<Content: View>(_ title: String,
-                                           @ViewBuilder content: () -> Content) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(title).frame(width: 52, alignment: .leading)
-            content()
-            Spacer(minLength: 0)
-        }
     }
 
     private func defaultThreshold(for metric: AlertMetric) -> Double {

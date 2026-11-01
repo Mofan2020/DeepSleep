@@ -15,6 +15,12 @@
 //    - 结果默认存成 PNG（无损）。存 JPEG 会让已经有损压缩过的图片
 //      再糊一代，那不是用户想要的。
 //
+//  2026-11 界面换新：
+//    - 间距、圆角走 DS.Space / DS.Radius。
+//    - 倍数用原生 Stepper，算法用原生 Picker(.segmented)。
+//    - 处理中有明确的进行中状态和取消入口；取消只放弃本次结果，
+//      不假装已经算完（底层计算不感知取消，只能等它自己结束）。
+//
 
 import SwiftUI
 import AppKit
@@ -35,9 +41,13 @@ struct ImageUpscaleView: View {
     @State private var lastError: String?
     /// 上次放大耗时（秒）。
     @State private var elapsed: Double?
+    /// 用户点了取消。置位后本次结果不再采用。
+    @State private var cancelRequested = false
+    /// 当前这次放大的任务句柄。取消入口靠它。
+    @State private var workTask: Task<Void, Never>?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: DS.Space.lg) {
             sourceCard
             methodCard
             resultCard
@@ -51,37 +61,41 @@ struct ImageUpscaleView: View {
         SectionCard(
             title: "原图",
             subtitle: "选一张本地图片。放大在本地算，不联网、不需要额外权限。",
-            symbol: "photo"
-        ) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 12) {
-                    Button {
-                        pickSource()
-                    } label: {
-                        Label("选择图片…", systemImage: "folder")
-                    }
-
-                    if let sourceURL {
-                        Text(sourceURL.lastPathComponent)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .foregroundStyle(.secondary)
-                        if !sourceSizeText.isEmpty {
-                            Text(sourceSizeText)
-                                .font(.caption)
-                                .monospacedDigit()
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                    } else {
-                        Spacer()
-                    }
+            symbol: "photo",
+            accessory: AnyView(
+                Button {
+                    pickSource()
+                } label: {
+                    Label("选择图片…", systemImage: "folder")
                 }
-
-                if let sourceImage {
-                    previewOf(sourceImage, maxHeight: 180)
+            )
+        ) {
+            if let sourceImage {
+                VStack(alignment: .leading, spacing: DS.Space.md) {
+                    LabeledContent("文件") {
+                        HStack(spacing: DS.Space.sm) {
+                            Text(sourceURL?.lastPathComponent ?? "未命名")
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            if !sourceSizeText.isEmpty {
+                                Text(sourceSizeText)
+                                    .font(.caption)
+                                    .monospacedDigit()
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    previewOf(sourceImage, maxHeight: 200)
                         .frame(maxWidth: .infinity)
                 }
+            } else {
+                EmptyStateView(
+                    title: "选一张图片开始",
+                    message: "支持 PNG / JPEG / TIFF / HEIC / BMP / GIF。放大在本机完成，不上传。",
+                    systemImage: "photo",
+                    actionTitle: "选择图片…",
+                    action: pickSource
+                )
             }
         }
     }
@@ -94,7 +108,7 @@ struct ImageUpscaleView: View {
             subtitle: method.detail,
             symbol: "wand.and.stars"
         ) {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: DS.Space.md) {
                 Picker("算法", selection: $method) {
                     ForEach(UpscaleMethod.allCases) { m in
                         Text(m.title).tag(m)
@@ -109,16 +123,15 @@ struct ImageUpscaleView: View {
                     }
                 }
 
-                HStack(spacing: 10) {
-                    Text("倍数")
-                    Picker("倍数", selection: $factor) {
-                        ForEach(method.supportedFactors, id: \.self) { f in
-                            Text("\(f) 倍").tag(f)
-                        }
+                LabeledContent("倍数") {
+                    Stepper(value: factorBinding,
+                            in: factorRange,
+                            step: 1) {
+                        Text("\(factor) 倍")
+                            .font(.body)
+                            .monospacedDigit()
                     }
-                    .pickerStyle(.segmented)
-                    .frame(maxWidth: 220)
-                    Spacer()
+                    .controlSize(.small)
                 }
 
                 if method.needsModelDownload {
@@ -127,9 +140,9 @@ struct ImageUpscaleView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                HStack {
+                HStack(spacing: DS.Space.sm) {
                     Button {
-                        Task { await run() }
+                        run()
                     } label: {
                         if isWorking {
                             ProgressView().controlSize(.small)
@@ -137,15 +150,25 @@ struct ImageUpscaleView: View {
                             Label("放大", systemImage: "arrow.up.left.and.arrow.down.right")
                         }
                     }
+                    .buttonStyle(.borderedProminent)
                     .disabled(sourceImage == nil || isWorking)
                     .keyboardShortcut(.defaultAction)
 
                     if isWorking {
-                        Text("处理中…")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        Button(role: .cancel) {
+                            cancelWork()
+                        } label: {
+                            Label("取消", systemImage: "xmark.circle")
+                        }
+                        .controlSize(.small)
+                        .disabled(cancelRequested)
                     }
-                    Spacer()
+
+                    Spacer(minLength: DS.Space.sm)
+
+                    StatusPill(text: workStatusText,
+                               isActive: isWorking,
+                               color: workStatusColor)
                 }
             }
         }
@@ -159,19 +182,24 @@ struct ImageUpscaleView: View {
             subtitle: resultSubtitle,
             symbol: "photo.badge.arrow.down"
         ) {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: DS.Space.md) {
                 if let lastError {
-                    Text(lastError)
-                        .font(.callout)
-                        .foregroundStyle(.red)
-                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(alignment: .top, spacing: DS.Space.sm) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(DS.Tone.critical)
+                            .font(.system(size: 11, weight: .semibold))
+                        Text(lastError)
+                            .font(.callout)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                    }
                 }
 
                 if let resultImage {
                     previewOf(resultImage, maxHeight: 320)
                         .frame(maxWidth: .infinity)
 
-                    HStack {
+                    HStack(spacing: DS.Space.sm) {
                         Button {
                             saveResult()
                         } label: {
@@ -185,12 +213,35 @@ struct ImageUpscaleView: View {
                                 .monospacedDigit()
                                 .foregroundStyle(.secondary)
                         }
-                        Spacer()
+                        Spacer(minLength: DS.Space.sm)
                     }
-                } else if lastError == nil {
-                    Text("还没放大。选一张图，选好算法和倍数，点「放大」。")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
+                } else if isWorking {
+                    // 处理中：不定进度 —— 底层算多久说不准，
+                    // 画一个假百分比比什么都不显示更糟。
+                    VStack(alignment: .leading, spacing: DS.Space.sm) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text(cancelRequested
+                             ? "正在取消：等当前这一步算完就丢弃结果，不会写盘。"
+                             : "处理中，放大在本机算。神经网络超分可能要等模型下载。")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                } else if sourceImage == nil {
+                    EmptyStateView(
+                        title: "选一张图片开始",
+                        message: "还没有选图。",
+                        systemImage: "photo.badge.arrow.down"
+                    )
+                } else {
+                    EmptyStateView(
+                        title: "还没有结果",
+                        message: "算法和倍数都选好了，点上面的「放大」。",
+                        systemImage: "photo.badge.arrow.down",
+                        actionTitle: "放大",
+                        action: run
+                    )
                 }
             }
         }
@@ -203,6 +254,54 @@ struct ImageUpscaleView: View {
         return "结果保存在本地，不上传。"
     }
 
+    // MARK: - 状态文案
+
+    private var workStatusText: String {
+        if isWorking {
+            return cancelRequested ? "取消中" : "处理中"
+        }
+        if resultImage != nil {
+            return "已完成"
+        }
+        return "待处理"
+    }
+
+    private var workStatusColor: Color {
+        if isWorking {
+            return cancelRequested ? DS.Tone.caution : DS.Tone.info
+        }
+        return resultImage != nil ? DS.Tone.good : DS.Tone.idle
+    }
+
+    // MARK: - 倍数绑定
+
+    /// Stepper 的取值范围。神经网络超分只支持 4 倍，范围就是 4...4。
+    private var factorRange: ClosedRange<Int> {
+        let factors = method.supportedFactors
+        let low = factors.min() ?? 1
+        let high = factors.max() ?? low
+        return low...high
+    }
+
+    /// Stepper 只能给出范围内的整数；不同算法支持的倍数集合可能不是连续的，
+    /// 这里落到该算法真正支持的那个倍数上。
+    private var factorBinding: Binding<Int> {
+        Binding(
+            get: { factor },
+            set: { newValue in
+                let supported = method.supportedFactors
+                if supported.contains(newValue) {
+                    factor = newValue
+                    return
+                }
+                guard let nearest = supported.min(by: { abs($0 - newValue) < abs($1 - newValue) }) else {
+                    return
+                }
+                factor = nearest
+            }
+        )
+    }
+
     // MARK: - 预览
 
     /// 图片预览。
@@ -213,10 +312,11 @@ struct ImageUpscaleView: View {
             .aspectRatio(contentMode: .fit)
             .frame(maxHeight: maxHeight)
             .frame(maxWidth: .infinity)
-            .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 10))
+            .background(Color.primary.opacity(0.04),
+                        in: RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(.quaternary, lineWidth: 1)
+                RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous)
+                    .strokeBorder(DS.Tone.hairline)
             )
     }
 
@@ -252,22 +352,49 @@ struct ImageUpscaleView: View {
         }
     }
 
-    private func run() async {
-        guard let sourceImage else { return }
+    /// 开始放大。任务句柄存下来，取消按钮靠它。
+    ///
+    /// 底层的放大过程不感知取消（VideoToolbox / CoreImage 那一段没法中断），
+    /// 所以「取消」的语义是**放弃本次结果**：算完直接丢掉，不写盘、不显示。
+    private func run() {
+        guard let sourceImage, !isWorking else { return }
         isWorking = true
+        cancelRequested = false
         lastError = nil
         elapsed = nil
         let start = Date()
-        do {
-            let output = try await ImageUpscaler.upscale(
-                image: sourceImage, method: method, factor: factor)
-            resultImage = output
-            elapsed = Date().timeIntervalSince(start)
-        } catch {
-            lastError = error.localizedDescription
-            resultImage = nil
+        let method = method
+        let factor = factor
+
+        workTask = Task { @MainActor in
+            do {
+                let output = try await ImageUpscaler.upscale(
+                    image: sourceImage, method: method, factor: factor)
+                if cancelRequested || Task.isCancelled {
+                    // 算了但不要了：结果丢弃，不进界面。
+                    elapsed = nil
+                } else {
+                    resultImage = output
+                    elapsed = Date().timeIntervalSince(start)
+                }
+            } catch {
+                if cancelRequested || Task.isCancelled {
+                    elapsed = nil
+                } else {
+                    lastError = error.localizedDescription
+                    resultImage = nil
+                }
+            }
+            isWorking = false
+            cancelRequested = false
+            workTask = nil
         }
-        isWorking = false
+    }
+
+    /// 请求取消本次放大。
+    private func cancelWork() {
+        cancelRequested = true
+        workTask?.cancel()
     }
 
     private func saveResult() {

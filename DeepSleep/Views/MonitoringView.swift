@@ -7,7 +7,7 @@
 //
 //  数据来源分两条，节奏不同：
 //   - 每秒一次：SystemMetricsCollector（本机内核读，1 秒）。
-//     CPU 曲线 / 内存曲线 / 每核占用 / 内存明细 / 卷 / 网络速率 / 负载 / 开机时长。
+//     CPU 曲线 / 内存曲线 / 每核心占用 / 内存明细 / 卷 / 网络速率 / 负载 / 开机时长。
 //   - 三秒一次：SystemMonitor.liveSnapshot()（走特权助手拿进程快照）。
 //     进程排行与整机累计口径来自这里；助手不可用时这些项显示「不可用」。
 //
@@ -15,9 +15,34 @@
 //  每秒一个点的曲线会变成台阶。曲线的目的是看趋势，1 秒粒度才有意义；
 //  进程排行仍然只认助手的数据（那需要 root 才能读别人的进程）。
 //
+//  2026-11 界面换新（只改怎么显示，不改显示什么数据）：
+//   - 四个指标块换成 MetricTile，自带状态词 + 进度条（颜色不能是唯一区分手段）。
+//   - 进程排行换成原生 Table，可按名称 / PID / RSS / CPU 排序。
+//   - 阈值行换成 LabeledContent + Slider。
+//   - 采样间隔、刷新节流、数据来源一个字没动。
+//
 
 import SwiftUI
 import Charts
+
+/// 进程表的一行。
+///
+/// `ProcessStats.Record` 在 Shared 里且不是 Identifiable（那边不能改），
+/// 所以这里包一层：pid 就是它天然的主键。
+struct MoProcessRow: Identifiable {
+
+    let record: ProcessStats.Record
+    /// 行状态词（颜色 + 文字双编码用）。
+    let statusText: String
+    /// 状态是不是「需要注意」。
+    let statusIsWarning: Bool
+
+    var id: pid_t { record.pid }
+    var name: String { record.name }
+    var pid: pid_t { record.pid }
+    var rssBytes: UInt64 { record.rssBytes }
+    var cpuPercent: Double { record.cpuPercent }
+}
 
 struct MonitoringView: View {
 
@@ -37,22 +62,24 @@ struct MonitoringView: View {
     @State private var history = SystemMetrics.MetricHistory(capacity: 60)
     @State private var refreshTick: Int = 0
 
-    /// 进程排行的排序口径。
-    @State private var processSort: ProcessSort = .cpu
+    /// 进程排行的排序口径（原生 Table 的列排序）。
+    @State private var processSortOrder: [KeyPathComparator<MoProcessRow>] = [
+        KeyPathComparator(\MoProcessRow.cpuPercent, order: .reverse)
+    ]
     /// 监控总开关关着时，面板自己向助手要一份进程排行（5 秒一次）。
     @State private var fetchedTopByCPU: [ProcessStats.Record] = []
     @State private var fetchedTopByMemory: [ProcessStats.Record] = []
     @State private var lastProcessFetchAt: Date = .distantPast
     @State private var isFetchingProcesses = false
 
-    private enum ProcessSort: String, CaseIterable, Identifiable {
-        case cpu = "按 CPU"
-        case memory = "按内存"
-        var id: String { rawValue }
-    }
+    /// 进程表的固定高度。
+    ///
+    /// 页面本身在 ScrollView 里，Table 必须自己占一个确定的高度，
+    /// 否则它会按内容撑开、把外层滚动条顶没。
+    private static let processTableHeight: CGFloat = 320
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: DS.Space.lg) {
             liveStatusCard
 
             trendCard
@@ -111,106 +138,112 @@ struct MonitoringView: View {
             title: "系统状态",
             subtitle: liveStatusSubtitle,
             symbol: "gauge.with.dots.needle.50percent",
-            accent: .accentColor
+            accent: DS.Tone.info
         ) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .top, spacing: 18) {
-                    metricBlock(
-                        title: "CPU",
-                        value: cpuPercentText,
-                        caption: "整机 0–100%（全核合计）",
-                        tint: cpuColor
-                    )
-                    Divider().frame(height: 36)
-                    metricBlock(
-                        title: "内存",
-                        value: memoryPercentText,
-                        caption: "已用 / 物理内存",
-                        tint: ramColor
-                    )
-                    Divider().frame(height: 36)
-                    metricBlock(
-                        title: "CPU 温度",
-                        value: snapshot.cpuTempC.map { String(format: "%.1f°C", $0) } ?? "—",
-                        caption: temperatureCaption,
-                        tint: cpuTempColor
-                    )
-                    Divider().frame(height: 36)
-                    metricBlock(
-                        title: "磁盘（根卷）",
-                        value: rootVolumePercentText,
-                        caption: rootVolumeCaption,
-                        tint: rootVolumeColor
-                    )
+            VStack(alignment: .leading, spacing: DS.Space.md) {
+                LazyVGrid(
+                    columns: [
+                        GridItem(.flexible(), spacing: DS.Space.md),
+                        GridItem(.flexible(), spacing: DS.Space.md)
+                    ],
+                    spacing: DS.Space.md
+                ) {
+                    cpuTile
+                    memoryTile
+                    temperatureTile
+                    rootVolumeTile
                 }
 
-                Divider()
+                liveReadoutPanel
 
-                HStack(alignment: .top, spacing: 18) {
-                    readoutBlock(
-                        title: "负载均值",
-                        value: loadAverageText,
-                        caption: "1 / 5 / 15 分钟"
-                    )
-                    Divider().frame(height: 28)
-                    readoutBlock(
-                        title: "已开机",
-                        value: snapshot.uptimeSeconds.map { SystemMetrics.formatDuration($0) } ?? "不可用",
-                        caption: uptimeCaption
-                    )
-                    Divider().frame(height: 28)
-                    readoutBlock(
-                        title: "热压力",
-                        value: snapshot.thermalState?.displayName ?? "不可用",
-                        caption: "系统热压力等级"
-                    )
-                    Divider().frame(height: 28)
-                    readoutBlock(
-                        title: "网络",
-                        value: networkText,
-                        caption: "所有物理网卡合计"
-                    )
-                }
-
-                if snapshot.isStale {
-                    Label("进程与整机累计读数还没有新采样（监控未启用或助手未就绪）；"
-                          + "上面的 CPU / 内存 / 磁盘来自本机实时采样。",
-                          systemImage: "info.circle")
+                if let note = staleNote {
+                    Label(note.text, systemImage: "exclamationmark.triangle.fill")
                         .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(note.tone)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
     }
 
-    private func metricBlock(title: String, value: String, caption: String, tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.system(.title3, design: .monospaced).weight(.semibold))
-                .foregroundStyle(tint)
-            Text(caption)
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
+    // MARK: 指标块（MetricTile）
+
+    private var cpuTile: some View {
+        let value = cpuPercentValue
+        return MetricTile(
+            title: "CPU",
+            value: value.map { String(format: "%.0f", $0) } ?? "—",
+            unit: value == nil ? nil : "%",
+            status: cpuStatusText,
+            tint: cpuColor,
+            progress: value.map { $0 / 100 },
+            symbol: "cpu"
+        )
     }
 
-    private func readoutBlock(title: String, value: String, caption: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.system(.callout, design: .monospaced))
-                .foregroundStyle(.primary)
-            Text(caption)
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
+    private var memoryTile: some View {
+        let value = memoryPercentValue
+        return MetricTile(
+            title: "内存",
+            value: value.map { String(format: "%.0f", $0) } ?? "—",
+            unit: value == nil ? nil : "%",
+            status: memoryStatusText,
+            tint: ramColor,
+            progress: value.map { $0 / 100 },
+            symbol: "memorychip"
+        )
+    }
+
+    private var temperatureTile: some View {
+        let value = snapshot.cpuTempC
+        return MetricTile(
+            title: "CPU 温度",
+            value: value.map { String(format: "%.1f", $0) } ?? "—",
+            unit: value == nil ? nil : "°C",
+            status: temperatureStatusText,
+            tint: cpuTempColor,
+            progress: value.map { $0 / 100 },
+            symbol: "thermometer.medium"
+        )
+    }
+
+    private var rootVolumeTile: some View {
+        let fraction = rootVolume?.usedFraction
+        return MetricTile(
+            title: "磁盘（根卷）",
+            value: fraction.map { String(format: "%.0f", $0 * 100) } ?? "—",
+            unit: fraction == nil ? nil : "%",
+            status: rootVolumeStatusText,
+            tint: rootVolumeColor,
+            progress: fraction,
+            symbol: "internaldrive"
+        )
+    }
+
+    /// 次级读数：负载、开机时长、热压力、网络。
+    ///
+    /// 这些不是「百分比型」指标，做不成 MetricTile，用 LabeledContent 排。
+    private var liveReadoutPanel: some View {
+        VStack(alignment: .leading, spacing: DS.Space.xs) {
+            LabeledContent("负载均值（1 / 5 / 15 分钟）") {
+                Text(loadAverageText)
+                    .monospacedDigit()
+            }
+            LabeledContent("已开机（自上次开机）") {
+                Text(uptimeText)
+                    .monospacedDigit()
+            }
+            LabeledContent("热压力（系统热压力等级）") {
+                Text(thermalStateText)
+            }
+            LabeledContent("网络（所有物理网卡合计）") {
+                Text(networkText)
+                    .monospacedDigit()
+            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .font(.callout)
+        .padding(DS.Space.md)
+        .insetPanel()
     }
 
     private var liveStatusSubtitle: String {
@@ -233,16 +266,15 @@ struct MonitoringView: View {
             title: "最近 60 秒",
             subtitle: "每秒一个采样点，从左上往右下走的是时间——越靠右越新。曲线只画趋势，不参与告警判定。",
             symbol: "chart.xyaxis.line",
-            accent: .blue
+            accent: DS.Tone.info
         ) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 10) {
-                    Tag(text: "CPU", color: .accentColor)
+            VStack(alignment: .leading, spacing: DS.Space.md) {
+                HStack(spacing: DS.Space.sm) {
+                    Tag(text: "CPU", color: DS.Tone.info)
                     Tag(text: "内存（已用）", color: .purple)
-                    Spacer()
+                    Spacer(minLength: DS.Space.sm)
                     Text("0–100%")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                        .caption2()
                 }
 
                 if history.samples.count >= 2 {
@@ -300,16 +332,16 @@ struct MonitoringView: View {
             title: "每核心 CPU",
             subtitle: "每秒一次 tick 差分；颜色随占用率变化。",
             symbol: "cpu",
-            accent: .teal
+            accent: DS.Tone.info
         ) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .bottom, spacing: 4) {
+            VStack(alignment: .leading, spacing: DS.Space.md) {
+                HStack(alignment: .bottom, spacing: DS.Space.xs) {
                     ForEach(Array(snapshot.perCoreCPUPercent.enumerated()), id: \.offset) { index, value in
-                        VStack(spacing: 4) {
+                        VStack(spacing: DS.Space.xs) {
                             ZStack(alignment: .bottom) {
-                                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous)
                                     .fill(Color.secondary.opacity(0.12))
-                                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous)
                                     .fill(coreColor(for: value))
                                     // 至少 2pt：0% 也留一条底线，别让核「消失」。
                                     .frame(height: max(2, 56 * min(max(value, 0), 100) / 100))
@@ -324,11 +356,11 @@ struct MonitoringView: View {
                     }
                 }
 
-                HStack(spacing: 6) {
+                HStack(spacing: DS.Space.sm) {
                     Tag(text: "峰值 \(String(format: "%.0f%%", corePeak))", color: coreColor(for: corePeak))
-                    Tag(text: "均值 \(String(format: "%.0f%%", coreAverage))", color: .secondary)
-                    Tag(text: "\(snapshot.perCoreCPUPercent.count) 核", color: .secondary)
-                    Spacer()
+                    Tag(text: "均值 \(String(format: "%.0f%%", coreAverage))", color: DS.Tone.idle)
+                    Tag(text: "\(snapshot.perCoreCPUPercent.count) 核", color: DS.Tone.idle)
+                    Spacer(minLength: DS.Space.sm)
                 }
             }
         }
@@ -353,15 +385,15 @@ struct MonitoringView: View {
             accent: .purple
         ) {
             if let memory = snapshot.memoryDetail {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: DS.Space.md) {
+                    HStack(spacing: DS.Space.sm) {
                         Text("已用")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Text(String(format: "%.1f%%", memory.usedPercent))
                             .font(.system(.callout, design: .monospaced).weight(.semibold))
-                            .foregroundStyle(memory.usedPercent >= config.ramHighPercent ? .orange : .primary)
-                        Spacer()
+                            .foregroundStyle(memory.usedPercent >= config.ramHighPercent ? DS.Tone.caution : Color.primary)
+                        Spacer(minLength: DS.Space.sm)
                         Text("\(SystemMetrics.formatMemoryBytes(memory.usedBytes))"
                              + " / \(SystemMetrics.formatMemoryBytes(memory.totalBytes))")
                             .font(.system(.caption, design: .monospaced))
@@ -370,7 +402,7 @@ struct MonitoringView: View {
 
                     memoryStackedBar(memory)
 
-                    VStack(spacing: 6) {
+                    VStack(spacing: DS.Space.sm) {
                         memoryRow("应用占用", bytes: memory.appBytes, percent: memory.appPercent, color: .blue)
                         memoryRow("联动（wired）", bytes: memory.wiredBytes, percent: memory.wiredPercent, color: .orange)
                         memoryRow("压缩", bytes: memory.compressedBytes, percent: memory.compressedPercent, color: .purple)
@@ -380,25 +412,25 @@ struct MonitoringView: View {
 
                     Divider()
 
-                    HStack(spacing: 8) {
+                    HStack(spacing: DS.Space.sm) {
                         Text("物理内存合计")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Spacer()
+                        Spacer(minLength: DS.Space.sm)
                         Text(SystemMetrics.formatMemoryBytes(memory.totalBytes))
                             .font(.system(.caption, design: .monospaced))
                     }
-                    HStack(spacing: 8) {
+                    HStack(spacing: DS.Space.sm) {
                         Text("交换空间")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Spacer()
+                        Spacer(minLength: DS.Space.sm)
                         if memory.swapTotalBytes > 0 {
                             Text("\(SystemMetrics.formatMemoryBytes(memory.swapUsedBytes))"
                                  + " / \(SystemMetrics.formatMemoryBytes(memory.swapTotalBytes))"
                                  + "（\(String(format: "%.0f%%", memory.swapPercent))）")
                                 .font(.system(.caption, design: .monospaced))
-                                .foregroundStyle(memory.swapPercent >= 90 ? Color.orange : Color.secondary)
+                                .foregroundStyle(memory.swapPercent >= 90 ? DS.Tone.caution : Color.secondary)
                         } else {
                             Text("未启用")
                                 .font(.system(.caption, design: .monospaced))
@@ -425,7 +457,7 @@ struct MonitoringView: View {
                 segment(memory.freePercent, total: geo.size.width, color: .secondary.opacity(0.3))
             }
             .background(Color.secondary.opacity(0.08))
-            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous))
         }
         .frame(height: 14)
     }
@@ -437,14 +469,14 @@ struct MonitoringView: View {
     }
 
     private func memoryRow(_ title: String, bytes: UInt64, percent: Double, color: Color) -> some View {
-        HStack(spacing: 8) {
-            RoundedRectangle(cornerRadius: 2, style: .continuous)
+        HStack(spacing: DS.Space.sm) {
+            RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous)
                 .fill(color)
                 .frame(width: 9, height: 9)
             Text(title)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Spacer()
+            Spacer(minLength: DS.Space.sm)
             Text(SystemMetrics.formatMemoryBytes(bytes))
                 .font(.system(.caption, design: .monospaced))
             Text(String(format: "%.1f%%", percent))
@@ -461,14 +493,14 @@ struct MonitoringView: View {
             title: "磁盘",
             subtitle: snapshot.volumes.isEmpty ? nil : "只列用户可见的卷与根卷，系统内部卷不展开。",
             symbol: "internaldrive",
-            accent: .orange
+            accent: DS.Tone.caution
         ) {
             if snapshot.volumes.isEmpty {
                 Text("不可用：读不到已挂载卷。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: DS.Space.md) {
                     ForEach(Array(snapshot.volumes.enumerated()), id: \.offset) { _, volume in
                         volumeRow(volume)
                     }
@@ -478,8 +510,8 @@ struct MonitoringView: View {
     }
 
     private func volumeRow(_ volume: SystemMetrics.DiskVolume) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: DS.Space.xs) {
+            HStack(spacing: DS.Space.sm) {
                 Image(systemName: volume.isRemovable ? "sdcard" : "internaldrive")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
@@ -487,14 +519,14 @@ struct MonitoringView: View {
                     .font(.callout.weight(.medium))
                     .lineLimit(1)
                 if volume.isRemovable {
-                    Tag(text: "可移除", color: .orange)
+                    Tag(text: "可移除", color: DS.Tone.caution)
                 }
                 Text(volume.mountPath)
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Spacer(minLength: 8)
+                Spacer(minLength: DS.Space.sm)
                 Text(volumeDetailText(volume))
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(volumeColor(volume))
@@ -502,10 +534,10 @@ struct MonitoringView: View {
 
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                    Capsule()
                         .fill(Color.secondary.opacity(0.12))
                     if let fraction = volume.usedFraction {
-                        RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        Capsule()
                             .fill(volumeColor(volume))
                             .frame(width: max(2, geo.size.width * min(max(fraction, 0), 1)))
                     }
@@ -526,7 +558,7 @@ struct MonitoringView: View {
     private func volumeColor(_ volume: SystemMetrics.DiskVolume) -> Color {
         guard let fraction = volume.usedFraction else { return .secondary }
         let percent = fraction * 100
-        if percent >= metricThresholds.diskUsagePercent { return .orange }
+        if percent >= metricThresholds.diskUsagePercent { return DS.Tone.caution }
         if percent >= 75 { return .yellow }
         return .primary
     }
@@ -536,70 +568,96 @@ struct MonitoringView: View {
     private var processCard: some View {
         SectionCard(
             title: "进程排行",
-            subtitle: "数据来自特权助手的进程快照；面板不另起扫描。",
+            subtitle: "数据来自特权助手的进程快照；面板不另起扫描。"
+                + "点表头可按名称 / PID / RSS / CPU 排序。",
             symbol: "list.number",
-            accent: .green
+            accent: DS.Tone.good
         ) {
-            VStack(alignment: .leading, spacing: 10) {
-                Picker("", selection: $processSort) {
-                    ForEach(ProcessSort.allCases) { sort in
-                        Text(sort.rawValue).tag(sort)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(maxWidth: 240)
-
-                let rows = currentProcessRows
-                if rows.isEmpty {
-                    Text(config.enabled
-                         ? "暂不可用：需要助手返回进程快照（未安装 / 版本过旧 / 刚启动）。"
-                         : "未启用系统监控时不主动抓进程快照；打开上面的「启用系统监控」后这里会出数据。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: DS.Space.md) {
+                if processRows.isEmpty {
+                    EmptyStateView(
+                        title: processEmptyTitle,
+                        message: processEmptyMessage,
+                        systemImage: "list.number"
+                    )
                 } else {
-                    VStack(spacing: 5) {
-                        ForEach(Array(rows.enumerated()), id: \.offset) { index, record in
-                            processRow(index: index, record: record)
+                    Table(processRows, sortOrder: $processSortOrder) {
+                        TableColumn("进程", value: \.name) { row in
+                            Text(row.name)
+                                .font(.system(.caption, design: .monospaced))
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
+                        TableColumn("PID", value: \.pid) { row in
+                            Text("\(row.pid)")
+                                .font(.system(.caption2, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                        }
+                        TableColumn("内存 RSS", value: \.rssBytes) { row in
+                            Text(SystemMetrics.formatMemoryBytes(row.rssBytes))
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(Int(row.rssBytes) >= config.singleProcessRAMBytes
+                                                 ? DS.Tone.caution : Color.secondary)
+                        }
+                        TableColumn("CPU", value: \.cpuPercent) { row in
+                            Text(String(format: "%.1f%%", row.cpuPercent))
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(row.cpuPercent >= config.cpuHighPercent
+                                                 ? DS.Tone.caution : Color.secondary)
+                        }
+                        TableColumn("状态", value: \.statusText) { row in
+                            Tag(text: row.statusText,
+                                color: row.statusIsWarning ? DS.Tone.caution : DS.Tone.good)
                         }
                     }
+                    .frame(height: Self.processTableHeight)
                 }
             }
         }
     }
 
-    private var currentProcessRows: [ProcessStats.Record] {
+    /// 进程表的数据源。
+    ///
+    /// 助手一次快照同时给「按 CPU 的 Top 10」和「按内存的 Top 10」，
+    /// 这里把两份合成一份去重（同一个 pid 只留一行），
+    /// 这样按名称排序时看到的才是同一批进程的全貌，
+    /// 而不是「CPU 榜里名字排好序的那 10 个」。
+    /// 数据来源没变，还是助手那一份快照，不额外发起扫描。
+    private var processRows: [MoProcessRow] {
+        let records: [ProcessStats.Record]
         if config.enabled {
-            return processSort == .cpu ? snapshot.topByCPU : snapshot.topByMemory
+            records = snapshot.topByCPU + snapshot.topByMemory
+        } else {
+            records = fetchedTopByCPU + fetchedTopByMemory
         }
-        return processSort == .cpu ? fetchedTopByCPU : fetchedTopByMemory
+        var seen = Set<pid_t>()
+        return records
+            .filter { seen.insert($0.pid).inserted }
+            .map { record in
+                let text = processStatusText(record)
+                return MoProcessRow(
+                    record: record,
+                    statusText: text,
+                    statusIsWarning: text != "正常"
+                )
+            }
     }
 
-    private func processRow(index: Int, record: ProcessStats.Record) -> some View {
-        HStack(spacing: 8) {
-            Text("\(index + 1)")
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(.tertiary)
-                .frame(width: 16, alignment: .trailing)
-            Text(record.name)
-                .font(.system(.caption, design: .monospaced))
-                .lineLimit(1)
-                .truncationMode(.tail)
-            Text("pid \(record.pid)")
-                .font(.system(size: 9, design: .monospaced))
-                .foregroundStyle(.tertiary)
-            Spacer(minLength: 8)
-            if processSort == .cpu {
-                Text(String(format: "%.1f%%", record.cpuPercent))
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(record.cpuPercent >= config.cpuHighPercent ? Color.orange : Color.secondary)
-            } else {
-                Text(SystemMetrics.formatMemoryBytes(record.rssBytes))
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(Int(record.rssBytes) >= config.singleProcessRAMBytes
-                                     ? Color.orange : Color.secondary)
-            }
-        }
+    private var processEmptyTitle: String {
+        config.enabled ? "暂时没有进程快照" : "监控未启用，还没有进程数据"
+    }
+
+    private var processEmptyMessage: String {
+        config.enabled
+            ? "需要助手返回进程快照（未安装 / 版本过旧 / 刚启动）。"
+            : "未启用系统监控时不主动抓进程快照；打开下面的「启用系统监控」后这里会出数据。"
+    }
+
+    /// 进程行的状态词。颜色 + 文字双编码，不能只靠颜色。
+    private func processStatusText(_ record: ProcessStats.Record) -> String {
+        if Int(record.rssBytes) >= config.singleProcessRAMBytes { return "内存超限" }
+        if record.cpuPercent >= config.cpuHighPercent { return "CPU 偏高" }
+        return "正常"
     }
 
     // MARK: - 「系统监控」开关
@@ -609,10 +667,11 @@ struct MonitoringView: View {
             title: "系统监控",
             subtitle: "总开关。关闭后下面所有阈值都不生效，也不会触发任何告警。",
             symbol: "gauge.with.dots.needle.bottom.50percent",
-            accent: .accentColor
+            accent: DS.Tone.info
         ) {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: DS.Space.sm) {
                 Toggle("启用系统监控", isOn: $config.enabled)
+                    .toggleStyle(.switch)
                     .onChange(of: config) { _, newConfig in
                         newConfig.saveIfNotDefault()
                         SystemMonitor.shared.updateConfig(newConfig)
@@ -627,6 +686,7 @@ struct MonitoringView: View {
                      + "CPU 温度超阈时只告警，不冻结进程。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -638,38 +698,47 @@ struct MonitoringView: View {
             title: "阈值",
             subtitle: nil,
             symbol: "slider.horizontal.below.rectangle",
-            accent: .orange
+            accent: DS.Tone.caution
         ) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Text("RAM 使用率阈值")
-                    Spacer()
-                    Text("\(Int(config.ramHighPercent))%")
-                        .monospacedDigit()
+            VStack(alignment: .leading, spacing: DS.Space.md) {
+                thresholdSlider(
+                    title: "RAM 使用率阈值",
+                    valueText: "\(Int(config.ramHighPercent))%",
+                    slider: { Slider(value: $config.ramHighPercent, in: 50...99) }
+                )
+
+                thresholdSlider(
+                    title: "累计 CPU 阈值",
+                    valueText: "\(Int(config.cpuHighPercent))%",
+                    slider: { Slider(value: $config.cpuHighPercent, in: 0...100) }
+                )
+
+                LabeledContent("持续超过阈值才告警") {
+                    Stepper(value: $config.highDurationSeconds, in: 10...600, step: 10) {
+                        Text("\(config.highDurationSeconds) 秒")
+                            .font(.system(.body, design: .monospaced))
+                            .monospacedDigit()
+                    }
+                    .fixedSize()
                 }
-                Slider(value: $config.ramHighPercent, in: 50...99)
-                HStack {
-                    Text("累计 CPU 阈值")
-                    Spacer()
-                    Text("\(Int(config.cpuHighPercent))%")
-                        .monospacedDigit()
-                }
-                Slider(value: $config.cpuHighPercent, in: 0...100)
-                Stepper("持续超过 \(config.highDurationSeconds) 秒才告警",
-                        value: $config.highDurationSeconds,
-                        in: 10...600, step: 10)
-                HStack {
-                    Text("采样间隔")
-                    Spacer()
-                    Text("\(config.sampleIntervalSeconds, specifier: "%.0f") 秒")
-                }
-                Slider(value: $config.sampleIntervalSeconds, in: 1...10, step: 1)
-                Stepper(value: Binding(
-                    get: { Double(config.singleProcessRAMBytes) / 1_073_741_824 },
-                    set: { config.singleProcessRAMBytes = Int($0 * 1_073_741_824) }
-                ), in: 0.5...32, step: 0.5) {
-                    Text(String(format: "单进程 RAM 上限 %.2f GB（任一进程达到即立刻告警）",
-                                  Double(config.singleProcessRAMBytes) / 1_073_741_824))
+
+                thresholdSlider(
+                    title: "采样间隔",
+                    valueText: String(format: "%.0f 秒", config.sampleIntervalSeconds),
+                    slider: { Slider(value: $config.sampleIntervalSeconds, in: 1...10, step: 1) }
+                )
+
+                LabeledContent("单进程 RAM 上限（任一进程达到即立刻告警）") {
+                    Stepper(value: Binding(
+                        get: { Double(config.singleProcessRAMBytes) / 1_073_741_824 },
+                        set: { config.singleProcessRAMBytes = Int($0 * 1_073_741_824) }
+                    ), in: 0.5...32, step: 0.5) {
+                        Text(String(format: "%.2f GB",
+                                    Double(config.singleProcessRAMBytes) / 1_073_741_824))
+                            .font(.system(.body, design: .monospaced))
+                            .monospacedDigit()
+                    }
+                    .fixedSize()
                 }
 
                 Divider()
@@ -682,27 +751,27 @@ struct MonitoringView: View {
                         systemImage: "exclamationmark.triangle"
                     )
                     .font(.caption2)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(DS.Tone.caution)
                 }
 
                 Divider()
 
                 Toggle("CPU 温度告警", isOn: $config.cpuTempEnabled)
+                    .toggleStyle(.switch)
                     .help("任一传感器达到阈值就告警。温度读数来自 IOHID 私有温度事件通道，"
                           + "与 90°C 风扇兜底同一份数据。\n"
                           + "这一档只告警，不冻结进程 —— 温度问题不是杀进程能解决的。")
-                HStack {
-                    Text("CPU 温度阈值")
-                    Spacer()
-                    Text(String(format: "%.0f°C", config.cpuTempHighCelsius))
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
-                }
-                Slider(value: $config.cpuTempHighCelsius, in: 40...105, step: 1)
+
+                thresholdSlider(
+                    title: "CPU 温度阈值",
+                    valueText: String(format: "%.0f°C", config.cpuTempHighCelsius),
+                    slider: { Slider(value: $config.cpuTempHighCelsius, in: 40...105, step: 1) }
+                )
                 Text("温度达到 \(Int(config.cpuTempHighCelsius))°C 就告警。"
                      + "告警时只发通知与邮件，不会冻结进程。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 Divider()
 
@@ -714,44 +783,56 @@ struct MonitoringView: View {
         }
     }
 
+    /// 阈值行：左边名字，右边当前值，下面一条原生 Slider。
+    ///
+    /// Slider 本身是泛型（Label / SliderTrack），这里用 @ViewBuilder 收参数，
+    /// 调用点直接写 `Slider(value:...)`。
+    private func thresholdSlider<SliderContent: View>(title: String,
+                                                     valueText: String,
+                                                     @ViewBuilder slider: () -> SliderContent) -> some View {
+        VStack(alignment: .leading, spacing: DS.Space.xs) {
+            LabeledContent(title) {
+                Text(valueText)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
+            slider()
+        }
+    }
+
     /// 面板高亮阈值。只改颜色，不触发告警 —— 告警阈值在上面那一组。
     private var panelThresholdSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("面板高亮线")
-                .font(.callout.weight(.medium))
+        VStack(alignment: .leading, spacing: DS.Space.md) {
+            SubsectionHeader(title: "面板高亮线", symbol: "paintpalette")
             Text("只决定面板上的颜色，不参与告警判定；改动立刻保存。")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
+                .caption2()
 
-            HStack {
-                Text("磁盘用量")
-                Spacer()
-                Text("\(Int(metricThresholds.diskUsagePercent))%")
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-            }
-            Slider(value: $metricThresholds.diskUsagePercent, in: 50...99, step: 1)
+            thresholdSlider(
+                title: "磁盘用量",
+                valueText: "\(Int(metricThresholds.diskUsagePercent))%",
+                slider: { Slider(value: $metricThresholds.diskUsagePercent, in: 50...99, step: 1) }
+            )
 
-            HStack {
-                Text("单核 CPU 占用")
-                Spacer()
-                Text("\(Int(metricThresholds.coreCPUPercent))%")
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-            }
-            Slider(value: $metricThresholds.coreCPUPercent, in: 50...100, step: 1)
+            thresholdSlider(
+                title: "单核 CPU 占用",
+                valueText: "\(Int(metricThresholds.coreCPUPercent))%",
+                slider: { Slider(value: $metricThresholds.coreCPUPercent, in: 50...100, step: 1) }
+            )
 
-            HStack {
-                Text("网络速率")
-                Spacer()
-                Text(String(format: "%.0f MB/s", metricThresholds.networkBytesPerSecond / 1_048_576))
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-            }
-            Slider(value: Binding(
-                get: { metricThresholds.networkBytesPerSecond / 1_048_576 },
-                set: { metricThresholds.networkBytesPerSecond = $0 * 1_048_576 }
-            ), in: 1...100, step: 1)
+            thresholdSlider(
+                title: "网络速率",
+                valueText: String(format: "%.0f MB/s", metricThresholds.networkBytesPerSecond / 1_048_576),
+                slider: {
+                    Slider(
+                        value: Binding(
+                            get: { metricThresholds.networkBytesPerSecond / 1_048_576 },
+                            set: { metricThresholds.networkBytesPerSecond = $0 * 1_048_576 }
+                        ),
+                        in: 1...100,
+                        step: 1
+                    )
+                }
+            )
         }
         .onChange(of: metricThresholds) { _, newValue in
             newValue.saveIfNotDefault()
@@ -779,7 +860,7 @@ struct MonitoringView: View {
         )
 
         return Toggle(isOn: binding) {
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: DS.Space.xxs) {
                 Text("过载时自动冻结 Top 3")
                     .font(.body)
                 Text(sleep.isServerModeActive
@@ -789,6 +870,7 @@ struct MonitoringView: View {
                     .foregroundStyle(.secondary)
             }
         }
+        .toggleStyle(.switch)
         .disabled(sleep.isServerModeActive)
     }
 
@@ -800,7 +882,7 @@ struct MonitoringView: View {
             subtitle: nil,
             symbol: "info.circle"
         ) {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: DS.Space.sm) {
                 LabeledContent("助手协议", value: helperStatus)
                 LabeledContent("最近事件", value: lastEventDescription)
             }
@@ -810,41 +892,73 @@ struct MonitoringView: View {
 
     // MARK: - 取值与配色
 
-    private var cpuPercentText: String {
-        if let local = snapshot.localCPUPercent {
-            return String(format: "%.0f%%", local)
-        }
-        if !snapshot.isStale { return String(format: "%.0f%%", snapshot.cpuPercent) }
-        return "—"
+    private var cpuPercentValue: Double? {
+        if let local = snapshot.localCPUPercent { return local }
+        if !snapshot.isStale { return snapshot.cpuPercent }
+        return nil
+    }
+
+    /// CPU 的状态词。颜色只表达语义，判定依据仍然是告警阈值。
+    private var cpuStatusText: String {
+        guard let value = cpuPercentValue else { return "不可用" }
+        if value >= config.cpuHighPercent { return "超过阈值 · 整机 0–100%（全核合计）" }
+        return "正常 · 整机 0–100%（全核合计）"
     }
 
     private var cpuColor: Color {
-        let value = snapshot.localCPUPercent ?? (snapshot.isStale ? 0 : snapshot.cpuPercent)
-        if value >= config.cpuHighPercent { return .orange }
-        if value > 0 { return .primary }
-        return .secondary
+        guard let value = cpuPercentValue else { return DS.Tone.idle }
+        if value >= config.cpuHighPercent { return DS.Tone.caution }
+        return DS.Tone.good
     }
 
-    private var memoryPercentText: String {
+    private var memoryPercentValue: Double? {
+        if let memory = snapshot.memoryDetail { return memory.usedPercent }
+        if !snapshot.isStale { return snapshot.ramPercent }
+        return nil
+    }
+
+    private var memoryStatusText: String {
+        guard let value = memoryPercentValue else { return "不可用" }
+        let detail: String
         if let memory = snapshot.memoryDetail {
-            return String(format: "%.0f%%", memory.usedPercent)
+            detail = "已用 \(SystemMetrics.formatMemoryBytes(memory.usedBytes))"
+                + " / \(SystemMetrics.formatMemoryBytes(memory.totalBytes))"
+        } else {
+            detail = "已用 / 物理内存"
         }
-        if !snapshot.isStale { return String(format: "%.0f%%", snapshot.ramPercent) }
-        return "—"
+        if value >= config.ramHighPercent { return "超过阈值 · \(detail)" }
+        return "正常 · \(detail)"
     }
 
     private var ramColor: Color {
-        let value = snapshot.memoryDetail?.usedPercent ?? (snapshot.isStale ? 0 : snapshot.ramPercent)
-        if value >= config.ramHighPercent { return .orange }
-        if value > 0 { return .primary }
-        return .secondary
+        guard let value = memoryPercentValue else { return DS.Tone.idle }
+        if value >= config.ramHighPercent { return DS.Tone.caution }
+        return DS.Tone.good
     }
 
     private var cpuTempColor: Color {
         guard let t = snapshot.cpuTempC, config.cpuTempHighCelsius > 0 else {
-            return .secondary
+            return DS.Tone.idle
         }
-        return t >= config.cpuTempHighCelsius ? .orange : .primary
+        if t >= config.cpuTempHighCelsius { return DS.Tone.critical }
+        if t >= config.cpuTempHighCelsius * 0.9 { return DS.Tone.caution }
+        return DS.Tone.good
+    }
+
+    /// 温度的状态词。
+    ///
+    /// 读不到数时要说清是「没读到」还是「功能关着」—— 两者的处置完全不同：
+    /// 前者要去查助手，后者在界面上改开关就行。
+    private var temperatureStatusText: String {
+        guard config.cpuTempEnabled else { return "已关闭" }
+        guard let t = snapshot.cpuTempC else { return "读不到 · 助手未就绪" }
+        if config.cpuTempHighCelsius > 0, t >= config.cpuTempHighCelsius {
+            return "过高 · 阈值 \(Int(config.cpuTempHighCelsius))°C"
+        }
+        if config.cpuTempHighCelsius > 0, t >= config.cpuTempHighCelsius * 0.9 {
+            return "偏高 · \(temperatureCaption)"
+        }
+        return "正常 · \(temperatureCaption)"
     }
 
     /// 温度那一格的副标题。
@@ -861,11 +975,6 @@ struct MonitoringView: View {
         snapshot.volumes.first { $0.mountPath == "/" }
     }
 
-    private var rootVolumePercentText: String {
-        guard let fraction = rootVolume?.usedFraction else { return "—" }
-        return String(format: "%.0f%%", fraction * 100)
-    }
-
     private var rootVolumeCaption: String {
         guard let volume = rootVolume else { return "读取失败" }
         guard let used = volume.usedBytes else {
@@ -874,12 +983,21 @@ struct MonitoringView: View {
         return "\(SystemMetrics.formatBytes(used)) / \(SystemMetrics.formatBytes(volume.totalBytes))"
     }
 
+    private var rootVolumeStatusText: String {
+        guard rootVolume != nil else { return "读不到 · 读取失败" }
+        guard rootVolume?.usedFraction != nil else { return "读不到 · 可用量不可用" }
+        let detail = rootVolumeCaption
+        if let fraction = rootVolume?.usedFraction, fraction * 100 >= metricThresholds.diskUsagePercent {
+            return "超过阈值 · \(detail)"
+        }
+        return "正常 · \(detail)"
+    }
+
     private var rootVolumeColor: Color {
-        guard let fraction = rootVolume?.usedFraction else { return .secondary }
+        guard let fraction = rootVolume?.usedFraction else { return DS.Tone.idle }
         let percent = fraction * 100
-        if percent >= metricThresholds.diskUsagePercent { return .orange }
-        if percent >= 75 { return .yellow }
-        return .primary
+        if percent >= metricThresholds.diskUsagePercent { return DS.Tone.caution }
+        return DS.Tone.good
     }
 
     private var loadAverageText: String {
@@ -889,8 +1007,14 @@ struct MonitoringView: View {
             .joined(separator: " / ")
     }
 
-    private var uptimeCaption: String {
-        snapshot.uptimeSeconds == nil ? "读不到 kern.boottime" : "自上次开机"
+    /// 开机时长。读不到时把原因一起说出来（原来是放在副标题上的）。
+    private var uptimeText: String {
+        guard let seconds = snapshot.uptimeSeconds else { return "不可用（读不到 kern.boottime）" }
+        return SystemMetrics.formatDuration(seconds)
+    }
+
+    private var thermalStateText: String {
+        snapshot.thermalState?.displayName ?? "不可用"
     }
 
     private var networkText: String {
@@ -904,6 +1028,43 @@ struct MonitoringView: View {
         if value >= 70 { return .yellow }
         if value >= 30 { return .teal }
         return .green
+    }
+
+    // MARK: - 数据新鲜度
+
+    /// 最近一次采样时刻。
+    ///
+    /// 本机采样（每秒一次）优先 —— 它决定的是上面那些指标块的读数；
+    /// 助手快照只是进程排行与整机累计口径的来源。
+    private var lastSampleAt: Date? {
+        if let local = snapshot.localSampledAt { return local }
+        return snapshot.updatedAt == .distantPast ? nil : snapshot.updatedAt
+    }
+
+    /// 超过 10 秒没有新采样，就算「数据未刷新」。
+    ///
+    /// 静默地显示旧读数会让人以为机器卡住了，其实只是采样停了 ——
+    /// 所以这里必须明确说出来。
+    private var isDataStale: Bool {
+        guard let last = lastSampleAt else { return true }
+        return Date().timeIntervalSince(last) > 10
+    }
+
+    /// 顶部提示。两种情况不会同时出现 —— 只保留信息量最大的那一处。
+    private var staleNote: (text: String, tone: Color)? {
+        if isDataStale {
+            if let last = lastSampleAt {
+                let seconds = Int(Date().timeIntervalSince(last))
+                return ("数据未刷新：最近一次采样在 \(seconds) 秒前，下面的读数可能已经过时。",
+                        DS.Tone.critical)
+            }
+            return ("数据未刷新：还没有拿到任何采样，下面的读数暂不可用。", DS.Tone.caution)
+        }
+        if snapshot.isStale {
+            return ("进程与整机累计读数还没有新采样（监控未启用或助手未就绪）；"
+                    + "上面的 CPU / 内存 / 磁盘来自本机实时采样。", DS.Tone.caution)
+        }
+        return nil
     }
 
     // MARK: - 内部

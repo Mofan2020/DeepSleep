@@ -14,6 +14,12 @@
 //      下载来源的 Spotlight 元数据等）一律不碰；
 //    - 单个属性删除是 libc 级原子操作，不存在「删了一半」的状态。
 //
+//  2026-11 界面换新：
+//    - 扫描结果从手搓 HStack 行换成紧凑行列表（路径 / 是否带 quarantine /
+//      下载来源），每行保留原生 Toggle 勾选；
+//    - 「清除全部」是本页主操作，prominent 按钮；
+//    - 空态用 `EmptyStateView`。
+//
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -42,15 +48,15 @@ struct QuarantineView: View {
     @State private var showRepairSheet = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: DS.Space.lg) {
             SectionCard(
                 title: "Quarantine 属性管理",
                 subtitle: rootSubtitle,
                 symbol: "lock.shield",
                 accent: .accentColor
             ) {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: DS.Space.md) {
+                    HStack(spacing: DS.Space.sm) {
                         Button {
                             showFileImporter = true
                         } label: {
@@ -70,28 +76,16 @@ struct QuarantineView: View {
                             }
                             .controlSize(.small)
                             .disabled(isScanning || isClearing)
-
-                            Button {
-                                Task { await clearAll() }
-                            } label: {
-                                if isClearing {
-                                    ProgressView().controlSize(.small)
-                                } else {
-                                    Label("清除全部", systemImage: "trash")
-                                }
-                            }
-                            .controlSize(.small)
-                            .disabled(isClearing || entries.isEmpty)
                         }
                         Spacer()
                     }
 
-                    HStack(spacing: 16) {
+                    HStack(spacing: DS.Space.lg) {
                         Toggle("包含子目录", isOn: $recursive)
-                            .toggleStyle(.checkbox)
+                            .toggleStyle(.switch)
                             .disabled(isScanning || isClearing)
                         Toggle("包含隐藏文件", isOn: $includeHidden)
-                            .toggleStyle(.checkbox)
+                            .toggleStyle(.switch)
                             .disabled(isScanning || isClearing)
                     }
                     .controlSize(.small)
@@ -108,13 +102,13 @@ struct QuarantineView: View {
                     if let lastError {
                         Text(lastError)
                             .font(.caption)
-                            .foregroundStyle(.red)
+                            .foregroundStyle(DS.Tone.critical)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if let lastSummary {
                         Text(lastSummary)
                             .font(.caption)
-                            .foregroundStyle(.green)
+                            .foregroundStyle(DS.Tone.good)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -128,23 +122,24 @@ struct QuarantineView: View {
                 ) {
                     if entries.isEmpty {
                         if isScanning {
-                            Text("正在扫描…")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .padding(.vertical, 6)
+                            EmptyStateView(
+                                title: "正在扫描…",
+                                message: "扫描过程中会逐个读取扩展属性，稍等。",
+                                systemImage: "magnifyingglass"
+                            )
                         } else {
-                            Text("这个目录下没有带 quarantine 属性的文件。")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .padding(.vertical, 6)
+                            EmptyStateView(
+                                title: "没有带 quarantine 的文件",
+                                message: "这个目录下没有找到带 quarantine 属性的文件。换一个目录，或打开「包含隐藏文件 / 子目录」再扫一次。",
+                                systemImage: "checkmark.shield"
+                            )
                         }
                     } else {
-                        VStack(spacing: 0) {
-                            HStack {
+                        VStack(alignment: .leading, spacing: DS.Space.md) {
+                            HStack(spacing: DS.Space.sm) {
                                 Text("已选 \(selection.count) / \(entries.count)")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
-                                Spacer()
                                 Button(selection.count == entries.count ? "取消全选" : "全选") {
                                     if selection.count == entries.count {
                                         selection.removeAll()
@@ -155,20 +150,35 @@ struct QuarantineView: View {
                                 .controlSize(.small)
                                 .disabled(isScanning || isClearing)
 
+                                Spacer()
+
+                                // 主操作：批量清除。
                                 Button {
                                     Task { await clearSelected() }
                                 } label: {
-                                    Label("清除所选", systemImage: "trash.slash")
+                                    Label("清除所选（\(selection.count)）", systemImage: "trash.slash")
                                 }
-                                .controlSize(.small)
+                                .controlSize(.regular)
+                                .buttonStyle(.borderedProminent)
                                 .disabled(selection.isEmpty || isClearing)
+
+                                Button {
+                                    Task { await clearAll() }
+                                } label: {
+                                    if isClearing {
+                                        ProgressView().controlSize(.small)
+                                    } else {
+                                        Label("清除全部", systemImage: "trash")
+                                    }
+                                }
+                                .controlSize(.regular)
+                                .disabled(isClearing || entries.isEmpty)
                             }
-                            .padding(.bottom, 6)
 
                             ScrollView {
                                 LazyVStack(spacing: 0) {
                                     ForEach(entries) { entry in
-                                        EntryRow(
+                                        NtQuarantineEntryRow(
                                             entry: entry,
                                             selected: selection.contains(entry.path),
                                             onToggle: {
@@ -197,7 +207,7 @@ struct QuarantineView: View {
                 subtitle: nil,
                 symbol: "info.circle"
             ) {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: DS.Space.sm) {
                     BulletLine("macOS 给从浏览器 / 解压工具下载下来的文件加 `com.apple.quarantine` 扩展属性，双击时 Gatekeeper 会弹「未知开发者」提示。")
                     BulletLine("去掉这个属性后，文件下次双击会走「非隔离」分支（不再提示）；不会绕过签名校验与 notarization。")
                     BulletLine("常见场景：自己写的脚本、解压好的工具包、用 codesign --sign - 自签名的 .app。")
@@ -393,7 +403,11 @@ struct QuarantineView: View {
     }
 }
 
-private struct EntryRow: View {
+/// 扫描结果的单行：路径 / 是否带 quarantine / 下载来源。
+///
+/// 2026-11 起从 `EntryRow` 换成本类型（`Nt` 前缀，避免与其他页面重名）。
+/// bundle id 仍只在选中时展开（解析 Info.plist 昂贵）。
+private struct NtQuarantineEntryRow: View {
     let entry: QuarantineService.Entry
     let selected: Bool
     let onToggle: () -> Void
@@ -410,77 +424,104 @@ private struct EntryRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .center, spacing: 10) {
-                Toggle("", isOn: Binding(
-                    get: { selected },
-                    set: { _ in onToggle() }
-                ))
-                .toggleStyle(.checkbox)
-                .labelsHidden()
+        HStack(alignment: .center, spacing: DS.Space.md) {
+            Toggle("", isOn: Binding(
+                get: { selected },
+                set: { _ in onToggle() }
+            ))
+            .toggleStyle(.checkbox)
+            .labelsHidden()
 
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 4) {
-                        Text((entry.path as NSString).lastPathComponent)
-                            .font(.system(.body, design: .monospaced))
-                        if entry.isAppBundle {
-                            Tag(text: ".app", color: .accentColor)
-                        }
-                        if entry.isAppBundle, entry.appContentsQuarantined > 0 {
-                            Text("包内另有 \(entry.appContentsQuarantined) 个")
-                                .font(.caption2)
-                                .foregroundStyle(.orange)
-                        }
+            VStack(alignment: .leading, spacing: DS.Space.xxs) {
+                HStack(spacing: DS.Space.xs) {
+                    Text((entry.path as NSString).lastPathComponent)
+                        .font(.system(.body, design: .monospaced))
+                    if entry.isAppBundle {
+                        Tag(text: ".app", color: DS.Tone.info)
                     }
-                    Text(subtitle)
-                        .font(.caption)
+                    if entry.isAppBundle, entry.appContentsQuarantined > 0 {
+                        Tag(text: "包内另有 \(entry.appContentsQuarantined) 个", color: DS.Tone.caution)
+                    }
+                }
+                Text(entry.path)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+                if entry.isAppBundle {
+                    Text(entry.detailDescription)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                }
+            }
+
+            Spacer(minLength: DS.Space.sm)
+
+            VStack(alignment: .trailing, spacing: DS.Space.xxs) {
+                // 状态用「颜色 + 文字」双编码：颜色只是辅助，文字才说清是什么。
+                Label(quarantineStateText, systemImage: quarantineStateSymbol)
+                    .font(.caption)
+                    .foregroundStyle(quarantineStateColor)
+                    .lineLimit(1)
+                if let source = downloadSource {
+                    Text("来源 \(source)")
+                        .font(.caption2)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
-                        .truncationMode(.middle)
-                    if entry.isAppBundle {
-                        Text(entry.detailDescription)
-                            .font(.caption2.monospaced())
-                            .foregroundStyle(.tertiary)
-                            .lineLimit(2)
-                            .truncationMode(.middle)
-                            .textSelection(.enabled)
-                    }
                 }
-                Spacer(minLength: 8)
-
-                if entry.isAppBundle, let onRepair {
-                    Button {
-                        onRepair()
-                    } label: {
-                        Label("快速修复", systemImage: "wrench.and.screwdriver")
-                    }
-                    .controlSize(.small)
-                }
-
                 Text(byteString)
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
-                    .frame(minWidth: 64, alignment: .trailing)
+            }
+
+            if entry.isAppBundle, let onRepair {
+                Button {
+                    onRepair()
+                } label: {
+                    Label("快速修复", systemImage: "wrench.and.screwdriver")
+                }
+                .controlSize(.small)
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, DS.Space.xs)
         .contentShape(Rectangle())
         .onTapGesture { onToggle() }
     }
 
-    private var subtitle: String {
-        var parts: [String] = []
-        parts.append(entry.path)
-        if let date = entry.modifiedAt {
-            let formatter = DateFormatter()
-            formatter.dateFormat = "yyyy-MM-dd HH:mm"
-            parts.append(formatter.string(from: date))
+    /// 是否带 quarantine 属性。本页扫出来的都带，但 .app 包内可能还有更多。
+    private var quarantineStateText: String {
+        if entry.isAppBundle, entry.appContentsQuarantined > 0 {
+            return "已隔离（包内 \(entry.appContentsQuarantined) 个）"
         }
-        let summary = quarantineSummary(entry.value)
-        if !summary.isEmpty {
-            parts.append(summary)
+        return "已隔离"
+    }
+
+    private var quarantineStateSymbol: String {
+        "lock.shield.fill"
+    }
+
+    private var quarantineStateColor: Color {
+        DS.Tone.caution
+    }
+
+    /// 下载来源：quarantine 值的第 3 段（agent）。
+    ///
+    /// 解析失败时回落到原始 value 自己切段 —— 完整 value 仍然保留在
+    /// `entry.value` 里，需要细节的人自己看。
+    private var downloadSource: String? {
+        var segments = entry.valueSegments
+        if segments.count < 3 {
+            segments = entry.value
+                .split(separator: ";", omittingEmptySubsequences: false)
+                .map(String.init)
         }
-        return parts.joined(separator: " · ")
+        guard segments.count >= 3 else { return nil }
+        let agent = segments[2].trimmingCharacters(in: .whitespaces)
+        return agent.isEmpty ? nil : agent
     }
 
     private var byteString: String {
@@ -495,16 +536,6 @@ private struct EntryRow: View {
         }
         return String(format: "%.2f GB", Double(bytes) / (1024.0 * 1024.0 * 1024.0))
     }
-
-    /// 解析 quarantine 值的语义段：flag;timestamp;agent;UUID。
-    /// 完整 value 还是保留在 entry.value，需要细节的人自取。
-    private func quarantineSummary(_ raw: String) -> String {
-        let segments = raw.split(separator: ";", omittingEmptySubsequences: false)
-            .map(String.init)
-        guard segments.count >= 3 else { return raw }
-        // 第 3 段（agent）是给 UI 看的关键：哪个应用打上的隔离标记。
-        return "agent=\(segments[2])"
-    }
 }
 
 // MARK: - 修复结果 sheet
@@ -516,8 +547,8 @@ struct RepairResultSheet: View {
     let onDone: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: DS.Space.md) {
+            VStack(alignment: .leading, spacing: DS.Space.xs) {
                 Text("修复「.app 损坏」")
                     .font(.title3.weight(.semibold))
                 Text(path)
@@ -530,13 +561,13 @@ struct RepairResultSheet: View {
 
             Divider()
 
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: DS.Space.sm) {
                 ForEach(Array(outcomes.enumerated()), id: \.offset) { _, outcome in
-                    HStack(alignment: .top, spacing: 8) {
+                    HStack(alignment: .top, spacing: DS.Space.sm) {
                         Image(systemName: outcome.success ? "checkmark.circle.fill" : "circle.dashed")
-                            .foregroundStyle(outcome.success ? Color.green : Color.secondary)
+                            .foregroundStyle(outcome.success ? DS.Tone.good : DS.Tone.idle)
                             .frame(width: 18)
-                        VStack(alignment: .leading, spacing: 2) {
+                        VStack(alignment: .leading, spacing: DS.Space.xxs) {
                             Text(outcome.step).font(.body.weight(.medium))
                             Text(outcome.detail)
                                 .font(.caption)
@@ -554,7 +585,7 @@ struct RepairResultSheet: View {
                     .buttonStyle(.borderedProminent)
             }
         }
-        .padding(22)
+        .padding(DS.Space.xl)
         .frame(width: 520)
     }
 }

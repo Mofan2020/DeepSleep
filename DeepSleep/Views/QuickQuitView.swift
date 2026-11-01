@@ -4,6 +4,13 @@
 //
 //  快速退出页：配快捷键、选应用、看结果。
 //
+//  2026-11 界面换新：
+//  - 应用名单改成原生 Table（可搜索、可勾选多行）。
+//  - 「立即退出全部」是页面的主操作，borderedProminent，并写清会连带结束
+//    这些应用的**全部子进程**。
+//  - 空态用 EmptyStateView。
+//  - 间距 / 圆角一律走 `DS.Space` / `DS.Radius`，不写字面量。
+//
 
 import Carbon.HIToolbox
 import SwiftUI
@@ -14,143 +21,28 @@ struct QuickQuitView: View {
     @ObservedObject private var engine = QuickQuitEngine.shared
 
     @State private var showPicker = false
+    /// Table 里勾选的行（按 bundle id 记录）。
+    @State private var selection: Set<QuickQuitTarget.ID> = []
+    @State private var query: String = ""
+
+    /// 搜索过滤后的名单。
+    private var filteredTargets: [QuickQuitTarget] {
+        let trimmed = query.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return engine.targets }
+        return engine.targets.filter {
+            $0.name.localizedCaseInsensitiveContains(trimmed)
+                || $0.bundleIdentifier.localizedCaseInsensitiveContains(trimmed)
+        }
+    }
 
     var body: some View {
-        SectionCard(
-            title: "快速退出",
-            subtitle: "按下快捷键，把名单里的应用连同它们的全部子进程一起强制结束。"
-                + "受保护的系统进程会被跳过，不会因为按错键而失去界面或会话。",
-            symbol: "bolt.horizontal.circle",
-            accent: .red
-        ) {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 10) {
-                    StatusPill(text: shortcutStatusText, isActive: engine.isHotkeyLive)
-                    StatusPill(
-                        text: engine.targets.isEmpty ? "名单为空" : "名单 \(engine.targets.count) 个应用",
-                        isActive: !engine.targets.isEmpty
-                    )
-                    Spacer()
-                }
-
-                if let problem = engine.hotkeyProblem {
-                    Label(problem, systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
-
-                HStack(spacing: 10) {
-                    Button {
-                        Task { _ = await engine.run(dryRun: false, trigger: "界面按钮") }
-                    } label: {
-                        Label("立即退出全部", systemImage: "xmark.circle.fill")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.red)
-                    .disabled(engine.targets.isEmpty || engine.isRunning)
-
-                    Button {
-                        Task { _ = await engine.run(dryRun: true, trigger: "界面演练") }
-                    } label: {
-                        Label("演练一次", systemImage: "eye")
-                    }
-                    .disabled(engine.targets.isEmpty || engine.isRunning)
-
-                    Spacer()
-                }
-
-                Divider()
-
-                Toggle(isOn: $engine.isTriggerEnabled) {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("启用全局快捷键").font(.body)
-                        Text("关掉之后快捷键不再响应，名单与设置保留。")
-                            .font(.caption2).foregroundStyle(.secondary)
-                    }
-                }
-                .toggleStyle(.switch)
-                .controlSize(.small)
-
-                Toggle(isOn: $engine.requiresConfirmation) {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("执行前需要 Touch ID 确认").font(.body)
-                        Text("默认关闭：这是应急按钮，多一步确认就慢一拍。")
-                            .font(.caption2).foregroundStyle(.secondary)
-                    }
-                }
-                .toggleStyle(.switch)
-                .controlSize(.small)
-            }
-        }
-
-        SectionCard(title: "快捷键", subtitle: nil, symbol: "keyboard") {
-            HStack(spacing: 12) {
-                HotkeyRecorderField()
-                Spacer()
-            }
-        }
-
-        SectionCard(
-            title: "选定的应用",
-            subtitle: engine.targets.isEmpty
-                ? "还没有选定任何应用。按下快捷键或点「立即退出全部」时不会结束任何东西。"
-                : nil,
-            symbol: "app.dashed"
-        ) {
-            VStack(alignment: .leading, spacing: 12) {
-                if engine.targets.isEmpty {
-                    Text("名单为空")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                } else {
-                    ForEach(engine.targets) { target in
-                        HStack(spacing: 10) {
-                            Image(systemName: "app")
-                                .frame(width: 20)
-                                .foregroundStyle(.secondary)
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(target.name).font(.body.weight(.medium))
-                                Text(target.bundleIdentifier)
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer(minLength: 8)
-                            Tag(text: engine.isRunning(target) ? "运行中" : "未运行",
-                                color: engine.isRunning(target) ? .green : .secondary)
-                            Button(role: .destructive) {
-                                engine.remove(target)
-                            } label: {
-                                Image(systemName: "trash")
-                            }
-                            .buttonStyle(.borderless)
-                        }
-                        if target.id != engine.targets.last?.id {
-                            Divider()
-                        }
-                    }
-                }
-
-                Divider()
-
-                HStack(spacing: 10) {
-                    Button {
-                        showPicker = true
-                    } label: {
-                        Label("添加应用", systemImage: "plus")
-                    }
-                    .buttonStyle(.borderedProminent)
-
-                    if !engine.targets.isEmpty {
-                        Button(role: .destructive) {
-                            engine.removeAll()
-                        } label: {
-                            Label("清空名单", systemImage: "trash")
-                        }
-                    }
-
-                    Spacer()
-                }
+        VStack(alignment: .leading, spacing: DS.Space.lg) {
+            mainCard
+            hotkeyCard
+            appsCard
+            protectedCard
+            if let outcome = engine.lastOutcome {
+                outcomeCard(outcome)
             }
         }
         .sheet(isPresented: $showPicker) {
@@ -162,14 +54,215 @@ struct QuickQuitView: View {
                 onClose: { showPicker = false }
             )
         }
+    }
 
+    // MARK: - 主操作
+
+    private var mainCard: some View {
+        SectionCard(
+            title: "快速退出",
+            subtitle: "按下快捷键，把名单里的应用连同它们的全部子进程一起强制结束。"
+                + "受保护的系统进程会被跳过，不会因为按错键而失去界面或会话。",
+            symbol: "bolt.horizontal.circle",
+            accessory: AnyView(
+                StatusPill(
+                    text: shortcutStatusText,
+                    isActive: engine.isHotkeyLive,
+                    color: engine.isHotkeyLive ? DS.Tone.good : DS.Tone.idle
+                )
+            )
+        ) {
+            VStack(alignment: .leading, spacing: DS.Space.md) {
+                StatusPill(
+                    text: engine.targets.isEmpty ? "名单为空" : "名单 \(engine.targets.count) 个应用",
+                    isActive: !engine.targets.isEmpty,
+                    color: engine.targets.isEmpty ? DS.Tone.idle : DS.Tone.info
+                )
+
+                if let problem = engine.hotkeyProblem {
+                    Label(problem, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(DS.Tone.caution)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Button {
+                    Task { _ = await engine.run(dryRun: false, trigger: "界面按钮") }
+                } label: {
+                    Label("立即退出全部", systemImage: "xmark.circle.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+                .disabled(engine.targets.isEmpty || engine.isRunning)
+
+                Text("会一并结束名单里这些应用的**全部子进程**（受保护的系统进程除外）。先点「演练一次」看看会动哪些。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: DS.Space.sm) {
+                    Button {
+                        Task { _ = await engine.run(dryRun: true, trigger: "界面演练") }
+                    } label: {
+                        Label("演练一次", systemImage: "eye")
+                    }
+                    .disabled(engine.targets.isEmpty || engine.isRunning)
+
+                    Spacer(minLength: DS.Space.sm)
+                }
+
+                Divider()
+
+                Toggle(isOn: $engine.isTriggerEnabled) {
+                    VStack(alignment: .leading, spacing: DS.Space.xxs) {
+                        Text("启用全局快捷键").font(.body)
+                        Text("关掉之后快捷键不再响应，名单与设置保留。")
+                            .font(.caption2).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .toggleStyle(.switch)
+                .controlSize(.small)
+
+                Toggle(isOn: $engine.requiresConfirmation) {
+                    VStack(alignment: .leading, spacing: DS.Space.xxs) {
+                        Text("执行前需要 Touch ID 确认").font(.body)
+                        Text("默认关闭：这是应急按钮，多一步确认就慢一拍。")
+                            .font(.caption2).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .toggleStyle(.switch)
+                .controlSize(.small)
+            }
+        }
+    }
+
+    // MARK: - 快捷键
+
+    private var hotkeyCard: some View {
+        SectionCard(title: "快捷键", subtitle: nil, symbol: "keyboard") {
+            HStack(spacing: DS.Space.md) {
+                HotkeyRecorderField()
+                Spacer(minLength: DS.Space.sm)
+            }
+        }
+    }
+
+    // MARK: - 应用名单
+
+    private var appsCard: some View {
+        SectionCard(
+            title: "选定的应用",
+            subtitle: engine.targets.isEmpty
+                ? "还没有选定任何应用。按下快捷键或点「立即退出全部」时不会结束任何东西。"
+                : "勾选若干行可以只移除选中的那几条。",
+            symbol: "app.dashed",
+            accessory: AnyView(
+                Button {
+                    showPicker = true
+                } label: {
+                    Label("添加应用", systemImage: "plus")
+                }
+            )
+        ) {
+            VStack(alignment: .leading, spacing: DS.Space.md) {
+                if engine.targets.isEmpty {
+                    EmptyStateView(
+                        title: "名单为空",
+                        message: "把想一键关掉的应用加进来，按下快捷键就会连同它们的子进程一起结束。",
+                        systemImage: "app.dashed",
+                        actionTitle: "添加应用"
+                    ) {
+                        showPicker = true
+                    }
+                } else {
+                    TextField("搜索应用名称或 Bundle ID", text: $query)
+                        .textFieldStyle(.roundedBorder)
+
+                    if filteredTargets.isEmpty {
+                        EmptyStateView(
+                            title: "没有匹配的应用",
+                            message: "换个关键词再搜一次。",
+                            systemImage: "magnifyingglass"
+                        )
+                    } else {
+                        Table(filteredTargets, selection: $selection) {
+                            TableColumn("应用") { target in
+                                Text(target.name)
+                                    .font(.body.weight(.medium))
+                                    .lineLimit(1)
+                            }
+                            TableColumn("Bundle ID") { target in
+                                Text(target.bundleIdentifier)
+                                    .font(.caption2.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+                            TableColumn("状态") { target in
+                                Tag(
+                                    text: engine.isRunning(target) ? "运行中" : "未运行",
+                                    color: engine.isRunning(target) ? DS.Tone.good : DS.Tone.idle
+                                )
+                            }
+                            TableColumn("") { target in
+                                Button(role: .destructive) {
+                                    engine.remove(target)
+                                } label: {
+                                    Image(systemName: "trash")
+                                }
+                                .buttonStyle(.borderless)
+                                .help("从名单里移除这个应用")
+                            }
+                            .width(DS.Space.xxl)
+                        }
+                        // Table 需要一个有界的高度；这里用令牌拼一个约 250pt 的区域。
+                        .frame(height: DS.Space.xxl * 9)
+                    }
+
+                    HStack(spacing: DS.Space.sm) {
+                        Button {
+                            showPicker = true
+                        } label: {
+                            Label("添加应用", systemImage: "plus")
+                        }
+
+                        if !selection.isEmpty {
+                            Button(role: .destructive) {
+                                for target in engine.targets where selection.contains(target.id) {
+                                    engine.remove(target)
+                                }
+                                selection.removeAll()
+                            } label: {
+                                Label("移除所选", systemImage: "trash")
+                            }
+                        }
+
+                        if !engine.targets.isEmpty {
+                            Button(role: .destructive) {
+                                engine.removeAll()
+                                selection.removeAll()
+                            } label: {
+                                Label("清空名单", systemImage: "trash")
+                            }
+                        }
+
+                        Spacer(minLength: DS.Space.sm)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - 不会结束的进程
+
+    private var protectedCard: some View {
         SectionCard(
             title: "不会结束的进程",
             subtitle: "以下进程（以及位于它们子树内的进程）永远不会被结束，名单是硬编码的，任何开关都绕不过。",
-            symbol: "hand.raised",
-            accent: .orange
+            symbol: "hand.raised"
         ) {
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: DS.Space.xs) {
                 ForEach(QuickQuitEngine.protectedDisplayList, id: \.self) { item in
                     Text("· \(item)")
                         .font(.caption)
@@ -178,25 +271,27 @@ struct QuickQuitView: View {
                 Text("另外：pid 1（launchd）、内核任务、以及 Deep Sleep 自己一律拒绝。")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-                    .padding(.top, 3)
+                    .padding(.top, DS.Space.xxs)
             }
         }
+    }
 
-        if let outcome = engine.lastOutcome {
-            SectionCard(
-                title: outcome.dryRun ? "最近一次演练" : "最近一次结果",
-                subtitle: "\(Self.formatter.string(from: outcome.date))，触发方式：\(outcome.usedHelper ? "特权助手" : "本进程权限")",
-                symbol: "list.bullet.clipboard",
-                accent: outcome.report.isClean ? .green : .orange
-            ) {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(outcome.summary).font(.callout.weight(.medium))
-                    ForEach(Array(outcome.details.enumerated()), id: \.offset) { _, line in
-                        Text("· \(line)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+    // MARK: - 最近一次结果
+
+    private func outcomeCard(_ outcome: QuickQuitOutcome) -> some View {
+        SectionCard(
+            title: outcome.dryRun ? "最近一次演练" : "最近一次结果",
+            subtitle: "\(Self.formatter.string(from: outcome.date))，触发方式：\(outcome.usedHelper ? "特权助手" : "本进程权限")",
+            symbol: "list.bullet.clipboard",
+            accent: outcome.report.isClean ? DS.Tone.good : DS.Tone.caution
+        ) {
+            VStack(alignment: .leading, spacing: DS.Space.xs) {
+                Text(outcome.summary).font(.callout.weight(.medium))
+                ForEach(Array(outcome.details.enumerated()), id: \.offset) { _, line in
+                    Text("· \(line)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
@@ -228,13 +323,13 @@ struct HotkeyRecorderField: View {
     @State private var monitor: Any?
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: DS.Space.md) {
             Text(engine.hotkey.displayText)
                 .font(.system(size: 15, weight: .semibold, design: .rounded))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
+                .padding(.horizontal, DS.Space.md)
+                .padding(.vertical, DS.Space.sm)
                 .background(Color.secondary.opacity(0.12),
-                            in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            in: RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous))
 
             Button {
                 isRecording ? stopRecording() : startRecording()
@@ -306,7 +401,7 @@ struct QuickQuitAppPicker: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: DS.Space.md) {
             Text("选择要加入快速退出名单的应用")
                 .font(.title3.weight(.semibold))
             Text("列表包含正在运行的应用与常见安装位置里的应用；受保护的系统应用不在其中。")
@@ -317,16 +412,16 @@ struct QuickQuitAppPicker: View {
                 .textFieldStyle(.roundedBorder)
 
             List(filtered) { candidate in
-                HStack(spacing: 10) {
-                    VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: DS.Space.sm) {
+                    VStack(alignment: .leading, spacing: DS.Space.xxs) {
                         Text(candidate.name).font(.body)
                         Text(candidate.bundleIdentifier)
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
-                    Spacer(minLength: 8)
+                    Spacer(minLength: DS.Space.sm)
                     if candidate.isRunning {
-                        Tag(text: "运行中", color: .green)
+                        Tag(text: "运行中", color: DS.Tone.good)
                     }
                     Button("添加") { onPick(candidate) }
                         .buttonStyle(.bordered)
@@ -344,7 +439,7 @@ struct QuickQuitAppPicker: View {
                     .keyboardShortcut(.defaultAction)
             }
         }
-        .padding(22)
+        .padding(DS.Space.xl)
         .frame(width: 520, height: 470)
     }
 }

@@ -17,6 +17,11 @@
 //    - 用 SectionCard 分块，页面根视图 .pageLayout()；
 //    - 错误用内联 message（lastError / lastNotice），不用弹窗打断。
 //
+//  2026-11 界面换新：
+//    - 间距、圆角全部走 DS.Space / DS.Radius，不再有字面量。
+//    - 文件列表压成紧凑行；编辑区用原生 TextEditor。
+//    - 「保存」按钮直接写明会写哪个文件（~/.zshrc），不再让人猜。
+//
 
 import SwiftUI
 
@@ -35,18 +40,26 @@ struct ShellConfigView: View {
     @State private var isSaving = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: DS.Space.lg) {
             SectionCard(
                 title: "Shell 启动文件",
                 subtitle: listSubtitle,
                 symbol: "terminal.fill",
                 accent: .accentColor
             ) {
-                HStack(alignment: .top, spacing: 14) {
-                    fileList
-                        .frame(width: 236, alignment: .leading)
-                    Divider()
-                    editor
+                if files.isEmpty {
+                    EmptyStateView(
+                        title: "没有可编辑的启动文件",
+                        message: "候选清单是空的，稍后重进这一页再试。",
+                        systemImage: "doc.text"
+                    )
+                } else {
+                    HStack(alignment: .top, spacing: DS.Space.md) {
+                        fileList
+                            .frame(width: 220, alignment: .leading)
+                        Divider()
+                        editor
+                    }
                 }
             }
 
@@ -55,7 +68,7 @@ struct ShellConfigView: View {
                 subtitle: nil,
                 symbol: "info.circle"
             ) {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: DS.Space.sm) {
                     BulletLine("zsh：.zshenv → .zprofile → .zshrc → .zlogin。改完新开终端窗口才生效。")
                     BulletLine("bash：.bash_profile → .bashrc。本机 .bash_profile 里通常自己 source 了 .bashrc。")
                     BulletLine(".profile 是 POSIX sh 的老写法，语法检查按 bash 走。")
@@ -76,8 +89,12 @@ struct ShellConfigView: View {
 
     // MARK: - 左侧文件列表
 
+    /// 紧凑行列表：一行一个文件名 + 一行元信息。
+    ///
+    /// 不用 List：文件只有 7 个候选，行列表更省地方，也不会在卡片里
+    /// 再套一层系统侧边栏背景（卡片是页面上唯一的容器）。
     private var fileList: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: DS.Space.xxs) {
             ForEach(files) { file in
                 fileRow(file)
             }
@@ -90,40 +107,32 @@ struct ShellConfigView: View {
         return Button {
             select(file)
         } label: {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(file.name)
-                        .font(.system(.body, design: .monospaced).weight(.medium))
-                    if !file.exists {
-                        Tag(text: "不存在", color: .secondary)
-                    }
-                    Spacer(minLength: 0)
+            HStack(alignment: .firstTextBaseline, spacing: DS.Space.sm) {
+                Text(file.name)
+                    .font(.system(.body, design: .monospaced).weight(.medium))
+                    .lineLimit(1)
+                if !file.exists {
+                    Tag(text: "不存在", color: DS.Tone.idle)
                 }
-                if file.exists {
-                    Text(fileMetaText(file))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                } else {
-                    Text("保存后新建")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                Spacer(minLength: DS.Space.xs)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.vertical, 6)
-            .padding(.horizontal, 9)
+            .padding(.vertical, DS.Space.xs)
+            .padding(.horizontal, DS.Space.sm)
             .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(isSelected ? Color.accentColor.opacity(0.16) : Color.clear)
+                RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous)
+                    .fill(isSelected ? DS.Tone.info.opacity(0.14) : Color.clear)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(isSelected ? Color.accentColor.opacity(0.5) : Color.clear, lineWidth: 1)
+                RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous)
+                    .strokeBorder(isSelected ? DS.Tone.info.opacity(0.45) : Color.clear, lineWidth: 1)
             )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .help(file.exists ? file.url.path : "\(file.url.path)（保存后新建）")
+        .accessibilityLabel(file.name)
+        .accessibilityValue(isSelected ? "已选中" : (file.exists ? "已存在" : "不存在"))
     }
 
     private func fileMetaText(_ file: ShellConfigFile) -> String {
@@ -136,40 +145,75 @@ struct ShellConfigView: View {
 
     @ViewBuilder
     private var editor: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Text(selectedName)
-                    .font(.system(.headline, design: .monospaced))
-                if let file = selectedFile {
+        if let file = selectedFile {
+            VStack(alignment: .leading, spacing: DS.Space.md) {
+                HStack(alignment: .firstTextBaseline, spacing: DS.Space.sm) {
+                    Text(selectedName)
+                        .font(.system(.headline, design: .monospaced))
                     Tag(text: file.shell.displayName, color: .purple)
                     if !file.exists {
-                        Tag(text: "将新建", color: .orange)
+                        Tag(text: "将新建", color: DS.Tone.caution)
+                    }
+                    Spacer(minLength: DS.Space.sm)
+                    if !draft.isEmpty || !original.isEmpty {
+                        Text("\(draft.count) 字符 · \(lineCount) 行")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
-                Spacer(minLength: 8)
-                if !draft.isEmpty || !original.isEmpty {
-                    Text("\(draft.count) 字符 · \(lineCount) 行")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+
+                // 文件自身的元信息：大小与最后修改时间。
+                Text(file.exists
+                     ? "\(fileMetaText(file))"
+                     : "文件还不存在，保存时新建。")
+                    .caption2()
+
+                TextEditor(text: $draft)
+                    .font(.system(.body, design: .monospaced))
+                    .frame(minHeight: 320)
+                    .scrollContentBackground(.hidden)
+                    .padding(DS.Space.sm)
+                    .insetPanel(cornerRadius: DS.Radius.control)
+                    .disabled(isSaving)
+
+                saveBar(file)
+
+                if let syntaxWarning {
+                    syntaxWarningPanel(syntaxWarning)
+                }
+
+                if let lastError {
+                    messageRow(lastError, symbol: "exclamationmark.triangle.fill", tone: DS.Tone.critical)
+                }
+                if let lastNotice {
+                    messageRow(lastNotice, symbol: "checkmark.circle.fill", tone: DS.Tone.good)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            EmptyStateView(
+                title: "未选择文件",
+                message: "从左边选一个启动文件开始改。",
+                systemImage: "doc.text"
+            )
+        }
+    }
 
-            TextEditor(text: $draft)
-                .font(.system(.body, design: .monospaced))
-                .frame(minHeight: 300)
-                .border(Color.primary.opacity(0.12), width: 1)
-                .disabled(isSaving)
-
-            HStack(spacing: 8) {
+    /// 保存区。按钮标题直接写明会写哪个文件 —— 保存的是用户家目录里的
+    /// 真实启动文件，藏起来不说是拿用户文件冒险。
+    private func saveBar(_ file: ShellConfigFile) -> some View {
+        VStack(alignment: .leading, spacing: DS.Space.sm) {
+            HStack(spacing: DS.Space.sm) {
                 Button {
                     save()
                 } label: {
                     if isSaving {
                         ProgressView().controlSize(.small)
                     } else {
-                        Label("保存", systemImage: "square.and.arrow.down")
+                        Label("保存到 ~/\(file.name)", systemImage: "square.and.arrow.down")
                     }
                 }
+                .buttonStyle(.borderedProminent)
                 .controlSize(.regular)
                 .keyboardShortcut("s", modifiers: .command)
                 .disabled(!canSave || isSaving)
@@ -190,41 +234,40 @@ struct ShellConfigView: View {
                 .controlSize(.small)
                 .disabled(isSaving)
 
-                Spacer(minLength: 0)
+                Spacer(minLength: DS.Space.sm)
             }
 
-            if let syntaxWarning {
-                syntaxWarningPanel(syntaxWarning)
-            }
-
-            if let lastError {
-                Text(lastError)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if let lastNotice {
-                Text(lastNotice)
-                    .font(.caption)
-                    .foregroundStyle(.green)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            Text(file.exists
+                 ? "保存会写入家目录下的 \(file.name)，并在同目录留一份 \(file.name).deepsleep.bak。"
+                 : "保存会新建家目录下的 \(file.name)，并在同目录留一份 \(file.name).deepsleep.bak。")
+                .caption2()
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// 内联消息。颜色 + 图标 + 文字三重编码，不靠颜色单独区分。
+    private func messageRow(_ text: String, symbol: String, tone: Color) -> some View {
+        HStack(alignment: .top, spacing: DS.Space.sm) {
+            Image(systemName: symbol)
+                .foregroundStyle(tone)
+                .font(.system(size: 11, weight: .semibold))
+            Text(text)
+                .font(.caption)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
     }
 
     /// 语法检查不通过的提示。带「仍然保存」——用户有权决定。
     private func syntaxWarningPanel(_ message: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 8) {
+        VStack(alignment: .leading, spacing: DS.Space.sm) {
+            HStack(alignment: .top, spacing: DS.Space.sm) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(DS.Tone.caution)
                     .font(.system(size: 12, weight: .semibold))
-                    .padding(.top, 2)
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: DS.Space.xs) {
                     Text("语法检查没通过")
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(DS.Tone.caution)
                     Text(message)
                         .font(.system(.caption, design: .monospaced))
                         .foregroundStyle(.secondary)
@@ -233,7 +276,7 @@ struct ShellConfigView: View {
                 }
                 Spacer(minLength: 0)
             }
-            HStack(spacing: 8) {
+            HStack(spacing: DS.Space.sm) {
                 Button("仍然保存") {
                     performSave()
                 }
@@ -244,11 +287,12 @@ struct ShellConfigView: View {
                 .controlSize(.small)
             }
         }
-        .padding(10)
-        .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .padding(DS.Space.md)
+        .background(DS.Tone.caution.opacity(0.10),
+                    in: RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(Color.orange.opacity(0.35), lineWidth: 1)
+            RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous)
+                .strokeBorder(DS.Tone.caution.opacity(0.35), lineWidth: 1)
         )
     }
 

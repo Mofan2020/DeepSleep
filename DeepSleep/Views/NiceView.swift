@@ -56,6 +56,17 @@
 //      v1.7.1 起：钳制只发生在 refresh() / query 变化 / pageSize 变化
 //      三个明确的时机，computed property 退化成纯计算。
 //
+//  2026-11 界面换新（本次）：
+//
+//    - 进程列表从「手搓 VStack + LazyVStack」换成原生 `Table`：
+//      列 = 进程名 / PID / nice 值 / 用户，列头可点排序。
+//      `Table` 内部是 NSTableView，自带虚拟化 —— 分页仍保留（用户可见的
+//      「每页 N 条」设置在 MonitorConfig 里持久化），但滚动不再由视图树扛。
+//    - nice 值直接用原生 `Stepper` 调整（每次步进都走原来的 applyNice，
+//      极端值仍走二次确认）。原来只有弹窗里有 Stepper。
+//    - 助手未就绪时：操作列整列置灰，页面顶部一行文字说明原因
+//      （页面能进，但需要助手的按钮不可用 —— 既有约定）。
+//
 //  设计原则（与 ProcessInventory / ProcessGuard 的边界一致）：
 //    - 不做"通用任务管理器"：只展示改 nice 这件事必需的字段。
 //    - 系统进程在表里显示但**不让选**：保护名单 + 系统路径前缀两层过滤，
@@ -65,6 +76,7 @@
 //
 
 import SwiftUI
+import Darwin
 
 /// 后台 actor：跑 `ProcessInventory.snapshot()` 和 nice 读取，
 /// 不污染主线程。
@@ -91,6 +103,12 @@ private actor NiceBackgroundActor {
 }
 
 struct NiceView: View {
+
+    /// 进程表的固定高度。
+    ///
+    /// 页面本身在 ScrollView 里，Table 必须自己占一个确定的高度，
+    /// 否则它会按内容撑开、把外层滚动条顶没。
+    private static let processTableHeight: CGFloat = 420
 
     @EnvironmentObject private var controller: SleepController
 
@@ -119,6 +137,22 @@ struct NiceView: View {
     /// 重置到 1，computed property 内部不再写状态。
     @State private var currentPage: Int = 1
 
+    /// 原生 Table 的排序状态（点列头排序）。
+    @State private var sortOrder: [KeyPathComparator<Entry>] = []
+
+    /// Stepper 调整中的临时值。等助手回报成功后才落到 `Entry.nice`，
+    /// 失败或取消时回落到真实值 —— 避免界面显示一个没生效的 nice。
+    @State private var draftNice: [pid_t: Int] = [:]
+
+    /// 已经拉过 bundle id 的 pid。防止同一条被反复解析 Info.plist。
+    @State private var loadedDetailPids: Set<pid_t> = []
+
+    /// 每个 pid 的写请求序号。
+    ///
+    /// Stepper 连点时会有多个写请求同时在飞；只有序号最新的那个结果才允许
+    /// 写回界面，避免「先点的后到」把 nice 显示成旧值。
+    @State private var niceApplyToken: [pid_t: Int] = [:]
+
     /// 简化版 Entry：默认视图装必要字段，路径 / bundle id 按需懒加载
     struct Entry: Identifiable, Equatable {
         let pid: pid_t
@@ -130,19 +164,42 @@ struct NiceView: View {
         /// bundlePath 解析 Info.plist 昂贵，仍按需在选中时填。
         var executablePath: String?
         var bundleIdentifier: String?
+        /// 属主 uid。快照自带，不额外查系统。
+        let uid: uid_t
+        /// 属主显示名。刷新时按 uid 算好存进来 —— 不做成 computed property，
+        /// 否则排序时每比较一次就要问一次系统（几百行 × log n 次）。
+        let ownerName: String
         var id: pid_t { pid }
+
+        /// 排序用：读不到 nice 时排最后（不参与正常区间）。
+        var niceSortKey: Int { nice ?? Int.max }
+
+        /// 操作列的排序键。
+        ///
+        /// 单独一个 keypath（哪怕值就是 pid），是为了不和 PID 列共用同一个
+        /// comparator —— 共用会让两列同时亮起排序箭头。
+        var actionSortKey: Int { Int(pid) }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: DS.Space.lg) {
             SectionCard(
                 title: "进程优先级（nice）",
                 subtitle: helperSubtitle,
                 symbol: "gauge.with.dots.needle.bottom.50percent",
                 accent: .accentColor
             ) {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: DS.Space.md) {
+                    // 助手未就绪 → 页面能进，但改 nice 的操作不可用。
+                    // 原因写在一行里，不让用户猜按钮为什么是灰的。
+                    if !controller.helperState.isReady {
+                        Label(helperUnavailableReason, systemImage: "lock.shield")
+                            .font(.callout)
+                            .foregroundStyle(DS.Tone.caution)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    HStack(spacing: DS.Space.sm) {
                         TextField("按名字或路径过滤", text: $query)
                             .textFieldStyle(.roundedBorder)
                             .onChange(of: query) { _, _ in
@@ -174,7 +231,10 @@ struct NiceView: View {
                     )
 
                     if let err = lastError {
-                        Text(err).font(.caption).foregroundStyle(.red)
+                        Text(err)
+                            .font(.caption)
+                            .foregroundStyle(DS.Tone.critical)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
@@ -186,40 +246,52 @@ struct NiceView: View {
             ) {
                 let paged = pagedEntries
                 if paged.isEmpty {
-                    Text(emptyMessage)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.vertical, 6)
+                    EmptyStateView(
+                        title: emptyTitle,
+                        message: emptyMessage,
+                        systemImage: "magnifyingglass",
+                        actionTitle: "刷新进程列表",
+                        action: { Task { await refresh() } }
+                    )
                 } else {
-                    ScrollView {
-                        LazyVStack(spacing: 0) {
-                            ForEach(paged) { entry in
-                                ProcessRow(
-                                    entry: entry,
-                                    isSelected: selectedPid == entry.pid,
-                                    onSelect: { Task { await ensureDetail(of: entry.pid) } },
-                                    onReset: { Task { await applyNice(pid: entry.pid, value: NiceLevel.defaultValue) } },
-                                    onAdjust: {
-                                        pendingPid = entry.pid
-                                        pendingInitialValue = entry.nice ?? NiceLevel.defaultValue
-                                        pendingLabel = entry.name
-                                    }
-                                )
-                                if entry != paged.last { Divider() }
+                    VStack(alignment: .leading, spacing: DS.Space.md) {
+                        Table(paged, selection: $selectedPid, sortOrder: $sortOrder) {
+                            TableColumn("进程名", value: \.name) { entry in
+                                processCell(entry)
+                            }
+                            TableColumn("PID", value: \.pid) { entry in
+                                Text("\(entry.pid)")
+                                    .monospacedDigit()
+                            }
+                            TableColumn("nice", value: \.niceSortKey) { entry in
+                                niceCell(entry)
+                            }
+                            TableColumn("用户", value: \.ownerName) { entry in
+                                Text(entry.ownerName)
+                                    .lineLimit(1)
+                            }
+                            // 操作列本身不排序，按 PID 排（与应用内顺序一致）。
+                            TableColumn("操作", value: \.actionSortKey) { entry in
+                                actionCell(entry)
                             }
                         }
-                    }
-                    .frame(maxHeight: 460)
-
-                    PageBar(
-                        pageSize: $pageSize,
-                        currentPage: $currentPage,
-                        totalCount: filteredEntries.count,
-                        onPageSizeChange: persistPageSize,
-                        onPageChange: { newPage in
-                            if newPage != currentPage { currentPage = newPage }
+                        .frame(height: Self.processTableHeight)
+                        .onChange(of: selectedPid) { _, newPid in
+                            // 选中行 → 按需拉 bundle id（原来是在行内点击时触发）。
+                            guard let newPid else { return }
+                            Task { await ensureDetail(of: newPid) }
                         }
-                    )
+
+                        PageBar(
+                            pageSize: $pageSize,
+                            currentPage: $currentPage,
+                            totalCount: filteredEntries.count,
+                            onPageSizeChange: persistPageSize,
+                            onPageChange: { newPage in
+                                if newPage != currentPage { currentPage = newPage }
+                            }
+                        )
+                    }
                 }
             }
 
@@ -228,7 +300,7 @@ struct NiceView: View {
                 subtitle: nil,
                 symbol: "info.circle"
             ) {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: DS.Space.sm) {
                     BulletLine("-20 最高优先级（抢 CPU 资源）；+19 最低优先级（让出 CPU）。")
                     BulletLine("正值（>0）也必须走 root —— POSIX 的硬约束，应用层无特权不能 setpriority。")
                     BulletLine("改错值会让系统变卡：负值会跟系统进程抢 CPU。系统进程一律被 Deep Sleep 拒绝。")
@@ -270,15 +342,99 @@ struct NiceView: View {
                 primaryButton: .destructive(Text("仍然继续"), action: {
                     let pid = prompt.pid
                     let v = prompt.value
+                    let token = prompt.token
                     pendingExtreme = nil
-                    Task { await reallyApplyNice(pid: pid, value: v) }
+                    Task { await reallyApplyNice(pid: pid, value: v, token: token) }
                 }),
                 secondaryButton: .cancel(Text("取消"), action: {
+                    let pid = prompt.pid
                     pendingExtreme = nil
+                    // 取消 → 临时值回落到真实值，别让界面停在没生效的 nice 上。
+                    draftNice[pid] = nil
                 })
             )
         }
     }
+
+    // MARK: - 表格单元
+
+    /// 进程名列：名字 + 路径副标题。
+    ///
+    /// 名字允许多行撑开（长名字不再被截掉），路径单行 + 中间省略。
+    @ViewBuilder
+    private func processCell(_ entry: Entry) -> some View {
+        VStack(alignment: .leading, spacing: DS.Space.xxs) {
+            HStack(alignment: .firstTextBaseline, spacing: DS.Space.xs) {
+                Text(entry.name)
+                    .font(.system(.body, design: .monospaced))
+                    .lineLimit(nil)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                if entry.systemProcess {
+                    Tag(text: "系统", color: DS.Tone.idle)
+                }
+            }
+            Text(subtitle(for: entry))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+            // bundle id 只在选中后展开（解析 Info.plist 昂贵）。
+            if let bundle = entry.bundleIdentifier, !bundle.isEmpty {
+                Text("bundle: \(bundle)")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+            }
+        }
+    }
+
+    /// nice 列：数值 + 语义词（颜色 + 文字双编码）+ 原生 Stepper。
+    @ViewBuilder
+    private func niceCell(_ entry: Entry) -> some View {
+        HStack(spacing: DS.Space.xs) {
+            Text(niceDisplay(entry))
+                .font(.system(.body, design: .monospaced))
+                .foregroundStyle(niceColor(entry))
+            Text(niceStatus(entry))
+                .font(.caption2)
+                .foregroundStyle(niceColor(entry))
+                .lineLimit(1)
+            Stepper("", value: niceStepperBinding(entry), in: NiceLevel.minValue...NiceLevel.maxValue)
+                .labelsHidden()
+                .controlSize(.small)
+                .accessibilityLabel("调整 \(entry.name) 的 nice")
+                .disabled(!canAdjust(entry))
+        }
+    }
+
+    /// 操作列：恢复默认 + 打开精确调整弹窗。
+    ///
+    /// 助手未就绪或系统进程时整列置灰。
+    @ViewBuilder
+    private func actionCell(_ entry: Entry) -> some View {
+        HStack(spacing: DS.Space.xs) {
+            Button("默认") {
+                Task { await applyNice(pid: entry.pid, value: NiceLevel.defaultValue, label: entry.name) }
+            }
+            .controlSize(.small)
+            .disabled(!canAdjust(entry))
+            Button("调整…") {
+                pendingPid = entry.pid
+                pendingInitialValue = entry.nice ?? NiceLevel.defaultValue
+                pendingLabel = entry.name
+            }
+            .controlSize(.small)
+            .disabled(!canAdjust(entry))
+        }
+        .opacity(canAdjust(entry) ? 1 : 0.45)
+    }
+
+    // MARK: - 派生
 
     /// .sheet 用 binding。`pendingPid != nil` 时弹起；onDismiss 把 pendingPid 清空。
     private var niceSheetBinding: Binding<Bool> {
@@ -286,6 +442,11 @@ struct NiceView: View {
             get: { pendingPid != nil },
             set: { if !$0 { pendingPid = nil } }
         )
+    }
+
+    /// 助手没就绪时的一行说明（不是错误，是「还没开权限」）。
+    private var helperUnavailableReason: String {
+        "助手未就绪（\(controller.helperState.title)）：可以查看，改 nice 需要先在「完全控制」页启用。"
     }
 
     private var helperSubtitle: String {
@@ -314,11 +475,17 @@ struct NiceView: View {
         return "本页 \(first)–\(last)，共 \(filteredEntries.count) 个匹配。"
     }
 
+    private var emptyTitle: String {
+        query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "没有可调整的进程"
+            : "没有匹配的进程"
+    }
+
     private var emptyMessage: String {
         if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return "没有可调整的进程。"
+            return "系统进程与保护名单里的应用已被过滤掉，点「刷新」重新拉一次进程列表。"
         }
-        return "没有匹配「\(query)」的进程。"
+        return "没有匹配「\(query)」的进程，换个关键字试试。"
     }
 
     /// 过滤后的全量条目（不分页）。纯计算，不写状态。
@@ -331,14 +498,24 @@ struct NiceView: View {
     /// v1.7.1 起：钳制 currentPage 的逻辑移到了 refresh / query.onChange /
     /// pageSize.onChange（详见 PageBar 的 binding setter）。这里只读，
     /// 避免每次 body 求值都触发 setter。
+    ///
+    /// 2026-11 起：排序也在这一层做 —— 先按 Table 的排序状态排全量，
+    /// 再切出当前页，这样点列头排序是全局排序而不是页内排序。
     private var pagedEntries: [Entry] {
-        let filtered = filteredEntries
-        guard !filtered.isEmpty else { return [] }
-        let totalPages = max(1, (filtered.count + pageSize - 1) / pageSize)
+        let sorted = sortedEntries
+        guard !sorted.isEmpty else { return [] }
+        let totalPages = max(1, (sorted.count + pageSize - 1) / pageSize)
         let page = max(1, min(currentPage, totalPages))
         let start = (page - 1) * pageSize
-        let end = min(start + pageSize, filtered.count)
-        return Array(filtered[start..<end])
+        let end = min(start + pageSize, sorted.count)
+        return Array(sorted[start..<end])
+    }
+
+    /// 按 Table 的列头排序状态排全量。纯计算。
+    private var sortedEntries: [Entry] {
+        let base = filteredEntries
+        guard let comparator = sortOrder.first else { return base }
+        return base.sorted { comparator.compare($0, $1) == .orderedAscending }
     }
 
     private var totalPages: Int {
@@ -353,6 +530,63 @@ struct NiceView: View {
                 || ($0.executablePath?.lowercased().contains(q) ?? false)
                 || ($0.bundleIdentifier?.lowercased().contains(q) ?? false)
         }
+    }
+
+    /// 这个进程能不能改 nice。
+    ///
+    /// 两个条件：助手就绪（POSIX setpriority 需要 root）+ 不是系统进程。
+    private func canAdjust(_ entry: Entry) -> Bool {
+        controller.helperState.isReady && !entry.systemProcess
+    }
+
+    /// Stepper 的绑定：步进即提交（走原来的 applyNice 路径）。
+    ///
+    /// 临时值先落在 `draftNice`，助手回报成功后才写回 `Entry.nice`；
+    /// 失败或用户取消 → 回落显示真实值。
+    private func niceStepperBinding(_ entry: Entry) -> Binding<Int> {
+        Binding(
+            get: { draftNice[entry.pid] ?? entry.nice ?? NiceLevel.defaultValue },
+            set: { newValue in
+                draftNice[entry.pid] = newValue
+                let pid = entry.pid
+                let label = entry.name
+                // 连点 Stepper 时多个请求会同时在飞，用序号保证「最后一次点击赢」。
+                let token = (niceApplyToken[pid] ?? 0) + 1
+                niceApplyToken[pid] = token
+                Task {
+                    await applyNice(pid: pid, value: newValue, label: label, token: token)
+                }
+            }
+        )
+    }
+
+    private func subtitle(for entry: Entry) -> String {
+        if let path = entry.executablePath, !path.isEmpty {
+            return path
+        }
+        return "pid \(entry.pid)"
+    }
+
+    private func niceDisplay(_ entry: Entry) -> String {
+        guard let n = entry.nice else { return "—" }
+        return NiceLevel.format(n)
+    }
+
+    /// nice 的语义词。状态永远「颜色 + 文字」双编码，不能只靠颜色。
+    private func niceStatus(_ entry: Entry) -> String {
+        guard let n = entry.nice else { return "未知" }
+        switch n {
+        case ..<0:  return "抢 CPU"
+        case 0:     return "默认"
+        default:    return "让出 CPU"
+        }
+    }
+
+    private func niceColor(_ entry: Entry) -> Color {
+        guard let n = entry.nice else { return DS.Tone.idle }
+        if n < 0 { return DS.Tone.caution }
+        if n > 0 { return DS.Tone.info }
+        return .primary
     }
 
     /// 把"每页进程数"的变更持久化到 MonitorConfig。
@@ -381,8 +615,18 @@ struct NiceView: View {
 
         var mapped: [Entry] = []
         mapped.reserveCapacity(snapshot.count)
+        // 属主名按 uid 去重后算一次：几百个进程通常只有一两个 uid，
+        // 逐个查用户名是白费力气（排序时还要反复用）。
+        var ownerNames: [uid_t: String] = [:]
         for p in snapshot {
             let reason = ProcessGuard.niceRefusalReason(for: p)
+            let owner: String
+            if let cached = ownerNames[p.uid] {
+                owner = cached
+            } else {
+                owner = NiceView.ownerName(for: p.uid)
+                ownerNames[p.uid] = owner
+            }
             mapped.append(Entry(
                 pid: p.pid,
                 name: p.name,
@@ -390,7 +634,9 @@ struct NiceView: View {
                 systemProcess: reason != nil,
                 systemReason: reason,
                 executablePath: p.executablePath.isEmpty ? nil : p.executablePath,
-                bundleIdentifier: nil
+                bundleIdentifier: nil,
+                uid: p.uid,
+                ownerName: owner
             ))
         }
 
@@ -402,30 +648,48 @@ struct NiceView: View {
         }
         // 拉一次新数据回到首页 —— 旧页码在新数据下很可能越界。
         currentPage = 1
+        // 旧进程可能已经消失，临时值与已加载的详情一并清掉。
+        draftNice = [:]
+        loadedDetailPids = []
+    }
+
+    /// 属主的显示名。root / 当前用户给名字，其余给 uid。
+    ///
+    /// 只在刷新时按 uid 去重后调用，不在排序路径里反复问系统。
+    private static func ownerName(for uid: uid_t) -> String {
+        if uid == 0 { return "root" }
+        if uid == getuid() { return NSUserName() }
+        return "uid \(uid)"
     }
 
     /// 选中某行 → 懒加载它的 bundle id。
-    /// executablePath 已经从 snapshot 自带，这里只在没填过时才补；
+    ///
+    /// executablePath 已经从 snapshot 自带，这里直接复用；
     /// bundleIdentifier 仍然按需拉（解析 Info.plist 昂贵）。
+    ///
+    /// 2026-11 起不再重新跑一次 `ProcessInventory.snapshot()`：
+    /// 原来为了让 executablePath 最新而重扫全表（4-5 秒），但路径在
+    /// 刷新时就已经拿到了，这里只需要路径本身。同一进程也不会被解析两次。
     private func ensureDetail(of pid: pid_t) async {
-        selectedPid = pid
-        if let idx = entries.firstIndex(where: { $0.pid == pid }),
-           entries[idx].bundleIdentifier != nil {
-            return
-        }
-        let snapshot = await NiceBackgroundActor.shared.snapshot()
-        guard let p = snapshot.first(where: { $0.pid == pid }) else { return }
+        guard !loadedDetailPids.contains(pid),
+              let idx = entries.firstIndex(where: { $0.pid == pid }),
+              let path = entries[idx].executablePath, !path.isEmpty else { return }
+        loadedDetailPids.insert(pid)
         let bundle: String? = await Task.detached(priority: .utility) {
-            ProcessInventory.bundleIdentifier(forExecutablePath: p.executablePath)
+            ProcessInventory.bundleIdentifier(forExecutablePath: path)
         }.value
+        // 限流：Info.plist 解析是 IO 密集的，连续选行时别把磁盘打满。
         try? await Task.sleep(nanoseconds: 100_000_000)
         if let idx = entries.firstIndex(where: { $0.pid == pid }) {
-            entries[idx].executablePath = p.executablePath.isEmpty ? entries[idx].executablePath : p.executablePath
             entries[idx].bundleIdentifier = bundle
         }
     }
 
-    private func applyNice(pid: pid_t, value: Int, label: String = "") async {
+    /// 写 nice 的入口。
+    ///
+    /// `token` 是本次写请求的序号（Stepper 连点时用）；只有序号最新的那次
+    /// 结果才写回界面。业务逻辑与之前完全一致：极端值先弹二次确认。
+    private func applyNice(pid: pid_t, value: Int, label: String = "", token: Int? = nil) async {
         lastError = nil
         if value <= -10 || value >= 15 {
             let suffix = label.isEmpty ? "" : "（\(label)）"
@@ -433,22 +697,29 @@ struct NiceView: View {
                 + (value < 0
                    ? "\n负值会跟系统进程抢 CPU，可能让 macOS 整体变卡。"
                    : "\n正值会让进程几乎拿不到 CPU 时间片，长时间运行可能假死。")
-            pendingExtreme = ExtremePrompt(pid: pid, value: value, message: message)
+            pendingExtreme = ExtremePrompt(pid: pid, value: value, message: message, token: token)
             return
         }
-        await reallyApplyNice(pid: pid, value: value)
+        await reallyApplyNice(pid: pid, value: value, token: token)
     }
 
     /// 真实写 nice —— applyNice 与极端值确认共用。
-    private func reallyApplyNice(pid: pid_t, value: Int) async {
+    private func reallyApplyNice(pid: pid_t, value: Int, token: Int? = nil) async {
         do {
             let verified = try await ProcessNiceService.shared.setNice(value, of: pid)
             controller.appendLog("已将 pid \(pid) 的 nice 设为 \(NiceLevel.format(verified))")
+            // 已经有更新的请求在飞 → 这次结果作废，不写界面。
+            if let token, niceApplyToken[pid] != token { return }
             if let idx = entries.firstIndex(where: { $0.pid == pid }) {
                 entries[idx].nice = verified
             }
+            // 临时值与真实值对齐，Stepper 显示助手回报的那个值。
+            draftNice[pid] = verified
         } catch {
             lastError = "\(error)"
+            // 失败 → 回落显示真实值，别让界面停在没生效的 nice 上。
+            if let token, niceApplyToken[pid] != token { return }
+            draftNice[pid] = nil
             controller.appendLog("改 nice 失败：\(error)", isError: true)
         }
     }
@@ -457,6 +728,8 @@ struct NiceView: View {
         let pid: pid_t
         let value: Int
         let message: String
+        /// 发起这次确认时的写请求序号。确认后按它判定结果是否仍然有效。
+        var token: Int?
         var id: String { "\(pid)-\(value)" }
     }
 }
@@ -477,9 +750,9 @@ private struct NiceAdjustSheet: View {
     @State private var value: Int = 0
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: DS.Space.lg) {
             // sheet 没有原生 title，自己组 header
-            HStack(spacing: 8) {
+            HStack(spacing: DS.Space.sm) {
                 Image(systemName: "gauge.with.dots.needle.bottom.50percent")
                     .foregroundStyle(Color.accentColor)
                 Text(title)
@@ -495,12 +768,12 @@ private struct NiceAdjustSheet: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            HStack(spacing: 14) {
+            HStack(alignment: .firstTextBaseline, spacing: DS.Space.sm) {
                 Text("\(NiceLevel.format(value))")
-                    .font(.system(size: 38, weight: .semibold, design: .monospaced))
+                    .font(.system(.title2, design: .monospaced).weight(.semibold))
                     .foregroundStyle(niceColor)
                     .frame(minWidth: 88, alignment: .leading)
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: DS.Space.xs) {
                     Text(hintText)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -522,7 +795,7 @@ private struct NiceAdjustSheet: View {
 
             // 文本输入兜底：极客可以直接敲数字 + 回车应用，
             // 解决 Stepper 一次一格点 39 次的痛苦。
-            HStack(spacing: 8) {
+            HStack(spacing: DS.Space.sm) {
                 Text("或直接输入：")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -538,7 +811,7 @@ private struct NiceAdjustSheet: View {
                 .disabled(NiceLevel.parse(textFieldValue.wrappedValue) == nil)
             }
 
-            HStack(spacing: 12) {
+            HStack(spacing: DS.Space.md) {
                 Spacer()
                 Button("取消", role: .cancel) { onCancel() }
                     .keyboardShortcut(.cancelAction)
@@ -547,7 +820,7 @@ private struct NiceAdjustSheet: View {
                     .buttonStyle(.borderedProminent)
             }
         }
-        .padding(20)
+        .padding(DS.Space.xl)
         .frame(width: 360)
         .onAppear { value = initialValue }
     }
@@ -566,8 +839,8 @@ private struct NiceAdjustSheet: View {
     }
 
     private var niceColor: Color {
-        if value < 0 { return .orange }
-        if value > 0 { return .blue }
+        if value < 0 { return DS.Tone.caution }
+        if value > 0 { return DS.Tone.info }
         return .primary
     }
 
@@ -584,106 +857,6 @@ private struct NiceAdjustSheet: View {
         default:
             return ""
         }
-    }
-}
-
-/// 单行：进程 + nice + 调整按钮。
-///
-/// v1.7.1 起改为三行布局：
-///   - 第 1 行 进程名（允许多行撑开，长名字不再被截掉）
-///   - 第 2 行 路径副标题（.lineLimit(1) + .truncationMode(.middle)，
-///     整行可复制选中 textSelection）
-///   - 第 3 行 nice 数字 + 默认 / 调整 按钮（右对齐）
-///
-/// bundle id 仍只在选中时展开（解析 Info.plist 昂贵）。
-private struct ProcessRow: View {
-    let entry: NiceView.Entry
-    let isSelected: Bool
-    let onSelect: () -> Void
-    let onReset: () -> Void
-    let onAdjust: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            // 第 1 行：名字 + 系统标签
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text(entry.name)
-                    .font(.system(.body, design: .monospaced))
-                    .lineLimit(nil)
-                    .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
-                if entry.systemProcess {
-                    Text("系统")
-                        .font(.system(size: 9, weight: .semibold))
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 1)
-                        .background(Color.secondary.opacity(0.18), in: Capsule())
-                        .foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 0)
-            }
-
-            // 第 2 行：路径副标题
-            Text(subtitle)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .textSelection(.enabled)
-
-            // 第 3 行：nice 数字 + 操作按钮
-            HStack(spacing: 8) {
-                Text(niceDisplay)
-                    .font(.system(.body, design: .monospaced))
-                    .foregroundStyle(niceColor)
-                    .frame(minWidth: 40, alignment: .leading)
-                Spacer()
-                Button("默认") {
-                    onReset()
-                }
-                .controlSize(.small)
-                .disabled(entry.systemProcess)
-                Button("调整…") {
-                    onAdjust()
-                }
-                .controlSize(.small)
-                .disabled(entry.systemProcess)
-            }
-
-            if isSelected, let bundle = entry.bundleIdentifier, !bundle.isEmpty {
-                Text("bundle: \(bundle)")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .textSelection(.enabled)
-            }
-        }
-        .padding(.vertical, 6)
-        .contentShape(Rectangle())
-        .onTapGesture { onSelect() }
-    }
-
-    /// 主行副标题：有路径就显示路径，否则回落到 pid。
-    /// 这一行整行可复制选中（`.textSelection(.enabled)` 在父级）。
-    private var subtitle: String {
-        if let path = entry.executablePath, !path.isEmpty {
-            return path
-        }
-        return "pid \(entry.pid)"
-    }
-
-    private var niceDisplay: String {
-        guard let n = entry.nice else { return "—" }
-        return NiceLevel.format(n)
-    }
-
-    private var niceColor: Color {
-        guard let n = entry.nice else { return .secondary }
-        if n < 0 { return .orange }
-        if n > 0 { return .blue }
-        return .primary
     }
 }
 
@@ -714,8 +887,8 @@ private struct PageBar: View {
     }
 
     var body: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 4) {
+        HStack(spacing: DS.Space.sm) {
+            HStack(spacing: DS.Space.xs) {
                 Text("每页")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -739,7 +912,7 @@ private struct PageBar: View {
 
             Spacer()
 
-            HStack(spacing: 4) {
+            HStack(spacing: DS.Space.xs) {
                 Button {
                     onPageChange(max(1, clampedPage - 1))
                 } label: {
@@ -764,6 +937,6 @@ private struct PageBar: View {
             }
         }
         .font(.caption)
-        .padding(.vertical, 4)
+        .padding(.vertical, DS.Space.xs)
     }
 }

@@ -18,6 +18,13 @@
 //    - 助手未就绪时整页仍可见（不阻塞 UI 渲染），按钮置灰 + 副标题解释；
 //    - 错误用 banner + 内联 message 两路（与 NiceView 等一致）。
 //
+//  2026-11 界面换新：
+//    - 编辑器本身保留（不换成别的控件），周边布局改用原生控件重排：
+//      LabeledContent 说明当前文件状态，按钮用 LabeledContent 分组；
+//    - 「谁能改 hosts」的白名单条目改成紧凑行列表（每行一个 uid 或用户名），
+//      配原生 Toggle；文本框仍然保留用于录入原始值；
+//    - 保存 / 还原按钮主次分明：保存是 prominent，还原是次级。
+//
 
 import SwiftUI
 
@@ -39,16 +46,44 @@ struct HostsView: View {
     @State private var editorUsernamesRaw: String = ""
     @State private var isSavingEditors = false
 
+    /// 被开关关掉、暂时移出草稿的条目。
+    ///
+    /// 留着是为了让那一行还在列表里（显示「已移出白名单」），用户反悔时
+    /// 能直接打开，不用去文本框里重敲一遍。
+    @State private var removedUids: Set<Int> = []
+    @State private var removedNames: Set<String> = []
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: DS.Space.lg) {
             SectionCard(
                 title: "Hosts 文件",
                 subtitle: helperSubtitle,
                 symbol: "doc.text.fill",
                 accent: .accentColor
             ) {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: DS.Space.md) {
+                    // 当前文件状态：行数 / 字节数 / 备份。
+                    LabeledContent("当前文件") {
+                        HStack(spacing: DS.Space.sm) {
+                            Text(byteCount > 0 ? "\(byteCount) 字节 · \(lineCount) 行" : "尚未读取")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            if hasBackup {
+                                Tag(text: "有备份", color: DS.Tone.good)
+                            } else {
+                                Tag(text: "无备份", color: DS.Tone.idle)
+                            }
+                        }
+                    }
+
+                    TextEditor(text: $draft)
+                        .font(.system(.body, design: .monospaced))
+                        .frame(minHeight: 280)
+                        .insetPanel(cornerRadius: DS.Radius.control)
+                        .disabled(isLoading || isSaving)
+
+                    // 主次分明：保存是主动作（prominent，靠右），还原与重新加载是次级动作。
+                    HStack(spacing: DS.Space.sm) {
                         Button {
                             Task { await refresh() }
                         } label: {
@@ -58,33 +93,19 @@ struct HostsView: View {
                                 Label("重新加载", systemImage: "arrow.clockwise")
                             }
                         }
-                        .controlSize(.small)
+                        .controlSize(.regular)
                         .disabled(isLoading)
+
+                        Spacer()
 
                         Button {
                             Task { await restoreBackup() }
                         } label: {
-                            Label("从备份恢复", systemImage: "arrow.uturn.backward")
+                            Label("从备份还原", systemImage: "arrow.uturn.backward")
                         }
-                        .controlSize(.small)
+                        .controlSize(.regular)
                         .disabled(isLoading || isSaving || !hasBackup)
 
-                        Spacer()
-
-                        if !draft.isEmpty {
-                            Text("\(byteCount) 字节 · \(lineCount) 行")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-
-                    TextEditor(text: $draft)
-                        .font(.system(.body, design: .monospaced))
-                        .frame(minHeight: 280)
-                        .border(Color.primary.opacity(0.12), width: 1)
-                        .disabled(isLoading || isSaving)
-
-                    HStack(spacing: 8) {
                         Button {
                             Task { await save() }
                         } label: {
@@ -96,19 +117,20 @@ struct HostsView: View {
                         }
                         .controlSize(.regular)
                         .keyboardShortcut("s", modifiers: .command)
+                        .buttonStyle(.borderedProminent)
                         .disabled(!canSave)
                     }
 
                     if let lastError {
                         Text(lastError)
                             .font(.caption)
-                            .foregroundStyle(.red)
+                            .foregroundStyle(DS.Tone.critical)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if let lastNotice {
                         Text(lastNotice)
                             .font(.caption)
-                            .foregroundStyle(.green)
+                            .foregroundStyle(DS.Tone.good)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -119,25 +141,27 @@ struct HostsView: View {
                 subtitle: "空白名单表示任何 uid 都可改（默认开放）。填入 uid 后只有白名单内的用户能改 Hosts 与本白名单。uid 与用户名两组是独立的：填 uid 即便用户名不对也能通过；填用户名助手启动时会展开为 uid。",
                 symbol: "person.crop.circle.badge.checkmark"
             ) {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(alignment: .top, spacing: 12) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("uid（逗号分隔）")
-                                .font(.caption.weight(.medium))
+                VStack(alignment: .leading, spacing: DS.Space.md) {
+                    HStack(alignment: .top, spacing: DS.Space.md) {
+                        LabeledContent("uid（逗号分隔）") {
                             TextField("例如 501, 502", text: $editorUidsRaw)
                                 .textFieldStyle(.roundedBorder)
                                 .disabled(isSavingEditors)
                         }
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("用户名（逗号分隔）")
-                                .font(.caption.weight(.medium))
+                        LabeledContent("用户名（逗号分隔）") {
                             TextField("例如 mofan, alice", text: $editorUsernamesRaw)
                                 .textFieldStyle(.roundedBorder)
                                 .disabled(isSavingEditors)
                         }
                     }
 
-                    HStack(spacing: 8) {
+                    // 白名单条目：紧凑行列表 + 原生开关。
+                    // 开关只改本地草稿（uidsRaw / usernamesRaw），真正生效仍靠
+                    // 下面的「保存白名单」走助手 —— 不绕过助手授权。
+                    SubsectionHeader(title: "白名单条目", symbol: "person.text.rectangle")
+                    whitelistList
+
+                    HStack(spacing: DS.Space.sm) {
                         Button {
                             Task { await saveEditors() }
                         } label: {
@@ -148,6 +172,7 @@ struct HostsView: View {
                             }
                         }
                         .controlSize(.regular)
+                        .buttonStyle(.borderedProminent)
                         .disabled(isSavingEditors || !controller.helperState.isReady)
 
                         Button {
@@ -155,8 +180,10 @@ struct HostsView: View {
                         } label: {
                             Label("重新读取", systemImage: "arrow.clockwise")
                         }
-                        .controlSize(.small)
+                        .controlSize(.regular)
                         .disabled(isSavingEditors)
+
+                        Spacer()
                     }
 
                     BulletLine("白名单为空时所有 uid 都能改 Hosts；写入第一个 uid 后立刻收紧。")
@@ -169,7 +196,7 @@ struct HostsView: View {
                 subtitle: nil,
                 symbol: "info.circle"
             ) {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: DS.Space.sm) {
                     BulletLine("写入后原文备份在 `/etc/hosts.deepsleep.bak`，下次写入会被覆盖。")
                     BulletLine("macOS 自带的 `sudo vi /etc/hosts` 不会改本白名单 —— 它直接走 root，与本工具无关。")
                     BulletLine("如果改了 Hosts 后浏览器 / `ping` 看不到效果，运行 `sudo dscacheutil -flushcache` 刷新 DNS 缓存（不在本工具职责范围）。")
@@ -181,6 +208,99 @@ struct HostsView: View {
             await refresh()
             await loadEditors()
         }
+    }
+
+    // MARK: - 白名单列表
+
+    /// 白名单条目的紧凑行列表。
+    ///
+    /// 每行 = 一个 uid 或一个用户名 + 一个原生开关。开关只改本地草稿
+    /// （uidsRaw / usernamesRaw），真正生效仍靠下面的「保存白名单」走助手 ——
+    /// 白名单写入本来就需要助手授权，这里不绕过那条路径。
+    ///
+    /// 关掉的条目不从列表消失，而是留在原地显示为「已移出白名单」，
+    /// 这样随时能再打开；打开时把它加回草稿，保存后才会真的生效。
+    private var whitelistList: some View {
+        let uids = HostsAllowedEditors.parseUids(editorUidsRaw)
+        let names = HostsAllowedEditors.parseUsernames(editorUsernamesRaw)
+        // 列表 = 草稿里有的 + 之前被关掉的（关掉的不再写进草稿，但保留可见）。
+        let allUids = uids + removedUids.filter { !uids.contains($0) }
+        let allNames = names + removedNames.filter { !names.contains($0) }
+
+        return VStack(alignment: .leading, spacing: DS.Space.xs) {
+            if allUids.isEmpty && allNames.isEmpty {
+                Label("空白名单：任何 uid 都能改 Hosts。", systemImage: "person.crop.circle.badge.questionmark")
+                    .font(.caption)
+                    .foregroundStyle(DS.Tone.caution)
+            } else {
+                ForEach(allUids, id: \.self) { uid in
+                    whitelistRow(
+                        title: "uid \(uid)",
+                        subtitle: uids.contains(uid) ? "用户 ID · 已在白名单" : "用户 ID · 已移出白名单",
+                        isOn: Binding(
+                            get: { uids.contains(uid) },
+                            set: { newValue in
+                                if newValue {
+                                    removedUids.remove(uid)
+                                    editorUidsRaw = (HostsAllowedEditors.parseUids(editorUidsRaw) + [uid])
+                                        .map(String.init)
+                                        .joined(separator: ", ")
+                                } else {
+                                    removedUids.insert(uid)
+                                    editorUidsRaw = HostsAllowedEditors.parseUids(editorUidsRaw)
+                                        .filter { $0 != uid }
+                                        .map(String.init)
+                                        .joined(separator: ", ")
+                                }
+                            }
+                        )
+                    )
+                }
+                ForEach(allNames, id: \.self) { name in
+                    whitelistRow(
+                        title: name,
+                        subtitle: names.contains(name) ? "用户名 · 已在白名单" : "用户名 · 已移出白名单",
+                        isOn: Binding(
+                            get: { names.contains(name) },
+                            set: { newValue in
+                                if newValue {
+                                    removedNames.remove(name)
+                                    editorUsernamesRaw = (HostsAllowedEditors.parseUsernames(editorUsernamesRaw) + [name])
+                                        .joined(separator: ", ")
+                                } else {
+                                    removedNames.insert(name)
+                                    editorUsernamesRaw = HostsAllowedEditors.parseUsernames(editorUsernamesRaw)
+                                        .filter { $0 != name }
+                                        .joined(separator: ", ")
+                                }
+                            }
+                        )
+                    )
+                }
+            }
+        }
+        .padding(DS.Space.md)
+        .insetPanel(cornerRadius: DS.Radius.control)
+    }
+
+    /// 白名单行：标题 + 说明 + 原生开关。
+    private func whitelistRow(title: String, subtitle: String, isOn: Binding<Bool>) -> some View {
+        HStack(spacing: DS.Space.md) {
+            VStack(alignment: .leading, spacing: DS.Space.xxs) {
+                Text(title)
+                    .font(.body.weight(.medium))
+                    .monospacedDigit()
+                Text(subtitle)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: DS.Space.sm)
+            Toggle("允许修改 Hosts", isOn: isOn)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .accessibilityLabel("允许 \(title) 修改 Hosts")
+        }
+        .padding(.vertical, DS.Space.xxs)
     }
 
     // MARK: - 派生属性
@@ -286,6 +406,9 @@ struct HostsView: View {
             editors = snapshot
             editorUidsRaw = snapshot.uids.map(String.init).joined(separator: ", ")
             editorUsernamesRaw = snapshot.usernames.joined(separator: ", ")
+            // 重新读取 = 放弃本地改动，被关掉的条目也不再保留。
+            removedUids = []
+            removedNames = []
         } catch {
             lastError = "读取白名单失败：\(error)"
             controller.appendLog("读取 hosts 白名单失败：\(error)", isError: true)
@@ -305,6 +428,8 @@ struct HostsView: View {
             editors = snapshot
             editorUidsRaw = snapshot.uids.map(String.init).joined(separator: ", ")
             editorUsernamesRaw = snapshot.usernames.joined(separator: ", ")
+            removedUids = []
+            removedNames = []
             lastNotice = snapshot.isEmpty
                 ? "白名单已清空：任何 uid 都可改 Hosts"
                 : "白名单已保存：uid=\(snapshot.uids)，names=\(snapshot.usernames)"

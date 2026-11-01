@@ -11,6 +11,10 @@
 //  排定条目在本地维护一份列表（`scheduledWakes.v1`），每次变更后从
 //  `pmset -g sched` 读回真实状态对账 —— 不假设「设了就一直生效」。
 //
+//  2026-11 界面换新：一次性排定与每周循环排定分成两张卡；时间选择统一走
+//  原生 DatePicker（标签由 LabeledContent 提供）；已排定列表压成紧凑行。
+//  间距 / 圆角一律走 `DS.Space` / `DS.Radius`，不写字面量。
+//
 
 import SwiftUI
 
@@ -33,8 +37,18 @@ struct ScheduleView: View {
     @State private var systemEvents: [SystemScheduledEvent] = []
     @State private var busy: Bool = false
 
+    /// 一次性排定的条目。
+    private var onceEntries: [ScheduledWake] {
+        managerEntries.filter { !$0.isRepeating }
+    }
+
+    /// 每周循环排定的条目。
+    private var repeatEntries: [ScheduledWake] {
+        managerEntries.filter(\.isRepeating)
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: DS.Space.lg) {
             countdownCard
             scheduledWakeCard
             repeatWakeCard
@@ -56,19 +70,26 @@ struct ScheduleView: View {
             title: "倒计时睡眠",
             subtitle: "计时结束后自动进入睡眠，过程中会先释放本应用持有的保持状态，否则请求会被自己挡住。",
             symbol: "timer",
-            accent: .orange
+            accessory: AnyView(
+                StatusPill(
+                    text: controller.countdownDeadline == nil ? "未在倒计时" : "倒计时进行中",
+                    isActive: controller.countdownDeadline != nil,
+                    color: controller.countdownDeadline == nil ? DS.Tone.idle : DS.Tone.info
+                )
+            )
         ) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: DS.Space.md) {
+                LabeledContent("时长") {
                     Picker("", selection: $countdownMinutes) {
                         ForEach([1, 5, 10, 15, 30, 45, 60, 90, 120, 180], id: \.self) { value in
                             Text("\(value) 分钟").tag(value)
                         }
                     }
                     .labelsHidden()
-                    .frame(width: 130)
                     .disabled(controller.countdownDeadline != nil)
+                }
 
+                HStack(spacing: DS.Space.sm) {
                     Button {
                         controller.startCountdown(minutes: countdownMinutes)
                     } label: {
@@ -84,21 +105,18 @@ struct ScheduleView: View {
                     }
                     .disabled(controller.countdownDeadline == nil)
 
-                    Spacer()
+                    Spacer(minLength: DS.Space.sm)
                 }
 
                 if let deadline = controller.countdownDeadline {
-                    HStack(spacing: 8) {
-                        Image(systemName: "hourglass").foregroundStyle(.orange)
+                    HStack(spacing: DS.Space.sm) {
+                        Image(systemName: "hourglass")
+                            .foregroundStyle(DS.Tone.info)
                         CountdownLabel(deadline: deadline)
                         Text("（\(deadline.formatted(date: .omitted, time: .shortened)) 触发）")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                } else {
-                    Text("当前没有进行中的倒计时")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
                 }
             }
         }
@@ -111,22 +129,25 @@ struct ScheduleView: View {
             title: "排定唤醒",
             subtitle: "通过 pmset 在指定时刻把 Mac 从睡眠中唤醒。需要完全控制权限。",
             symbol: "clock.arrow.circlepath",
-            accent: .blue
+            accessory: AnyView(readyTag)
         ) {
-            VStack(alignment: .leading, spacing: 12) {
-                DatePicker(
-                    "唤醒时间",
-                    selection: $wakeDate,
-                    in: Date()...,
-                    displayedComponents: [.date, .hourAndMinute]
-                )
-                .disabled(!controller.helperState.isReady || busy)
+            VStack(alignment: .leading, spacing: DS.Space.md) {
+                LabeledContent("唤醒时间") {
+                    DatePicker(
+                        "",
+                        selection: $wakeDate,
+                        in: Date()...,
+                        displayedComponents: [.date, .hourAndMinute]
+                    )
+                    .labelsHidden()
+                    .disabled(!controller.helperState.isReady || busy)
+                }
 
                 TextField("备注（可选）", text: $wakeNote)
                     .textFieldStyle(.roundedBorder)
                     .disabled(!controller.helperState.isReady || busy)
 
-                HStack(spacing: 10) {
+                HStack(spacing: DS.Space.sm) {
                     Button {
                         Task { await scheduleOnce() }
                     } label: {
@@ -135,56 +156,38 @@ struct ScheduleView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(!controller.helperState.isReady || busy)
 
-                    Spacer()
-                }
-
-                if !managerEntries.isEmpty {
-                    Divider()
-                    Text("已排定")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    ForEach(managerEntries) { entry in
-                        scheduledRow(entry)
-                    }
-                } else {
-                    Text("当前没有已排定的唤醒")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
+                    Spacer(minLength: DS.Space.sm)
                 }
 
                 if !controller.helperState.isReady {
                     Label("需要先启用完全控制", systemImage: "lock")
                         .font(.caption)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(DS.Tone.caution)
                 }
-            }
-        }
-    }
 
-    /// 一条排定的行。
-    private func scheduledRow(_ entry: ScheduledWake) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: entry.isRepeating ? "repeat" : "alarm")
-                .foregroundStyle(.blue)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(entry.timeText + " · " + entry.weekdayText)
-                    .font(.callout)
-                if !entry.note.isEmpty {
-                    Text(entry.note)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                if onceEntries.isEmpty {
+                    EmptyStateView(
+                        title: "还没有一次性排定",
+                        message: "选好时间后点「排定唤醒」，排好的条目会出现在这里。",
+                        systemImage: "alarm"
+                    )
+                } else {
+                    VStack(alignment: .leading, spacing: DS.Space.sm) {
+                        SubsectionHeader(title: "已排定", symbol: "list.bullet")
+                        VStack(spacing: 0) {
+                            ForEach(onceEntries) { entry in
+                                PlScheduledWakeRow(entry: entry, isBusy: busy) {
+                                    Task { await cancel(entry) }
+                                }
+                                if entry.id != onceEntries.last?.id {
+                                    Divider()
+                                }
+                            }
+                        }
+                        .insetPanel()
+                    }
                 }
             }
-            Spacer()
-            Button {
-                Task { await cancel(entry) }
-            } label: {
-                Image(systemName: "trash")
-            }
-            .buttonStyle(.borderless)
-            .disabled(busy)
-            .help("取消这一条")
         }
     }
 
@@ -195,38 +198,28 @@ struct ScheduleView: View {
             title: "循环唤醒",
             subtitle: "每周固定几天在固定时刻唤醒。用 pmset repeat 实现，系统重启后仍然有效。",
             symbol: "repeat",
-            accent: .indigo
+            accessory: AnyView(readyTag)
         ) {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: DS.Space.md) {
                 if showRepeatEditor {
-                    DatePicker(
-                        "时刻",
-                        selection: $repeatTime,
-                        displayedComponents: [.hourAndMinute]
-                    )
+                    LabeledContent("时刻") {
+                        DatePicker(
+                            "",
+                            selection: $repeatTime,
+                            displayedComponents: [.hourAndMinute]
+                        )
+                        .labelsHidden()
+                    }
 
-                    HStack(spacing: 6) {
-                        ForEach(1...7, id: \.self) { weekday in
-                            let weekdayName = ["日", "一", "二", "三", "四", "五", "六"][weekday - 1]
-                            Button {
-                                if repeatWeekdays.contains(weekday) {
-                                    repeatWeekdays.remove(weekday)
-                                } else {
-                                    repeatWeekdays.insert(weekday)
-                                }
-                            } label: {
-                                Text(weekdayName)
-                                    .frame(width: 28, height: 24)
-                            }
-                            .buttonStyle(.bordered)
-                            .tint(repeatWeekdays.contains(weekday) ? .accentColor : .secondary)
-                        }
+                    VStack(alignment: .leading, spacing: DS.Space.sm) {
+                        SubsectionHeader(title: "重复", symbol: "calendar")
+                        PlWeekdaySelector(selected: $repeatWeekdays)
                     }
 
                     TextField("备注（可选）", text: $repeatNote)
                         .textFieldStyle(.roundedBorder)
 
-                    HStack(spacing: 10) {
+                    HStack(spacing: DS.Space.sm) {
                         Button {
                             Task { await scheduleRepeating() }
                         } label: {
@@ -239,7 +232,8 @@ struct ScheduleView: View {
                         Button("取消") {
                             showRepeatEditor = false
                         }
-                        Spacer()
+
+                        Spacer(minLength: DS.Space.sm)
                     }
                 } else {
                     Button {
@@ -250,11 +244,20 @@ struct ScheduleView: View {
                     .disabled(!controller.helperState.isReady)
                 }
 
-                let repeatEntries = managerEntries.filter(\.isRepeating)
                 if !repeatEntries.isEmpty {
-                    Divider()
-                    ForEach(repeatEntries) { entry in
-                        scheduledRow(entry)
+                    VStack(alignment: .leading, spacing: DS.Space.sm) {
+                        SubsectionHeader(title: "已排定", symbol: "list.bullet")
+                        VStack(spacing: 0) {
+                            ForEach(repeatEntries) { entry in
+                                PlScheduledWakeRow(entry: entry, isBusy: busy) {
+                                    Task { await cancel(entry) }
+                                }
+                                if entry.id != repeatEntries.last?.id {
+                                    Divider()
+                                }
+                            }
+                        }
+                        .insetPanel()
                     }
                 }
             }
@@ -268,13 +271,23 @@ struct ScheduleView: View {
             title: "说明",
             symbol: "info.circle"
         ) {
-            VStack(alignment: .leading, spacing: 7) {
+            VStack(alignment: .leading, spacing: DS.Space.sm) {
                 BulletLine("排定唤醒由系统的电源管理服务执行，即使 Deep Sleep 未运行也会在指定时间生效。")
                 BulletLine("取消只作用于 Deep Sleep 自己排的那一条，不会动到其它程序排定的唤醒。")
                 BulletLine("合盖状态下能否被唤醒取决于机型与电源状态，Apple Silicon 机型合盖时通常不会被定时唤醒。")
                 BulletLine("一次性排定在触发后由系统消费，之后会从系统列表里消失 —— 这是正常的。")
             }
         }
+    }
+
+    // MARK: - 辅助显示
+
+    /// 「完全控制」是否就绪 —— 排定需要特权助手。
+    private var readyTag: some View {
+        Tag(
+            text: controller.helperState.isReady ? "完全控制已就绪" : "需要完全控制",
+            color: controller.helperState.isReady ? DS.Tone.good : DS.Tone.caution
+        )
     }
 
     // MARK: - 操作
@@ -325,5 +338,87 @@ struct ScheduleView: View {
         await ScheduledWakeManager.shared.refresh()
         managerEntries = ScheduledWakeManager.shared.entries
         systemEvents = ScheduledWakeManager.shared.systemEvents
+    }
+}
+
+// MARK: - 排定条目行
+
+/// 一条排定的紧凑行。
+///
+/// 删除按钮只作用于 **Deep Sleep 自己排的那一条**，不会动到其它程序排定的
+/// 唤醒 —— 这一约定写在按钮的 help 与「说明」卡里，不要改文案含义。
+struct PlScheduledWakeRow: View {
+
+    let entry: ScheduledWake
+    let isBusy: Bool
+    let onCancel: () -> Void
+
+    var body: some View {
+        HStack(spacing: DS.Space.sm) {
+            Image(systemName: entry.isRepeating ? "repeat" : "alarm")
+                .foregroundStyle(DS.Tone.info)
+                .frame(width: DS.Space.xl)
+
+            VStack(alignment: .leading, spacing: DS.Space.xxs) {
+                Text(entry.timeText + " · " + entry.weekdayText)
+                    .font(.callout)
+                    .lineLimit(1)
+                if !entry.note.isEmpty {
+                    Text(entry.note)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: DS.Space.sm)
+
+            Button(role: .destructive, action: onCancel) {
+                Image(systemName: "trash")
+            }
+            .buttonStyle(.borderless)
+            .disabled(isBusy)
+            .help("取消这一条（只取消 Deep Sleep 自己排的那一条）")
+        }
+        .padding(.horizontal, DS.Space.md)
+        .padding(.vertical, DS.Space.sm)
+    }
+}
+
+// MARK: - 星期选择
+
+/// 星期几的多选按钮组（1 = 周日 … 7 = 周六，与 Calendar 一致）。
+struct PlWeekdaySelector: View {
+
+    @Binding var selected: Set<Int>
+    /// 集合里最小的星期编号：1 = 周日（Calendar 惯例）/ 0 = 周日（0 基下标）。
+    var firstIndex: Int = 1
+
+    private static let names = ["日", "一", "二", "三", "四", "五", "六"]
+
+    var body: some View {
+        HStack(spacing: DS.Space.xs) {
+            ForEach(firstIndex..<(firstIndex + 7), id: \.self) { weekday in
+                let isOn = selected.contains(weekday)
+                Button {
+                    if isOn {
+                        selected.remove(weekday)
+                    } else {
+                        selected.insert(weekday)
+                    }
+                } label: {
+                    Text(Self.names[weekday - firstIndex])
+                        .font(.caption.weight(.medium))
+                        .frame(minWidth: DS.Space.xxl, minHeight: DS.Space.xl)
+                        .background(
+                            isOn ? DS.Tone.info.opacity(0.22) : Color.secondary.opacity(0.12),
+                            in: RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous)
+                        )
+                        .foregroundStyle(isOn ? DS.Tone.info : DS.Tone.idle)
+                }
+                .buttonStyle(.plain)
+                .help("周" + Self.names[weekday - firstIndex])
+            }
+        }
     }
 }

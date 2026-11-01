@@ -394,6 +394,8 @@ starting ──(initialSleepDelaySeconds 后)──▶ 关屏 ──▶ locked
 | `DeepSleep/Auth/BiometricAuth.swift` | Touch ID 授权封装 | — |
 | `DeepSleep/Windows/` | 菜单栏图标、窗口与 Dock 图标策略 | 菜单栏用 AppKit 手搭，原因见下 |
 | `DeepSleep/Views/` | SwiftUI 界面 | 不在用户可见 UI 里写开发笔记 |
+| `DeepSleep/Views/DesignSystem.swift` | 设计令牌：间距、圆角、语义色、卡片与玻璃容器 | **页面里不许出现字面量的间距与圆角** —— 全部走这里的 `DS.*`；规格见 `docs/ui-spec-2026-refresh.md` |
+| `DeepSleep/Views/Components.swift` | 跨页共用组件（卡片、标签、状态胶囊、指标块、空态） | 组件签名向后兼容：`content` 永远是最后一个参数，否则所有尾随闭包调用点会错位 |
 | `DeepSleep/Views/QuickQuitView.swift` | 快速退出页：快捷键录制、名单管理、演练与结果 | 受保护的应用不出现在候选列表里 |
 | `DeepSleep/AppDelegate.swift` | 生命周期 + 命令行接口 + URL 入口 | 加 CLI 参数要同步 `README.md` 与本文档 |
 | `DeepSleep/Resources/install-helper.sh` / `uninstall-helper.sh` | 以 root 运行的脚本 | 单独成文件以便 `sh -n` 检查；路径全靠环境变量传入 |

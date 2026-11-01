@@ -14,6 +14,12 @@
 //  与其他工具页一致：SectionCard 分块、页面根视图 .pageLayout()、
 //  错误用内联文字，不弹窗打断。
 //
+//  2026-11 界面换新：
+//    - 间距、圆角走 DS.Space / DS.Radius。
+//    - 设备列表压成紧凑行（设备名 / IP / MAC / 结果）。
+//    - 扫描状态用 StatusPill + 文字双编码。
+//    - 手动 MAC 输入用原生 TextField，格式不对时给具体原因。
+//
 
 import SwiftUI
 
@@ -30,6 +36,11 @@ struct WakeOnLANView: View {
     @State private var scanned = false
     /// 扫到的本机网段，扫完显示出来 —— 用户能对一下扫的是不是自己想的那张网。
     @State private var subnetText: String?
+    /// 手动填的 MAC 地址（扫不到设备时用）。
+    @State private var manualMAC: String = ""
+    /// 手动发送的结果文案。
+    @State private var manualResult: String?
+    @State private var isSendingManual = false
 
     /// 一台设备的发送结果。
     private struct SendResult {
@@ -39,7 +50,7 @@ struct WakeOnLANView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: DS.Space.lg) {
             controlCard
             deviceCard
             noteCard
@@ -56,13 +67,13 @@ struct WakeOnLANView: View {
             symbol: "power.circle",
             accent: .accentColor
         ) {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: DS.Space.md) {
                 Text("目标设备必须自己在系统或网卡设置里开着「唤醒以供网络访问」，并且网卡支持 WOL。这里发出去只代表魔术包发出去了，能不能醒取决于目标机自己的设置和硬件。")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
-                HStack(spacing: 10) {
+                HStack(spacing: DS.Space.sm) {
                     Button {
                         Task { await scan() }
                     } label: {
@@ -82,59 +93,113 @@ struct WakeOnLANView: View {
                         .controlSize(.small)
                         .disabled(selected.isEmpty)
 
-                    Spacer(minLength: 8)
+                    Spacer(minLength: DS.Space.sm)
 
-                    Text("端口")
+                    StatusPill(text: scanStatusText,
+                               isActive: isScanning,
+                               color: scanStatusColor)
+                }
+
+                if isScanning {
+                    // 真进度：扫描器每 ping 完一段就回报一次，不是假条。
+                    ProgressView(value: progress)
+                        .controlSize(.small)
+                        .frame(maxWidth: 260)
+                }
+
+                if !statusText.isEmpty {
+                    Text(statusText)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    TextField("9", text: $portText)
-                        .frame(width: 62)
-                        .textFieldStyle(.roundedBorder)
-                        .onChange(of: portText) { _, _ in
-                            // 换端口后旧结果就不作数了，清掉免得误导。
-                            results.removeAll()
-                        }
-                }
-
-                if isScanning || !statusText.isEmpty {
-                    HStack(spacing: 9) {
-                        ProgressView(value: progress)
-                            .frame(maxWidth: 220)
-                        Text(statusText)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                }
-
-                if let portIssue {
-                    Text(portIssue)
-                        .font(.caption)
-                        .foregroundStyle(.red)
+                        .lineLimit(1)
                 }
 
                 if let subnetText {
                     Text(subnetText)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
-                HStack(spacing: 10) {
+                LabeledContent("端口") {
+                    HStack(spacing: DS.Space.sm) {
+                        TextField("9", text: $portText)
+                            .frame(width: 72)
+                            .textFieldStyle(.roundedBorder)
+                            .onChange(of: portText) { _, _ in
+                                // 换端口后旧结果就不作数了，清掉免得误导。
+                                results.removeAll()
+                            }
+                        if let portIssue {
+                            Text(portIssue)
+                                .font(.caption)
+                                .foregroundStyle(DS.Tone.critical)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+
+                Divider()
+
+                manualMACSection
+
+                HStack(spacing: DS.Space.sm) {
                     Button {
                         Task { await sendSelected() }
                     } label: {
-                        Label("给选中的 \(selected.count) 台发送魔术包", systemImage: "paperplane")
+                        Label("发送魔术包给选中的 \(selected.count) 台", systemImage: "paperplane")
                     }
-                    .controlSize(.small)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
                     .disabled(selected.isEmpty || portIssue != nil)
 
                     Button("清空结果") { results.removeAll() }
                         .controlSize(.small)
                         .disabled(results.isEmpty)
-                    Spacer()
+                    Spacer(minLength: DS.Space.sm)
                 }
             }
         }
+    }
+
+    /// 手动指定 MAC。扫不到设备时用（比如设备不回 ping，但你知道它的 MAC）。
+    private var manualMACSection: some View {
+        VStack(alignment: .leading, spacing: DS.Space.sm) {
+            SubsectionHeader(title: "手动指定 MAC", symbol: "number")
+            LabeledContent("MAC 地址") {
+                HStack(spacing: DS.Space.sm) {
+                    TextField("AA:BB:CC:DD:EE:FF", text: $manualMAC)
+                        .font(.system(.body, design: .monospaced))
+                        .frame(width: 180)
+                        .textFieldStyle(.roundedBorder)
+                    Button {
+                        Task { await sendManual() }
+                    } label: {
+                        if isSendingManual {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Label("发送魔术包", systemImage: "paperplane")
+                        }
+                    }
+                    .controlSize(.small)
+                    .disabled(macIssue != nil || portIssue != nil || isSendingManual)
+                }
+            }
+            if let macIssue {
+                Text(macIssue)
+                    .font(.caption)
+                    .foregroundStyle(DS.Tone.critical)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let manualResult {
+                Text(manualResult)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(DS.Space.md)
+        .insetPanel(cornerRadius: DS.Radius.control)
     }
 
     /// 端口输入有问题时给出人话原因；没问题返回 nil。
@@ -155,6 +220,37 @@ struct WakeOnLANView: View {
         return UInt16(portText.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
+    /// MAC 格式不对时给出人话原因；没问题返回 nil。
+    ///
+    /// 接受三种写法：AA:BB:CC:DD:EE:FF、AA-BB-CC-DD-EE-FF、AABBCCDDEEFF。
+    private var macIssue: String? {
+        let raw = manualMAC.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return "MAC 地址不能为空。" }
+        let hex = raw.replacingOccurrences(of: ":", with: "")
+            .replacingOccurrences(of: "-", with: "")
+        guard hex.count == 12, hex.allSatisfy({ $0.isHexDigit }) else {
+            return "MAC 要 12 位十六进制，比如 AA:BB:CC:DD:EE:FF。"
+        }
+        return nil
+    }
+
+    // MARK: - 扫描状态
+
+    /// 扫描状态。颜色 + 文字双编码：光靠颜色分不出「没扫」和「扫完没扫到」。
+    private var scanStatusText: String {
+        if isScanning { return "扫描中" }
+        if !scanned { return "未扫描" }
+        if devices.isEmpty { return "未扫到设备" }
+        return "扫描完成，共 \(devices.count) 台"
+    }
+
+    private var scanStatusColor: Color {
+        if isScanning { return DS.Tone.info }
+        if !scanned { return DS.Tone.idle }
+        if devices.isEmpty { return DS.Tone.caution }
+        return DS.Tone.good
+    }
+
     // MARK: - 设备列表
 
     private var deviceCard: some View {
@@ -164,17 +260,29 @@ struct WakeOnLANView: View {
             symbol: "list.bullet.rectangle"
         ) {
             if devices.isEmpty {
-                Text(emptyMessage)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.vertical, 4)
+                if isScanning {
+                    HStack(spacing: DS.Space.sm) {
+                        ProgressView().controlSize(.small)
+                        Text("正在扫描…")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 0)
+                    }
+                } else {
+                    EmptyStateView(
+                        title: scanned ? "未扫到设备" : "还没扫描",
+                        message: emptyMessage,
+                        systemImage: "wifi.router",
+                        actionTitle: scanned ? nil : "扫描",
+                        action: scanned ? nil : { Task { await scan() } }
+                    )
+                }
             } else {
-                VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: DS.Space.xs) {
                     headerRow
                     Divider()
                     ScrollView {
-                        LazyVStack(spacing: 0) {
+                        LazyVStack(spacing: DS.Space.xxs) {
                             ForEach(devices) { device in
                                 deviceRow(device)
                                 if device.id != devices.last?.id {
@@ -196,32 +304,36 @@ struct WakeOnLANView: View {
     }
 
     private var emptyMessage: String {
-        if isScanning { return "正在扫描…" }
         if scanned {
-            return "这个网段没扫到设备。可能设备都关着、挡了 ICMP，或者这台 Mac 读不到 ARP 表（系统版本差异），此时只能拿到 ping 回应但没有 MAC。"
+            return "这个网段没扫到设备。可能设备都关着、挡了 ICMP，或者这台 Mac 读不到 ARP 表（系统版本差异），此时只能拿到 ping 回应但没有 MAC。也可以在下面手填 MAC 直接发。"
         }
         return "点上面的「扫描」开始。扫描会读一次 ARP 表、并发 ping 本网段、再读一次 ARP 表。"
     }
 
     private var headerRow: some View {
-        HStack(spacing: 8) {
-            Text("").frame(width: 22)
-            Text("IP 地址").frame(width: 120, alignment: .leading)
-            Text("MAC 地址").frame(width: 150, alignment: .leading)
-            Text("设备名").frame(width: 120, alignment: .leading)
-            Text("厂商").frame(width: 110, alignment: .leading)
-            Text("结果").frame(maxWidth: .infinity, alignment: .leading)
-            Text("").frame(width: 54)
+        HStack(spacing: DS.Space.sm) {
+            Text("")
+                .frame(width: 22)
+            Text("设备名")
+                .frame(minWidth: 120, alignment: .leading)
+            Text("IP 地址")
+                .frame(minWidth: 110, alignment: .leading)
+            Text("MAC 地址")
+                .frame(minWidth: 140, alignment: .leading)
+            Text("结果")
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text("")
+                .frame(width: 54)
         }
         .font(.caption.weight(.semibold))
         .foregroundStyle(.secondary)
-        .padding(.vertical, 5)
+        .padding(.vertical, DS.Space.xs)
     }
 
     private func deviceRow(_ device: WakeOnLANDevice) -> some View {
         let result = results[device.id]
 
-        return HStack(spacing: 8) {
+        return HStack(spacing: DS.Space.sm) {
             Toggle("", isOn: Binding(
                 get: { selected.contains(device.id) },
                 set: { newValue in
@@ -233,34 +345,33 @@ struct WakeOnLANView: View {
             .disabled(!device.canWake)
             .frame(width: 22)
 
+            VStack(alignment: .leading, spacing: DS.Space.xxs) {
+                Text(device.displayName)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if device.vendor != WakeOnLAN.unknownVendor {
+                    Text(device.vendor)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            .frame(minWidth: 120, alignment: .leading)
+
             Text(device.ipAddress)
-                .frame(width: 120, alignment: .leading)
+                .frame(minWidth: 110, alignment: .leading)
                 .textSelection(.enabled)
 
             Text(device.macAddress.isEmpty ? "—" : device.macAddress)
-                .frame(width: 150, alignment: .leading)
-                .foregroundStyle(device.macAddress.isEmpty ? .secondary : .primary)
+                .frame(minWidth: 140, alignment: .leading)
+                .foregroundStyle(device.macAddress.isEmpty ? DS.Tone.idle : .primary)
                 .textSelection(.enabled)
-
-            Text(device.displayName)
-                .frame(width: 120, alignment: .leading)
-                .lineLimit(1)
-                .truncationMode(.middle)
-
-            Group {
-                if device.macAddress.isEmpty {
-                    Text("—").foregroundStyle(.secondary)
-                } else {
-                    Tag(text: device.vendor, color: device.vendor == WakeOnLAN.unknownVendor ? .secondary : .accentColor)
-                }
-            }
-            .frame(width: 110, alignment: .leading)
 
             Group {
                 if let result {
-                    HStack(spacing: 5) {
+                    HStack(spacing: DS.Space.xs) {
                         Image(systemName: result.kind == .success ? "checkmark.circle.fill" : "xmark.circle.fill")
-                            .foregroundStyle(result.kind == .success ? Color.green : Color.red)
+                            .foregroundStyle(result.kind == .success ? DS.Tone.good : DS.Tone.critical)
                             .font(.system(size: 10, weight: .bold))
                         Text(result.message)
                             .font(.caption)
@@ -271,7 +382,7 @@ struct WakeOnLANView: View {
                 } else if !device.canWake {
                     Text("没有 MAC，发不了")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(DS.Tone.idle)
                 } else {
                     Text("")
                 }
@@ -286,7 +397,7 @@ struct WakeOnLANView: View {
             .frame(width: 54)
         }
         .font(.system(.caption, design: .monospaced))
-        .padding(.vertical, 4)
+        .padding(.vertical, DS.Space.xs)
     }
 
     // MARK: - 底部说明
@@ -297,7 +408,7 @@ struct WakeOnLANView: View {
             subtitle: "有几条限制是真的绕不过去，写在这儿免得白试。",
             symbol: "info.circle"
         ) {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: DS.Space.sm) {
                 BulletLine("发送成功只说明魔术包交给了系统，不代表目标设备会醒。唤醒能不能成，取决于目标机自己有没有开「唤醒以供网络访问」、网卡支不支持 WOL。")
                 BulletLine("macOS 上从本机发广播包可能被系统防火墙拦掉，这时包根本没出网卡，但界面上仍会显示已发送。")
                 BulletLine("设备列表来自 ARP 表和 ping。设备如果挡了 ICMP、又没和这台 Mac 通过信，扫不到它。")
@@ -360,6 +471,22 @@ struct WakeOnLANView: View {
             let outcome = await WakeOnLANView.sendOne(device, port: port)
             results[device.id] = outcome
         }
+    }
+
+    /// 手动发一个 MAC。扫不到设备、但知道 MAC 时用。
+    private func sendManual() async {
+        guard let port, macIssue == nil else { return }
+        isSendingManual = true
+        manualResult = nil
+        let target = WakeOnLANDevice(
+            ipAddress: "",
+            macAddress: manualMAC.trimmingCharacters(in: .whitespacesAndNewlines),
+            deviceName: "手动指定",
+            vendor: ""
+        )
+        let outcome = await WakeOnLANView.sendOne(target, port: port)
+        manualResult = outcome.message
+        isSendingManual = false
     }
 
     /// 发一台，返回给界面看的结果。发送本身放到后台线程，界面不卡。

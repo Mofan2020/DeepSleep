@@ -53,10 +53,15 @@ struct ToolboxView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DS.Space.md) {
             topBar
             if tools.isEmpty {
-                emptyState
+                EmptyStateView(
+                    title: "当前没有可用的工具",
+                    message: "所有工具都已被移除。点右上角「恢复默认顺序」把它们放回来。",
+                    systemImage: "wrench.and.screwdriver"
+                )
+                .frame(minHeight: 260)
             } else {
                 grid
             }
@@ -66,14 +71,16 @@ struct ToolboxView: View {
     // MARK: - 顶部细行
 
     private var topBar: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: DS.Space.md) {
             Text("\(tools.count) 个工具")
                 .font(.callout)
                 .foregroundStyle(.secondary)
-            Spacer(minLength: 8)
-            Button("重置排序") {
+            Spacer(minLength: DS.Space.sm)
+            Button {
                 layout = .default
                 ToolboxStore.save(layout)
+            } label: {
+                Label("恢复默认顺序", systemImage: "arrow.counterclockwise")
             }
             .controlSize(.small)
             .disabled(layout.isDefault)
@@ -86,17 +93,15 @@ struct ToolboxView: View {
 
     private var grid: some View {
         LazyVGrid(
-            columns: [GridItem(.adaptive(minimum: 280), spacing: 14)],
-            spacing: 14
+            columns: [GridItem(.adaptive(minimum: 260), spacing: DS.Space.md)],
+            spacing: DS.Space.md
         ) {
             ForEach(tools) { tool in
                 card(for: tool)
             }
         }
         .animation(
-            reduceMotion
-                ? .easeOut(duration: 0.15)
-                : .spring(response: 0.3, dampingFraction: 0.85),
+            reduceMotion ? .easeOut(duration: 0.15) : DS.Animation.bouncy,
             value: layout
         )
     }
@@ -117,21 +122,6 @@ struct ToolboxView: View {
         )
     }
 
-    // MARK: - 空态
-
-    private var emptyState: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "wrench.and.screwdriver")
-                .font(.system(size: 36))
-                .foregroundStyle(.secondary)
-            Text("当前没有可用的工具")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, minHeight: 220)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-    }
-
     // MARK: - 状态
 
     private var tools: [ToolboxTool] { layout.orderedTools }
@@ -143,29 +133,29 @@ struct ToolboxView: View {
             // 助手未就绪时卡片仍然可点（进页面后按钮置灰 + 副标题解释，
             // 这是 NiceView / HostsView 的既有约定），所以只改徽章不改可点性。
             return controller.helperState.isReady
-                ? ToolCard.Status(text: "可用", isActive: true, color: .green)
-                : ToolCard.Status(text: "助手未就绪", isActive: false, color: .orange)
+                ? ToolCard.Status(text: "可用", isActive: true, color: DS.Tone.good)
+                : ToolCard.Status(text: "助手未就绪", isActive: false, color: DS.Tone.caution)
         case .quarantine:
-            return ToolCard.Status(text: "可用", isActive: true, color: .green)
+            return ToolCard.Status(text: "可用", isActive: true, color: DS.Tone.good)
         case .imageUpscale, .shellConfig, .deviceDiagnostics:
             // 纯本地能力：不依赖助手，也不依赖网络。
-            return ToolCard.Status(text: "可用", isActive: true, color: .green)
+            return ToolCard.Status(text: "可用", isActive: true, color: DS.Tone.good)
         case .wakeOnLAN:
             // WOL 要往局域网广播，只在同一网段内有效。
-            return ToolCard.Status(text: "可用", isActive: true, color: .green)
+            return ToolCard.Status(text: "可用", isActive: true, color: DS.Tone.good)
         case .lsof:
             // lsof 本身任何权限都能跑，但非 root 只能看到自己进程的文件与端口。
-            return ToolCard.Status(text: "可用", isActive: true, color: .green)
+            return ToolCard.Status(text: "可用", isActive: true, color: DS.Tone.good)
         case .aiKeepAlive:
             switch keepAlive.status {
             case .running:
-                return ToolCard.Status(text: "运行中", isActive: true, color: .green)
+                return ToolCard.Status(text: "运行中", isActive: true, color: DS.Tone.good)
             case .paused:
-                return ToolCard.Status(text: "已暂停", isActive: false, color: .secondary)
+                return ToolCard.Status(text: "已暂停", isActive: false, color: DS.Tone.idle)
             case .notConfigured:
-                return ToolCard.Status(text: "未配置", isActive: false, color: .secondary)
+                return ToolCard.Status(text: "未配置", isActive: false, color: DS.Tone.idle)
             case .unavailable:
-                return ToolCard.Status(text: "引擎未就绪", isActive: false, color: .orange)
+                return ToolCard.Status(text: "引擎未就绪", isActive: false, color: DS.Tone.caution)
             }
         }
     }
@@ -286,10 +276,10 @@ struct ToolCard: View {
 
     private var cardBody: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .top, spacing: 10) {
+            HStack(alignment: .top, spacing: DS.Space.md) {
                 iconContainer
 
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: DS.Space.xxs) {
                     Text(title)
                         .font(.headline)
                         .lineLimit(1)
@@ -304,9 +294,9 @@ struct ToolCard: View {
                 Spacer(minLength: 28)
             }
 
-            Divider().padding(.vertical, 12)
+            Divider().padding(.vertical, DS.Space.md)
 
-            HStack(spacing: 8) {
+            HStack(spacing: DS.Space.sm) {
                 StatusPill(
                     text: status.text,
                     isActive: status.isActive,
@@ -317,29 +307,29 @@ struct ToolCard: View {
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 }
-                Spacer(minLength: 8)
+                Spacer(minLength: DS.Space.sm)
                 Image(systemName: "chevron.right")
                     .font(.system(size: 11))
                     .foregroundStyle(.tertiary)
             }
         }
-        .padding(16)
+        .padding(DS.Space.lg)
         .frame(maxWidth: .infinity, minHeight: 132, alignment: .topLeading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .glassCard(cornerRadius: DS.Radius.card)
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(Color.primary.opacity(isHovering ? 0.16 : 0.08))
+            RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
+                .strokeBorder(Color.primary.opacity(isHovering ? 0.18 : 0))
         )
     }
 
     private var iconContainer: some View {
         Image(systemName: symbol)
-            .font(.system(size: 17, weight: .semibold))
+            .font(.system(size: 16, weight: .semibold))
             .foregroundStyle(isInactive ? Color.secondary : Color.accentColor)
             .frame(width: 30, height: 30)
             .background(
                 (isInactive ? Color.secondary : Color.accentColor).opacity(0.14),
-                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                in: RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous)
             )
     }
 
@@ -367,7 +357,7 @@ struct ToolCardButtonStyle: ButtonStyle {
         configuration.label
             .scaleEffect(reduceMotion ? 1 : (configuration.isPressed ? 0.985 : 1))
             .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
                     .fill(Color.primary.opacity(configuration.isPressed ? 0.06 : 0))
             )
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)

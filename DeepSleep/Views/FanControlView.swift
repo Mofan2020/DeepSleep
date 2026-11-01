@@ -17,12 +17,20 @@
 //  租约：转速写下去之后由助手按 15 秒租约维持。应用崩溃或被杀后助手
 //  自动把风扇交回系统 —— 避免「写风扇的进程死了，风扇还停在低速」。
 //
+//  界面约定（2026 换新）：
+//  - 三档模式用原生 Picker(.segmented)，不用自造分段控件。
+//  - 转速滑杆区间永远来自 FanState.Fan 的实测 minRPM / maxRPM，不写死。
+//  - 「固定转速」与「规则调速」要写 SMC，必须有特权助手；助手未就绪时
+//    控件置灰，副标题说明原因，不能让用户以为改了就会生效。
+//
 
 import SwiftUI
 
 struct FanControlView: View {
 
     @ObservedObject var controller: FanController
+    /// 全局助手状态。固定转速与规则调速都靠它写 SMC，所以必须看得见。
+    @EnvironmentObject private var sleepController: SleepController
 
     @State private var draftRPM: [Int: Double] = [:]
     @State private var ruleFanIndex: Int = 0
@@ -31,7 +39,7 @@ struct FanControlView: View {
     @State private var showDisclaimer: Bool = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: DS.Space.lg) {
             if !controller.isDisclaimerAccepted {
                 disclaimerCard
             }
@@ -64,6 +72,50 @@ struct FanControlView: View {
         .onAppear { loadRuleFromController() }
     }
 
+    // MARK: - 派生状态
+
+    /// 特权助手是否就绪。写风扇转速要靠它，没就绪时界面必须说清楚。
+    private var helperReady: Bool { sleepController.helperState.isReady }
+
+    /// 助手未就绪时给用户看的一句话（总开关卡里说一次完整原因）。
+    ///
+    /// 三种模式最终都要助手写 SMC ——「交给系统」写的是 rpm=0 的模式键，
+    /// 一样要助手。所以助手没就绪时写入控件全部置灰。完整原因只在这里
+    /// 出现一次，风扇卡与规则卡的副标题只带一句短提示 —— 同一个原因
+    /// 在一页里说三遍，用户只会觉得吵。
+    private var helperUnavailableReason: String? {
+        guard !helperReady else { return nil }
+        switch sleepController.helperState {
+        case .notInstalled:
+            return "写入风扇需要特权助手：尚未启用「完全控制」，写风扇的指令发不出去。"
+        case .unknown:
+            return "写入风扇需要特权助手：正在与特权助手握手，稍候再试。"
+        default:
+            return "写入风扇需要特权助手：\(sleepController.helperState.detail)"
+        }
+    }
+
+    /// 按钮旁的短提示。只说「缺什么」，不说原因 —— 原因在总开关卡里。
+    private let helperUnavailableHint = "需要特权助手才能写入"
+
+    /// 写入类控件的统一禁用条件。
+    ///
+    /// 「交给系统」不需要写转速，所以不在这条判定里；固定转速与规则调速
+    /// 需要写 SMC，助手没就绪就写不进去。
+    private var writesDisabled: Bool {
+        !controller.isEnabled || controller.isEmergencyActive || !helperReady
+    }
+
+    /// 规则字段（目标风扇 / 两个温度）的禁用条件。
+    ///
+    /// 只有兜底接管时锁：兜底期间任何写入都不该发生。
+    /// 助手未就绪**不**锁字段 —— 改字段只是改本地草稿，不写 SMC，
+    /// 真正写的是「应用规则」按钮（那一个会置灰）。用户可以在助手恢复前
+    /// 先把参数调好，助手一回来直接点应用。
+    private var ruleFieldsDisabled: Bool {
+        controller.isEmergencyActive
+    }
+
     // MARK: - 免责声明
 
     private var disclaimerCard: some View {
@@ -71,10 +123,10 @@ struct FanControlView: View {
             title: "使用风扇控制需先阅读免责声明",
             subtitle: "风扇转速通过 SMC 写入，属于苹果未公开的接口。同一条指令在不同机型上的表现可能不同。",
             symbol: "exclamationmark.shield",
-            accent: .orange
+            accent: DS.Tone.caution
         ) {
-            VStack(alignment: .leading, spacing: 12) {
-                VStack(alignment: .leading, spacing: 7) {
+            VStack(alignment: .leading, spacing: DS.Space.md) {
+                VStack(alignment: .leading, spacing: DS.Space.sm) {
                     BulletLine("不同 Mac 的风扇键名、转速区间与模式键可能不同，写错会导致风扇不转或异常加速。")
                     BulletLine("风扇长时间停在过低转速可能使机器过热；停在过高转速会增加噪音与磨损。")
                     BulletLine("任何传感器达到 90°C 时，本应用强制所有风扇拉到最大转速，这一条无法关闭。")
@@ -100,26 +152,30 @@ struct FanControlView: View {
                 ? "手动模式下由助手按租约维持转速，应用失联后自动交回系统。"
                 : "关闭时风扇完全由系统管理。",
             symbol: "fan",
-            accent: .blue
+            accent: DS.Tone.info
         ) {
-            VStack(alignment: .leading, spacing: 10) {
-                Toggle(isOn: Binding(
-                    get: { controller.isEnabled },
-                    set: { newValue in Task { await controller.setEnabled(newValue) } }
-                )) {
-                    VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: DS.Space.md) {
+                LabeledContent {
+                    Toggle("", isOn: Binding(
+                        get: { controller.isEnabled },
+                        set: { newValue in Task { await controller.setEnabled(newValue) } }
+                    ))
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .disabled(!controller.isDisclaimerAccepted || controller.isEmergencyActive)
+                } label: {
+                    VStack(alignment: .leading, spacing: DS.Space.xxs) {
                         Text("启用风扇控制")
                         Text("关闭时所有风扇立即交回系统自动控制。")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
                 }
-                .disabled(!controller.isDisclaimerAccepted || controller.isEmergencyActive)
 
                 if let error = controller.lastError {
                     Label(error, systemImage: "exclamationmark.triangle")
                         .font(.caption)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(DS.Tone.critical)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
@@ -128,7 +184,15 @@ struct FanControlView: View {
                           + "风扇已强制最大转速，此处设置暂不生效。",
                           systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(DS.Tone.critical)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if let helperUnavailableReason {
+                    Label(helperUnavailableReason,
+                          systemImage: "exclamationmark.circle")
+                        .font(.caption)
+                        .foregroundStyle(DS.Tone.caution)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -140,12 +204,14 @@ struct FanControlView: View {
             title: "风扇",
             subtitle: nil,
             symbol: "fan",
-            accent: .secondary
+            accent: DS.Tone.idle
         ) {
-            Text("读不到风扇信息。可能是这台机器没有可读风扇，或特权助手尚未就绪。")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            EmptyStateView(
+                title: "没有检测到可控制的风扇",
+                message: "可能是这台机器没有可读风扇，或特权助手尚未就绪。",
+                systemImage: "fan"
+            )
+            .frame(minHeight: 120)
         }
     }
 
@@ -155,22 +221,19 @@ struct FanControlView: View {
         let mode = controller.modes[fan.index] ?? .automatic
         return SectionCard(
             title: fan.name.isEmpty ? "风扇 \(fan.index)" : fan.name,
-            subtitle: "区间 \(fan.minRPM)–\(fan.maxRPM) RPM",
+            subtitle: fanSubtitle(fan),
             symbol: "fan.fill",
-            accent: fan.isManual ? .orange : .blue
+            accent: fan.isManual ? DS.Tone.caution : DS.Tone.info
         ) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 10) {
-                    Text("\(fan.currentRPM)")
-                        .font(.system(.title3, design: .monospaced).weight(.semibold))
-                        .monospacedDigit()
-                    Text("RPM")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Tag(text: fan.isManual ? "手动" : "系统自动",
-                        color: fan.isManual ? .orange : .secondary)
-                    Spacer()
-                }
+            VStack(alignment: .leading, spacing: DS.Space.md) {
+                MetricTile(
+                    title: "当前转速",
+                    value: "\(fan.currentRPM)",
+                    unit: "RPM",
+                    status: fan.isManual ? "手动控制中" : "系统自动控制",
+                    tint: fan.isManual ? DS.Tone.caution : DS.Tone.idle,
+                    symbol: "fan"
+                )
 
                 Picker("", selection: Binding(
                     get: { modeKind(mode) },
@@ -184,7 +247,12 @@ struct FanControlView: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .disabled(!controller.isEnabled || controller.isEmergencyActive)
+                // 三档最终都要助手写 SMC ——「交给系统」写的是 rpm=0 的
+                // 模式键，一样要助手。所以助手没就绪时整组置灰：切过去以后
+                // 控制器会把模式记下来并落盘，但风扇其实没被接管 ——
+                // 界面看着生效、实际没生效，是最糟的反馈。
+                // 助手恢复后这张卡自动可切。
+                .disabled(!controller.isEnabled || controller.isEmergencyActive || !helperReady)
 
                 switch mode {
                 case .fixed(let rpm):
@@ -201,6 +269,15 @@ struct FanControlView: View {
         }
     }
 
+    /// 风扇卡的副标题。助手未就绪时补一句短提示 —— 完整原因在总开关卡里。
+    private func fanSubtitle(_ fan: FanState.Fan) -> String {
+        let range = "区间 \(fan.minRPM)–\(fan.maxRPM) RPM"
+        if helperUnavailableReason != nil {
+            return "\(range) · \(helperUnavailableHint)"
+        }
+        return range
+    }
+
     private func fixedEditor(fan: FanState.Fan, rpm: Int) -> some View {
         let floor = max(fan.minRPM, Int(Double(fan.minRPM) * FanControl.minRpmSafetyRatio))
         let ceiling = max(floor, fan.maxRPM)
@@ -208,21 +285,21 @@ struct FanControlView: View {
             get: { draftRPM[fan.index] ?? Double(min(max(rpm, floor), ceiling)) },
             set: { draftRPM[fan.index] = $0 }
         )
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("目标转速").font(.callout)
-                Spacer()
+        return VStack(alignment: .leading, spacing: DS.Space.sm) {
+            LabeledContent("目标转速") {
                 Text("\(Int(binding.wrappedValue)) RPM")
                     .font(.system(.body, design: .monospaced).weight(.semibold))
                     .monospacedDigit()
             }
+            // 滑杆区间来自该风扇实测的 minRPM / maxRPM，不写死：
+            // 不同机型的可用区间差很多，写死就会出现拖到底也达不到的转速。
             Slider(value: binding, in: Double(floor)...Double(ceiling),
                    step: ceiling - floor > 4000 ? 10 : 1) { editing in
                 if !editing {
                     Task { await applyFixed(fan: fan, rpm: Int(draftRPM[fan.index] ?? Double(rpm))) }
                 }
             }
-            .disabled(!controller.isEnabled || controller.isEmergencyActive)
+            .disabled(writesDisabled)
 
             HStack {
                 Text("\(floor)")
@@ -236,6 +313,13 @@ struct FanControlView: View {
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
+
+            if helperUnavailableReason != nil {
+                Label(helperUnavailableHint, systemImage: "exclamationmark.circle")
+                    .font(.caption2)
+                    .foregroundStyle(DS.Tone.caution)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -244,13 +328,12 @@ struct FanControlView: View {
     private var ruleCard: some View {
         SectionCard(
             title: "规则调速参数",
-            subtitle: "低于最低温度用最低转速，高于最高温度用最高转速，中间随温度线性变化。",
+            subtitle: ruleSubtitle,
             symbol: "slider.horizontal.below.rectangle",
-            accent: .indigo
+            accent: DS.Tone.info
         ) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text("目标风扇").frame(width: 78, alignment: .leading)
+            VStack(alignment: .leading, spacing: DS.Space.md) {
+                LabeledContent("目标风扇") {
                     Picker("", selection: $ruleFanIndex) {
                         ForEach(controller.fans, id: \.index) { fan in
                             Text(fan.name.isEmpty ? "风扇 \(fan.index)" : fan.name)
@@ -259,46 +342,46 @@ struct FanControlView: View {
                     }
                     .labelsHidden()
                     .frame(width: 150)
-                    Spacer()
+                    .disabled(ruleFieldsDisabled)
                 }
 
-                HStack {
-                    Text("最低温度").frame(width: 78, alignment: .leading)
-                    TextField("", value: $ruleMinTemp, format: .number)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 80)
-                    Stepper("", value: $ruleMinTemp, in: 20...88, step: 1).labelsHidden()
-                    Text("°C").foregroundStyle(.secondary)
-                    Spacer()
+                LabeledContent("最低温度") {
+                    HStack(spacing: DS.Space.sm) {
+                        TextField("", value: $ruleMinTemp, format: .number)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 80)
+                        Stepper("", value: $ruleMinTemp, in: 20...88, step: 1).labelsHidden()
+                        Text("°C").foregroundStyle(.secondary)
+                    }
+                    .disabled(ruleFieldsDisabled)
                 }
 
-                HStack {
-                    Text("最高温度").frame(width: 78, alignment: .leading)
-                    TextField("", value: $ruleMaxTemp, format: .number)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 80)
-                    Stepper("", value: $ruleMaxTemp, in: 21...89, step: 1).labelsHidden()
-                    Text("°C").foregroundStyle(.secondary)
-                    Spacer()
+                LabeledContent("最高温度") {
+                    HStack(spacing: DS.Space.sm) {
+                        TextField("", value: $ruleMaxTemp, format: .number)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 80)
+                        Stepper("", value: $ruleMaxTemp, in: 21...89, step: 1).labelsHidden()
+                        Text("°C").foregroundStyle(.secondary)
+                    }
+                    .disabled(ruleFieldsDisabled)
                 }
 
                 if let warning = ruleWarning {
                     Label(warning, systemImage: "exclamationmark.triangle")
                         .font(.caption)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(DS.Tone.caution)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                HStack(spacing: 10) {
+                HStack(spacing: DS.Space.md) {
                     Button {
                         Task { await applyRule() }
                     } label: {
                         Label("应用规则", systemImage: "checkmark")
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(ruleWarning != nil
-                              || !controller.isEnabled
-                              || controller.isEmergencyActive)
+                    .disabled(ruleWarning != nil || writesDisabled)
 
                     Spacer()
                 }
@@ -309,6 +392,15 @@ struct FanControlView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    /// 规则卡的副标题：助手未就绪时带一句短提示，否则说明区间语义。
+    /// 完整原因在总开关卡里说过一次，这里不重复。
+    private var ruleSubtitle: String {
+        if helperUnavailableReason != nil {
+            return helperUnavailableHint
+        }
+        return "低于最低温度用最低转速，高于最高温度用最高转速，中间随温度线性变化。"
     }
 
     private var ruleWarning: String? {
@@ -328,16 +420,31 @@ struct FanControlView: View {
             title: "安全兜底 · \(Int(FanControl.emergencyTemperatureCelsius))°C",
             subtitle: nil,
             symbol: "shield.lefthalf.filled",
-            accent: .orange
+            accent: DS.Tone.caution
         ) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 8) {
-                    StatusPill(
-                        text: controller.isEmergencyActive ? "已触发" : "未触发",
-                        isActive: !controller.isEmergencyActive,
-                        color: controller.isEmergencyActive ? .red : .green
-                    )
-                    Spacer()
+            VStack(alignment: .leading, spacing: DS.Space.md) {
+                // 状态与冷却倒计时放在同一个 TimelineView 里：冷却期一结束，
+                // 状态词要当场从「注意」翻回「正常」。
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    let remaining = cooldownRemaining(at: context.date)
+                    VStack(alignment: .leading, spacing: DS.Space.sm) {
+                        StatusPill(
+                            text: emergencyStatus(remaining: remaining).text,
+                            isActive: emergencyStatus(remaining: remaining).isActive,
+                            color: emergencyStatus(remaining: remaining).color
+                        )
+
+                        // 冷却期内风扇保持最大转速 —— 这句必须写出来，
+                        // 否则用户会以为温度一降下来风扇就回到原转速了。
+                        if remaining > 0 {
+                            Label("降温冷却中，还剩 \(Int(remaining.rounded())) 秒。"
+                                  + "冷却结束前风扇保持最大转速。",
+                                  systemImage: "clock.arrow.circlepath")
+                                .font(.caption)
+                                .foregroundStyle(DS.Tone.caution)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
                 }
 
                 if controller.emergencyEvents.isEmpty {
@@ -346,10 +453,10 @@ struct FanControlView: View {
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(controller.emergencyEvents.prefix(5)) { event in
-                        HStack(spacing: 8) {
+                        HStack(spacing: DS.Space.sm) {
                             Image(systemName: "thermometer.high")
                                 .font(.caption)
-                                .foregroundStyle(.red)
+                                .foregroundStyle(DS.Tone.critical)
                             Text(String(format: "峰值 %.1f°C", event.peakCelsius))
                                 .font(.caption)
                             Spacer()
@@ -371,6 +478,27 @@ struct FanControlView: View {
         }
     }
 
+    /// 兜底状态：颜色 + 文字双编码。
+    ///
+    /// 「已触发 / 未触发」只说了一个「有没有」，看不出现在是在降速还是在
+    /// 冷却 —— 这两种情况下风扇都还是最大转速，处理方式却不同。
+    private func emergencyStatus(remaining: TimeInterval) -> (text: String, isActive: Bool, color: Color) {
+        if controller.isEmergencyActive {
+            return ("紧急 · 正在强制降速", true, DS.Tone.critical)
+        }
+        if remaining > 0 {
+            return ("注意 · 降温冷却中", true, DS.Tone.caution)
+        }
+        return ("正常 · 未触发", false, DS.Tone.good)
+    }
+
+    /// 兜底解除后的冷却剩余秒数。冷却期内风扇保持最大转速。
+    private func cooldownRemaining(at now: Date) -> TimeInterval {
+        guard let last = controller.emergencyEvents.first,
+              let released = last.releasedAt else { return 0 }
+        return max(0, FanControl.emergencyCooldownSeconds - now.timeIntervalSince(released))
+    }
+
     @ViewBuilder
     private var stallWarningCard: some View {
         let stalled = controller.stalledFans
@@ -380,13 +508,13 @@ struct FanControlView: View {
                 title: "风扇控制异常",
                 subtitle: nil,
                 symbol: "exclamationmark.triangle.fill",
-                accent: .red
+                accent: DS.Tone.critical
             ) {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: DS.Space.sm) {
                     if !failed.isEmpty {
                         Text("风扇 \(failed.map(String.init).joined(separator: "、")) 连交回系统控制都失败，可能处于无法控制的状态。")
                             .font(.caption)
-                            .foregroundStyle(.red)
+                            .foregroundStyle(DS.Tone.critical)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if !stalled.isEmpty {
@@ -409,7 +537,7 @@ struct FanControlView: View {
             title: "说明",
             symbol: "info.circle"
         ) {
-            VStack(alignment: .leading, spacing: 7) {
+            VStack(alignment: .leading, spacing: DS.Space.sm) {
                 BulletLine("应用退出时主动释放风扇控制权，不等租约超时。")
                 BulletLine("助手未就绪或版本过旧时，本页保持只读并如实说明，不会假装写入成功。")
                 BulletLine("读不到风扇键时如实报告，不显示虚构的转速。")
@@ -488,11 +616,11 @@ struct FanDisclaimerSheet: View {
     let onCancel: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: DS.Space.lg) {
+            HStack(spacing: DS.Space.md) {
                 Image(systemName: "exclamationmark.shield.fill")
                     .font(.title2)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(DS.Tone.caution)
                 Text("风扇控制免责声明")
                     .font(.title3.weight(.semibold))
                 Spacer()
@@ -506,7 +634,7 @@ struct FanDisclaimerSheet: View {
             }
             .frame(maxHeight: 320)
 
-            HStack(spacing: 10) {
+            HStack(spacing: DS.Space.md) {
                 Spacer()
                 Button("取消", action: onCancel)
                     .keyboardShortcut(.cancelAction)
@@ -515,7 +643,7 @@ struct FanDisclaimerSheet: View {
                     .keyboardShortcut(.defaultAction)
             }
         }
-        .padding(24)
+        .padding(DS.Space.xl)
         .frame(width: 540)
     }
 }

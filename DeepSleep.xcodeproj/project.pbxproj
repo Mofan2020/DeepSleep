@@ -114,6 +114,7 @@
 		CCCB439545F8F500A6E18842 /* HostsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06EA4DBBBFC1FF8CA6C6DF4 /* HostsService.swift */; };
 		CDC0DB341A0DB1C90C51A258 /* AutoStartManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 432740AF96D744E5DAB258F4 /* AutoStartManager.swift */; };
 		CF5AACF31452068C8B44EBC6 /* KeepAliveError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96C806AFB3348F78552890DE /* KeepAliveError.swift */; };
+		CFB897161D498FDF81E386EA /* DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1172EC3205A31EB61DE59AE /* DesignSystem.swift */; };
 		D0CC2A42F432A1A7D0DEEEE4 /* Uninstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF2BAA4DC2FE609833A597C3 /* Uninstaller.swift */; };
 		D2AEA63CF015D131B3D5C5D3 /* FanModeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0125802CEED9987CE6BE99B /* FanModeStore.swift */; };
 		D50B72FD4279D758A75E2B7B /* IdleTime.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFD43F8F82DD114B7424CF91 /* IdleTime.swift */; };
@@ -255,6 +256,7 @@
 		BB9386B873800E6F1ADCEFDB /* FanWriteFailureTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FanWriteFailureTracker.swift; sourceTree = "<group>"; };
 		BD00E9A548D69A57CA1D30D5 /* QuarantineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuarantineView.swift; sourceTree = "<group>"; };
 		C0322343BBDEB6A664F907E5 /* AssertionKind.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssertionKind.swift; sourceTree = "<group>"; };
+		C1172EC3205A31EB61DE59AE /* DesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignSystem.swift; sourceTree = "<group>"; };
 		C4357ED9709A5548477BE6FE /* ToolboxLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolboxLayout.swift; sourceTree = "<group>"; };
 		C621046B4A0FEBDD66540895 /* DeepSleep.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DeepSleep.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C993F30605CB3C3BB8F0EC18 /* PowerActivityMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerActivityMonitor.swift; sourceTree = "<group>"; };
@@ -498,6 +500,7 @@
 				F2650D41E2F701CBC6738B29 /* ContentView.swift */,
 				0DEE905EAF64EFC038DFC418 /* ControlView.swift */,
 				571B5897312541D688A35CB1 /* DashboardView.swift */,
+				C1172EC3205A31EB61DE59AE /* DesignSystem.swift */,
 				B1455596C8E8AD1DC865EFA1 /* DiagnosticsView.swift */,
 				596F4304321F89BFF2BEC9DB /* ExternalActivityView.swift */,
 				73544675806A1C9BE67304B3 /* FanControlView.swift */,
@@ -666,6 +669,7 @@
 				51B6C48355C4201E39EE0FD3 /* DeepSleepApp.swift in Sources */,
 				BB3A3C58E54678870163A762 /* DeepSleepAppShortcuts.swift in Sources */,
 				9551EFBCD9BC4F0B0C324544 /* DeepSleepIntents.swift in Sources */,
+				CFB897161D498FDF81E386EA /* DesignSystem.swift in Sources */,
 				C0A6034F59D6236C649E5465 /* DeviceDiagnostics.swift in Sources */,
 				87026E48AE69B0854C9D2E4C /* DiagnosticModel.swift in Sources */,
 				1B50B96638C755B7E8655E91 /* DiagnosticsView.swift in Sources */,
@@ -979,11 +983,11 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 20;
+				CURRENT_PROJECT_VERSION = 21;
 				INFOPLIST_FILE = DeepSleep/Resources/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
-				MARKETING_VERSION = 1.10.0;
+				MARKETING_VERSION = 1.11.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.skyc8266.deepsleep;
 				PRODUCT_NAME = "Deep Sleep";
 				SDKROOT = macosx;
@@ -996,11 +1000,11 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 20;
+				CURRENT_PROJECT_VERSION = 21;
 				INFOPLIST_FILE = DeepSleep/Resources/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
-				MARKETING_VERSION = 1.10.0;
+				MARKETING_VERSION = 1.11.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.skyc8266.deepsleep;
 				PRODUCT_NAME = "Deep Sleep";
 				SDKROOT = macosx;

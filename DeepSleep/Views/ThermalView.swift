@@ -13,23 +13,77 @@
 //  合并取最高值、负值与零值过滤过了。这里只负责呈现，不重复做过滤 ——
 //  两处各写一份过滤逻辑迟早会漂。
 //
+//  界面约定（2026 换新）：
+//  - 颜色只表达语义，状态永远是「颜色 + 文字」双编码（正常 / 偏高 / 过高 / 紧急）。
+//  - 卡片只走 SectionCard / insetPanel / MetricTile，不自己造第二种背景。
+//  - 分档阈值（提示 / 过热）只影响本页的颜色与状态词，不参与任何判定；
+//    紧急阈值固定为安全兜底的 90°C，不在此处调整。
+//
 
 import SwiftUI
+
+// MARK: - 分档默认值
+
+/// 提示 / 过热分档的默认值。
+///
+/// 与 `@AppStorage` 的默认值必须一致 —— 一个是「首次进入的样子」，
+/// 一个是「用户没改过时读到的值」，两边不一样会出现第一次进页面档位跳动。
+private enum ThThermalBandDefaults {
+    /// 达到这个温度记「偏高」。
+    static let warn: Double = 75
+    /// 达到这个温度记「过高」。
+    static let hot: Double = 85
+    /// 提示阈值的可调区间下限。
+    static let warnLowerBound: Double = 50
+    /// 提示阈值的可调区间上限。留 88 是为了给「过热阈值」腾出 89 这一档。
+    static let warnUpperBound: Double = 88
+    /// 过热阈值的可调区间下限。
+    static let hotLowerBound: Double = 60
+    /// 过热阈值的可调区间上限。90°C 归安全兜底，不归这里。
+    static let hotUpperBound: Double = 89
+}
 
 struct ThermalView: View {
 
     @ObservedObject var monitor: ThermalMonitor
 
+    /// 传感器分组的展开状态。
+    ///
+    /// SoC / 电池 / 存储 是常看且量小的，默认展开；GPU / 其它 / 校准参考
+    /// 量大的或次要的，默认折叠。展开状态不持久化 —— 每次进页回到默认。
+    @State private var expandedGroups: Set<ThermalSensorGroup> = [.soc, .battery, .storage]
+
+    /// 提示阈值（°C）。只决定本页什么时候开始写「偏高」。
+    ///
+    /// 存 UserDefaults 是因为它是**显示偏好**，不是判定参数：安全兜底与
+    /// 告警都不看它。改它不会影响风扇与告警的任何行为。
+    @AppStorage("thermal.band.warnCelsius") private var warnThreshold: Double = ThThermalBandDefaults.warn
+    /// 过热阈值（°C）。只决定本页什么时候开始写「过高」。
+    @AppStorage("thermal.band.hotCelsius") private var hotThreshold: Double = ThThermalBandDefaults.hot
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: DS.Space.lg) {
             summaryCard
             safetyCard
             sensorCard
+            bandCard
             notesCard
             Spacer(minLength: 0)
         }
         .pageLayout()
         .onAppear { monitor.start() }
+        .onChange(of: warnThreshold) { _, newValue in
+            // 过热阈值必须高于提示阈值，否则两档会挤在一起。
+            // 直接夹住，不弹窗、不报错 —— 用户拖滑杆时最烦的就是弹窗。
+            if newValue >= hotThreshold {
+                hotThreshold = min(newValue + 1, ThThermalBandDefaults.hotUpperBound)
+            }
+        }
+        .onChange(of: hotThreshold) { _, newValue in
+            if newValue <= warnThreshold {
+                warnThreshold = max(newValue - 1, ThThermalBandDefaults.warnLowerBound)
+            }
+        }
     }
 
     // MARK: - 概览
@@ -41,98 +95,137 @@ struct ThermalView: View {
             symbol: "thermometer.medium",
             accent: summaryTint
         ) {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .top, spacing: 28) {
-                    metricBlock(
-                        title: "最高温度",
-                        value: monitor.hottestCelsius.map { String(format: "%.1f", $0) } ?? "—",
-                        unit: "°C",
-                        tint: summaryTint
-                    )
-                    metricBlock(
-                        title: "传感器",
-                        value: "\(totalSensors)",
-                        unit: "个",
-                        tint: .secondary
-                    )
-                    Spacer()
-                    VStack(alignment: .trailing, spacing: 6) {
-                        StatusPill(
-                            text: statusText,
-                            isActive: !monitor.isOverEmergencyThreshold,
-                            color: statusColor
-                        )
-                        // 「N 秒前更新」必须自己走。它是按当前时间算的，但视图
-                        // 只在 @Published 变化时重算 —— 10 秒才动一次，平时就
-                        // 一直停在「刚刚更新」，反而容易被判成「没在刷新」。
-                        TimelineView(.periodic(from: .now, by: 1)) { context in
-                            Text(updatedText(now: context.date))
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                                .monospacedDigit()
-                        }
-                    }
-                }
+            VStack(alignment: .leading, spacing: DS.Space.md) {
+                metricRow
 
-                if monitor.isOverEmergencyThreshold {
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.red)
-                        Text("最高温度 \(String(format: "%.1f", monitor.hottestCelsius ?? 0))°C，"
-                             + "已达 \(Int(FanControl.emergencyTemperatureCelsius))°C 安全阈值。"
-                             + "所有风扇已被强制拉到最大转速。")
-                            .font(.callout)
-                            .foregroundStyle(.red)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                } else if isCoolingDown {
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "clock.arrow.circlepath")
-                            .foregroundStyle(.orange)
-                        Text("温度已回落，兜底解除冷却中（还剩 \(Int(cooldownRemaining.rounded())) 秒）。"
-                             + "冷却结束前风扇保持最大转速。")
-                            .font(.callout)
-                            .foregroundStyle(.orange)
-                            .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: DS.Space.sm) {
+                    Text("共 \(totalSensors) 个传感器读数")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: DS.Space.sm)
+                    // 「N 秒前更新」必须自己走。它是按当前时间算的，但视图
+                    // 只在 @Published 变化时重算 —— 10 秒才动一次，平时就
+                    // 一直停在「刚刚更新」，反而容易被判成「没在刷新」。
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        Text(updatedText(now: context.date))
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .monospacedDigit()
                     }
                 }
 
                 if !monitor.isAvailable {
                     Label("温度读取当前不可用", systemImage: "exclamationmark.circle")
                         .font(.caption)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(DS.Tone.caution)
                 }
             }
         }
+    }
+
+    /// 一行指标格。没传感器的类别整格不渲染，不留空位。
+    private var metricRow: some View {
+        HStack(alignment: .top, spacing: DS.Space.sm) {
+            metricTile(title: "最高温", celsius: monitor.hottestCelsius, symbol: "thermometer.high")
+            if let soc = groupMax(.soc) {
+                metricTile(title: "SoC 最高", celsius: soc, symbol: "cpu")
+            }
+            if let gpu = groupMax(.gpu) {
+                metricTile(title: "GPU 最高", celsius: gpu, symbol: "display")
+            }
+            if let battery = groupMax(.battery) {
+                metricTile(title: "电池", celsius: battery, symbol: "battery.100")
+            }
+            if let storage = groupMax(.storage) {
+                metricTile(title: "存储", celsius: storage, symbol: "internaldrive")
+            }
+        }
+    }
+
+    private func metricTile(title: String, celsius: Double?, symbol: String) -> some View {
+        let band = celsius.map { band(for: $0) }
+        return MetricTile(
+            title: title,
+            value: celsius.map { String(format: "%.1f", $0) } ?? "—",
+            unit: celsius == nil ? nil : "°C",
+            status: band?.text ?? "无读数",
+            tint: band?.tint,
+            symbol: symbol
+        )
     }
 
     // MARK: - 安全兜底（永久渲染，不随状态隐藏）
 
     private var safetyCard: some View {
         SectionCard(
-            title: "安全兜底 · \(Int(FanControl.emergencyTemperatureCelsius))°C 强制最大转速",
+            title: "安全兜底 · \(Int(emergencyThreshold))°C 强制最大转速",
             subtitle: nil,
             symbol: "shield.lefthalf.filled",
-            accent: .orange
+            accent: DS.Tone.caution
         ) {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("任一传感器达到 \(Int(FanControl.emergencyTemperatureCelsius))°C 时，"
-                     + "所有风扇立即拉到各自最大转速，并压过你设置的任何模式与规则。")
+            VStack(alignment: .leading, spacing: DS.Space.md) {
+                Text("任一传感器达到 \(Int(emergencyThreshold))°C 时，"
+                     + "所有风扇立即拉到各自最大转速，并压过你设置的任何模式与规则。"
+                     + "温度回落后仍需冷却 \(Int(FanControl.emergencyCooldownSeconds)) 秒才恢复原模式，"
+                     + "避免在阈值附近抖动导致风扇反复启停。")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
-                Text("温度回落到阈值以下后仍需冷却 \(Int(FanControl.emergencyCooldownSeconds)) 秒才恢复原模式，"
-                     + "避免在阈值附近抖动导致风扇反复启停。")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
+                // 状态与倒计时放在同一个 TimelineView 里：冷却期一结束，
+                // 状态词要当场从「注意」翻回「正常」，不能等下一次温度
+                // 采样（10 秒后）才翻。
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    let remaining = cooldownRemaining(at: context.date)
+                    VStack(alignment: .leading, spacing: DS.Space.sm) {
+                        HStack(spacing: DS.Space.sm) {
+                            StatusPill(
+                                text: safetyStatus(remaining: remaining).text,
+                                isActive: safetyStatus(remaining: remaining).isActive,
+                                color: safetyStatus(remaining: remaining).color
+                            )
+                            if !hotSensors.isEmpty {
+                                ForEach(hotSensors.prefix(3)) { reading in
+                                    Tag(text: "\(reading.sensorID) \(String(format: "%.1f", reading.celsius))°C",
+                                        color: DS.Tone.critical)
+                                }
+                                if hotSensors.count > 3 {
+                                    Tag(text: "另有 \(hotSensors.count - 3) 个", color: DS.Tone.critical)
+                                }
+                            }
+                            Spacer(minLength: DS.Space.sm)
+                        }
+
+                        // 触发时把「发生了什么」写出来：光一个红点不够，
+                        // 用户要知道现在风扇是什么状态。
+                        if monitor.isOverEmergencyThreshold {
+                            Text("最高温 \(String(format: "%.1f", monitor.hottestCelsius ?? 0))°C，"
+                                 + "已达 \(Int(emergencyThreshold))°C 安全阈值。"
+                                 + "所有风扇已被强制拉到最大转速。")
+                                .font(.callout)
+                                .foregroundStyle(DS.Tone.critical)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+
+                        // 冷却倒计时。冷却期结束前风扇保持最大转速 ——
+                        // 这句必须写出来，否则用户会以为温度一降下来
+                        // 风扇就回到原转速了。
+                        if remaining > 0 {
+                            Label("降温冷却中，还剩 \(Int(remaining.rounded())) 秒。"
+                                  + "冷却结束前风扇保持最大转速。",
+                                  systemImage: "clock.arrow.circlepath")
+                                .font(.caption)
+                                .foregroundStyle(DS.Tone.caution)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
 
                 if !monitor.isAvailable {
                     Label("兜底判定依赖温度读取，读不到温度时无法生效",
                           systemImage: "exclamationmark.circle")
                         .font(.caption)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(DS.Tone.caution)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -146,15 +239,21 @@ struct ThermalView: View {
             title: "传感器",
             subtitle: "同名通道已合并，显示其中的最高值。",
             symbol: "list.bullet.rectangle",
-            accent: .blue
+            accent: DS.Tone.info
         ) {
-            VStack(alignment: .leading, spacing: 0) {
-                if totalSensors == 0 {
-                    Text(monitor.isAvailable ? "暂无有效温度读数" : "温度读取不可用")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .padding(.vertical, 8)
-                } else {
+            if totalSensors == 0 {
+                EmptyStateView(
+                    title: monitor.isAvailable ? "暂无有效温度读数" : "温度读取不可用",
+                    message: monitor.isAvailable
+                        ? "这台机器暂时没有读到有效的温度通道。"
+                        : "可能是这台机器不提供 IOHID 温度通道，或特权助手尚未就绪。",
+                    systemImage: "thermometer.slash"
+                )
+                .frame(minHeight: 120)
+            } else {
+                VStack(alignment: .leading, spacing: DS.Space.sm) {
+                    // 空组整组不渲染 —— 本机实测 GPU 与「其它」常常是 0 条，
+                    // 显示「GPU (0)」只会让人以为读数丢了。
                     ForEach(ThermalSensorGroup.allCases) { group in
                         if let readings = monitor.groupedReadings[group], !readings.isEmpty {
                             groupSection(group, readings)
@@ -167,27 +266,42 @@ struct ThermalView: View {
 
     private func groupSection(_ group: ThermalSensorGroup,
                               _ readings: [GroupedTemperatureReading]) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 6) {
+        DisclosureGroup(isExpanded: expansionBinding(for: group)) {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(readings.sorted { $0.celsius > $1.celsius }) { reading in
+                    sensorRow(reading)
+                }
+            }
+        } label: {
+            HStack(spacing: DS.Space.sm) {
                 Text(group.displayName)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .font(.subheadline.weight(.semibold))
                 Text("\(readings.count)")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
-                Spacer()
-            }
-            .padding(.top, 8)
-
-            ForEach(readings.sorted { $0.celsius > $1.celsius }) { reading in
-                sensorRow(reading)
             }
         }
     }
 
+    private func expansionBinding(for group: ThermalSensorGroup) -> Binding<Bool> {
+        Binding(
+            get: { expandedGroups.contains(group) },
+            set: { isExpanded in
+                if isExpanded {
+                    expandedGroups.insert(group)
+                } else {
+                    expandedGroups.remove(group)
+                }
+            }
+        )
+    }
+
     private func sensorRow(_ reading: GroupedTemperatureReading) -> some View {
-        HStack(spacing: 10) {
-            ThresholdDot(celsius: reading.celsius)
+        let band = band(for: reading.celsius)
+        return HStack(spacing: DS.Space.sm) {
+            ThresholdDot(celsius: reading.celsius,
+                         warnThreshold: warnThreshold,
+                         hotThreshold: hotThreshold)
             Text(reading.sensorID)
                 .font(.system(.callout, design: .monospaced))
                 .lineLimit(1)
@@ -199,32 +313,93 @@ struct ThermalView: View {
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
-            Spacer(minLength: 8)
+            Spacer(minLength: DS.Space.sm)
             Text(String(format: "%.1f", reading.celsius))
                 .font(.system(.body, design: .monospaced).weight(.semibold))
                 .monospacedDigit()
-                .foregroundStyle(tint(for: reading.celsius))
+                .foregroundStyle(band.tint ?? Color.primary)
             Text("°C")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text(bandText(for: reading.celsius))
+            Text(band.text)
                 .font(.caption2)
-                .foregroundStyle(tint(for: reading.celsius))
+                .foregroundStyle(band.tint ?? Color.primary)
                 .frame(width: 28, alignment: .leading)
         }
-        .padding(.vertical, 5)
+        .padding(.vertical, DS.Space.xs)
     }
+
+    // MARK: - 分档阈值
+
+    private var bandCard: some View {
+        SectionCard(
+            title: "温度分档",
+            subtitle: "只影响本页的颜色与状态词，不参与任何判定；紧急阈值固定不可改。",
+            symbol: "slider.horizontal.below.rectangle",
+            accent: DS.Tone.caution
+        ) {
+            VStack(alignment: .leading, spacing: DS.Space.md) {
+                thresholdRow(
+                    title: "提示阈值",
+                    value: "\(Int(warnThreshold)) °C"
+                ) {
+                    Slider(value: $warnThreshold,
+                           in: ThThermalBandDefaults.warnLowerBound...ThThermalBandDefaults.warnUpperBound,
+                           step: 1)
+                }
+
+                thresholdRow(
+                    title: "过热阈值",
+                    value: "\(Int(hotThreshold)) °C"
+                ) {
+                    Slider(value: $hotThreshold,
+                           in: ThThermalBandDefaults.hotLowerBound...ThThermalBandDefaults.hotUpperBound,
+                           step: 1)
+                }
+
+                LabeledContent("紧急阈值") {
+                    HStack(spacing: DS.Space.sm) {
+                        Text("\(Int(emergencyThreshold)) °C")
+                            .font(.system(.body, design: .monospaced).weight(.semibold))
+                            .monospacedDigit()
+                        Tag(text: "固定值", color: DS.Tone.idle)
+                    }
+                }
+
+                Text("\(Int(emergencyThreshold))°C 来自安全兜底，不在此处调整。")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// 一行阈值：标题 + 当前值 + 滑杆。
+    private func thresholdRow(title: String,
+                              value: String,
+                              @ViewBuilder slider: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: DS.Space.xs) {
+            LabeledContent(title) {
+                Text(value)
+                    .font(.system(.body, design: .monospaced).weight(.semibold))
+                    .monospacedDigit()
+            }
+            slider()
+        }
+    }
+
+    // MARK: - 说明
 
     private var notesCard: some View {
         SectionCard(
             title: "说明",
             symbol: "info.circle"
         ) {
-            VStack(alignment: .leading, spacing: 7) {
+            VStack(alignment: .leading, spacing: DS.Space.sm) {
                 BulletLine("温度由特权助手读取，助手未就绪时这一页读不到数。")
                 BulletLine("负读数与零读数代表该通道不是温度传感器，已在采集层过滤。")
-                BulletLine("「校准参考」组的读数长期恒定，是 PMU 的校准基准，不参与最高温与 \(Int(FanControl.emergencyTemperatureCelsius))°C 兜底判定。")
-                BulletLine("\(Int(FanControl.emergencyTemperatureCelsius))°C 兜底由应用与特权助手两侧独立判定，应用退出后助手仍会保命。")
+                BulletLine("「校准参考」组的读数长期恒定，是 PMU 的校准基准，不参与最高温与 \(Int(emergencyThreshold))°C 兜底判定。")
+                BulletLine("\(Int(emergencyThreshold))°C 兜底由应用与特权助手两侧独立判定，应用退出后助手仍会保命。")
                 BulletLine("本页显示传感器原始读数，不做平滑，因此会有小幅跳动。")
             }
         }
@@ -236,35 +411,48 @@ struct ThermalView: View {
         monitor.groupedReadings.values.reduce(0) { $0 + $1.count }
     }
 
+    private var emergencyThreshold: Double {
+        FanControl.emergencyTemperatureCelsius
+    }
+
+    /// 某一组里的最高读数。没有读数的组返回 nil —— 那一格整格不渲染。
+    private func groupMax(_ group: ThermalSensorGroup) -> Double? {
+        monitor.groupedReadings[group]?.map(\.celsius).max()
+    }
+
+    /// 达到或超过紧急阈值的传感器（按温度从高到低）。
+    private var hotSensors: [GroupedTemperatureReading] {
+        monitor.groupedReadings.values
+            .flatMap { $0 }
+            .filter { $0.celsius >= emergencyThreshold }
+            .sorted { $0.celsius > $1.celsius }
+    }
+
     /// 兜底解除后的冷却剩余秒数。
     ///
     /// 从兜底事件历史推导：最近一次已解除的事件若还在冷却窗口内，
     /// 说明风扇仍被按在最大转速上，界面要如实显示，不能装作已经恢复。
-    private var cooldownRemaining: TimeInterval {
+    private func cooldownRemaining(at now: Date) -> TimeInterval {
         guard let last = FanController.shared.emergencyEvents.first,
               let released = last.releasedAt else { return 0 }
-        let elapsed = Date().timeIntervalSince(released)
+        let elapsed = now.timeIntervalSince(released)
         return max(0, FanControl.emergencyCooldownSeconds - elapsed)
     }
 
-    private var isCoolingDown: Bool {
-        !monitor.isOverEmergencyThreshold && cooldownRemaining > 0
+    /// 兜底卡的状态。颜色 + 文字双编码：只有「紧急 / 注意 / 正常」三档，
+    /// 每一档都必须带一个字，光靠颜色区分不了「正在降速」和「正在冷却」。
+    private func safetyStatus(remaining: TimeInterval) -> (text: String, isActive: Bool, color: Color) {
+        if monitor.isOverEmergencyThreshold {
+            return ("紧急 · 已触发", true, DS.Tone.critical)
+        }
+        if remaining > 0 {
+            return ("注意 · 降温冷却中", true, DS.Tone.caution)
+        }
+        return ("正常 · 未触发", false, DS.Tone.good)
     }
 
     private var summaryTint: Color {
-        tint(for: monitor.hottestCelsius)
-    }
-
-    private var statusText: String {
-        if monitor.isOverEmergencyThreshold { return "紧急降速中" }
-        if isCoolingDown { return "冷却中" }
-        return "正常"
-    }
-
-    private var statusColor: Color {
-        if monitor.isOverEmergencyThreshold { return .red }
-        if isCoolingDown { return .orange }
-        return .green
+        band(for: monitor.hottestCelsius).tint ?? DS.Tone.idle
     }
 
     private func updatedText(now: Date) -> String {
@@ -275,40 +463,36 @@ struct ThermalView: View {
         return updated.formatted(date: .omitted, time: .standard)
     }
 
-    private func tint(for celsius: Double?) -> Color {
-        guard let celsius else { return .secondary }
-        if celsius >= FanControl.emergencyTemperatureCelsius { return .red }
-        if celsius >= 85 { return .orange }
-        if celsius >= 75 { return .yellow }
-        return .primary
+    /// 温度分档 —— 颜色 + 状态词同时给出。
+    ///
+    /// 四档：正常 / 偏高 / 过高 / 紧急。阈值来自本页的提示与过热设定，
+    /// 紧急档固定来自安全兜底的 90°C。
+    ///
+    /// 「正常」用主色（tint 为 nil）：一屏读数多半都正常，全绿反而吵。
+    /// 偏高用黄色 —— DS.Tone 里没有这一档的语义色（只有好/注意/危险），
+    /// 而四档必须彼此可分，黄色是「注意但还没到危险」这一档唯一的落点。
+    /// 一档温度。
+    ///
+    /// **用具名结构体，不用具组**：(text, tint: Color?) 这种「元组里套可选」
+    /// 的形状在 Release 的全模块优化下会让 Swift 编译器崩掉
+    /// （SIL 所有权校验报错，fatal error encountered during compilation）。
+    /// 换成就一个普通结构体，问题消失。
+    struct Band {
+        let text: String
+        /// 正常档没有颜色 —— 一屏读数全绿反而看不出重点。
+        let tint: Color?
     }
 
-    private func tint(for celsius: Double) -> Color {
-        tint(for: Optional(celsius))
+    private func band(for celsius: Double?) -> Band {
+        guard let celsius else { return Band(text: "无读数", tint: DS.Tone.idle) }
+        if celsius >= emergencyThreshold { return Band(text: "紧急", tint: DS.Tone.critical) }
+        if celsius >= hotThreshold { return Band(text: "过高", tint: DS.Tone.caution) }
+        if celsius >= warnThreshold { return Band(text: "偏高", tint: Color.yellow) }
+        return Band(text: "正常", tint: nil)
     }
 
-    private func bandText(for celsius: Double) -> String {
-        if celsius >= FanControl.emergencyTemperatureCelsius { return "紧急" }
-        if celsius >= 85 { return "过高" }
-        if celsius >= 75 { return "偏高" }
-        return "正常"
-    }
-
-    private func metricBlock(title: String, value: String, unit: String, tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            HStack(alignment: .firstTextBaseline, spacing: 2) {
-                Text(value)
-                    .font(.system(.title2, design: .monospaced).weight(.semibold))
-                    .monospacedDigit()
-                    .foregroundStyle(tint)
-                Text(unit)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
+    private func band(for celsius: Double) -> Band {
+        band(for: Optional(celsius))
     }
 }
 
@@ -317,12 +501,16 @@ struct ThermalView: View {
 /// 温度分档小圆点。颜色只是辅助，状态词才是判定依据。
 struct ThresholdDot: View {
     let celsius: Double
+    /// 提示阈值。超过它这一档是「偏高」。
+    var warnThreshold: Double = ThThermalBandDefaults.warn
+    /// 过热阈值。超过它这一档是「过高」。
+    var hotThreshold: Double = ThThermalBandDefaults.hot
 
     private var color: Color {
-        if celsius >= FanControl.emergencyTemperatureCelsius { return .red }
-        if celsius >= 85 { return .orange }
-        if celsius >= 75 { return .yellow }
-        return .green.opacity(0.65)
+        if celsius >= FanControl.emergencyTemperatureCelsius { return DS.Tone.critical }
+        if celsius >= hotThreshold { return DS.Tone.caution }
+        if celsius >= warnThreshold { return Color.yellow }
+        return DS.Tone.good.opacity(0.65)
     }
 
     var body: some View {

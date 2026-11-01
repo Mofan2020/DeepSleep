@@ -8,12 +8,13 @@
 //    - 顶部一句话结论 + 严重度配色；有问题的问题排在最前面。
 //    - 正常项默认折叠 —— 一屏全是「正常」等于没信息量。
 //    - 检测要跑几秒（几十条命令），必须有明确的运行中状态，不能像卡死。
+//    - 每条检查项给三样东西：检查项 / 结果 / 说明（怎么办 + 原始细节）。
 //
 //  数据流：
 //    DeviceDiagnostics.collectReport()  →  Shared/DiagnosticModel.swift 判定
 //    → DiagnosticReport（分组 + 每项的严重度 / 建议）→ 本页渲染。
 //
-//  只读诊断：不改任何系统设置，不请求管理员权限。
+//  只读诊断：不改任何系统设置，不请求管理员权限.
 //
 
 import SwiftUI
@@ -32,8 +33,10 @@ struct DiagnosticsView: View {
     @State private var copiedAt: Date?
     @State private var lastError: String?
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: DS.Space.lg) {
             headerCard
 
             if isRunning {
@@ -47,9 +50,9 @@ struct DiagnosticsView: View {
             }
 
             if let lastError {
-                Text(lastError)
+                Label(lastError, systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(DS.Tone.critical)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -72,21 +75,21 @@ struct DiagnosticsView: View {
             symbol: "stethoscope",
             accent: headlineColor
         ) {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: DS.Space.md) {
                 if let report {
-                    HStack(spacing: 10) {
+                    HStack(spacing: DS.Space.sm) {
                         Image(systemName: headlineSymbol)
                             .font(.system(size: 20, weight: .semibold))
                             .foregroundStyle(headlineColor)
                         Text(report.headline)
                             .font(.system(.headline, design: .rounded).weight(.semibold))
                             .foregroundStyle(headlineColor)
-                        Spacer(minLength: 8)
+                        Spacer(minLength: DS.Space.sm)
                         if report.problemCount > 0 {
-                            Tag(text: "严重 \(report.criticalCount)", color: .red)
-                            Tag(text: "注意 \(report.warningCount)", color: .orange)
+                            Tag(text: "严重 \(report.criticalCount)", color: DS.Tone.critical)
+                            Tag(text: "注意 \(report.warningCount)", color: DS.Tone.caution)
                         } else {
-                            Tag(text: "全部正常", color: .green)
+                            Tag(text: "全部正常", color: DS.Tone.good)
                         }
                     }
 
@@ -95,7 +98,7 @@ struct DiagnosticsView: View {
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    HStack(spacing: 8) {
+                    HStack(spacing: DS.Space.sm) {
                         Button {
                             Task { await runDiagnostics() }
                         } label: {
@@ -112,20 +115,20 @@ struct DiagnosticsView: View {
                         .controlSize(.regular)
                         .disabled(isRunning)
 
+                        Spacer(minLength: DS.Space.sm)
+
                         Toggle("显示正常项", isOn: $showHealthyItems)
                             .toggleStyle(.switch)
                             .controlSize(.small)
-                        Spacer(minLength: 0)
                     }
                 } else if !isRunning {
-                    Text("还没有检测结果。")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                    Button {
-                        Task { await runDiagnostics() }
-                    } label: {
-                        Label("开始检测", systemImage: "play.fill")
-                    }
+                    EmptyStateView(
+                        title: "还没有检测结果",
+                        message: "跑一次只读体检，看看硬件、系统与配置有没有问题。",
+                        systemImage: "stethoscope",
+                        actionTitle: "开始检测",
+                        action: { Task { await runDiagnostics() } }
+                    )
                 }
             }
         }
@@ -141,9 +144,9 @@ struct DiagnosticsView: View {
 
     private var headlineColor: Color {
         guard let report else { return .accentColor }
-        if report.criticalCount > 0 { return .red }
-        if report.warningCount > 0 { return .orange }
-        return .green
+        if report.criticalCount > 0 { return DS.Tone.critical }
+        if report.warningCount > 0 { return DS.Tone.caution }
+        return DS.Tone.good
     }
 
     private var headlineSymbol: String {
@@ -162,7 +165,7 @@ struct DiagnosticsView: View {
             symbol: "hourglass",
             accent: .accentColor
         ) {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: DS.Space.md) {
                 ProgressView()
                     .controlSize(.small)
                 Text("要跑几十条系统命令，通常几秒钟。温度与进程列表需要特权助手配合，助手不可用时会标成「无法读取」。")
@@ -185,7 +188,7 @@ struct DiagnosticsView: View {
             symbol: section.icon,
             accent: sectionAccent(problems)
         ) {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: DS.Space.sm) {
                 if problems.isEmpty && normal.isEmpty {
                     Text("这一组没有采集到任何内容。")
                         .font(.caption)
@@ -199,15 +202,13 @@ struct DiagnosticsView: View {
                 if !normal.isEmpty {
                     if showHealthyItems {
                         Divider()
-                        Text("正常项")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
+                        SubsectionHeader(title: "正常项", symbol: "checkmark.circle")
                         ForEach(normal) { item in
                             DiagnosticItemRow(item: item)
                         }
                     } else {
                         Button {
-                            withAnimation(.easeInOut(duration: 0.15)) {
+                            withAnimation(reduceMotion ? nil : DS.Animation.quick) {
                                 showHealthyItems = true
                             }
                         } label: {
@@ -230,9 +231,9 @@ struct DiagnosticsView: View {
     }
 
     private func sectionAccent(_ problems: [DiagnosticItem]) -> Color {
-        if problems.contains(where: { $0.severity == .critical }) { return .red }
-        if problems.contains(where: { $0.severity == .warning }) { return .orange }
-        return .green
+        if problems.contains(where: { $0.severity == .critical }) { return DS.Tone.critical }
+        if problems.contains(where: { $0.severity == .warning }) { return DS.Tone.caution }
+        return DS.Tone.good
     }
 
     // MARK: - 动作
@@ -243,13 +244,12 @@ struct DiagnosticsView: View {
         lastError = nil
         copiedAt = nil
         defer { isRunning = false }
-        do {
-            let result = await DeviceDiagnostics.collectReport()
-            report = result
-            saveArchivedReport(result)
-        } catch {
-            lastError = "检测失败：\(error.localizedDescription)"
-        }
+        // `collectReport()` 不抛错 —— 采集失败时它自己降级（拿不到的项标成
+        // 不可用）。所以这里没有 do/catch：写了反而是编译器警告里的
+        // 「catch 块永远不会执行」。
+        let result = await DeviceDiagnostics.collectReport()
+        report = result
+        saveArchivedReport(result)
     }
 
     /// 读上次的报告。存档损坏或格式对不上时返回 nil —— 直接重跑一次，
@@ -280,24 +280,28 @@ struct DiagnosticsView: View {
 
 // MARK: - 单条检查项
 
-/// 一条检查项：现象 + 当前值 + 怎么处理。
+/// 一条检查项：检查项 + 结果 + 说明（怎么处理 / 原始细节）。
 ///
 /// 正常项用次要色弱化，问题项用严重度色突出 —— 一屏里「正常」不该跟
-/// 「需要处理」抢注意力。
+/// 「需要处理」抢注意力。严重度同时写成文字（正常 / 注意 / 严重），
+/// 不能只靠颜色区分。
 private struct DiagnosticItemRow: View {
 
     let item: DiagnosticItem
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
+        VStack(alignment: .leading, spacing: DS.Space.xs) {
+            HStack(alignment: .firstTextBaseline, spacing: DS.Space.sm) {
                 Image(systemName: item.severity.symbolName)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(accent)
                 Text(item.title)
                     .font(.body.weight(.medium))
                     .foregroundStyle(item.severity == .info ? Color.secondary : Color.primary)
-                Spacer(minLength: 8)
+                Spacer(minLength: DS.Space.sm)
+                Text(item.severity.label)
+                    .font(.caption2)
+                    .foregroundStyle(accent)
                 Text(item.value)
                     .font(.system(.callout, design: .monospaced))
                     .foregroundStyle(item.severity == .info ? Color.secondary : accent)
@@ -306,17 +310,17 @@ private struct DiagnosticItemRow: View {
             }
 
             if let suggestion = item.suggestion, !suggestion.isEmpty {
-                HStack(alignment: .top, spacing: 6) {
+                HStack(alignment: .top, spacing: DS.Space.xs) {
                     Image(systemName: "arrow.turn.down.right")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(accent.opacity(0.8))
-                        .padding(.top, 3)
+                        .padding(.top, DS.Space.xxs)
                     Text(suggestion)
                         .font(.callout)
                         .foregroundStyle(.primary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                .padding(.leading, 20)
+                .padding(.leading, DS.Space.xl)
             }
 
             if let detail = item.detail, !detail.isEmpty {
@@ -325,27 +329,19 @@ private struct DiagnosticItemRow: View {
                     .foregroundStyle(.tertiary)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.leading, 20)
+                    .padding(.leading, DS.Space.xl)
             }
         }
-        .padding(.vertical, 4)
-        .padding(.horizontal, 10)
-        .background(background, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .padding(DS.Space.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .insetPanel()
     }
 
     private var accent: Color {
         switch item.severity {
-        case .info:     return .secondary
-        case .warning:  return .orange
-        case .critical: return .red
-        }
-    }
-
-    private var background: Color {
-        switch item.severity {
-        case .info:     return Color.clear
-        case .warning:  return Color.orange.opacity(0.08)
-        case .critical: return Color.red.opacity(0.08)
+        case .info:     return DS.Tone.idle
+        case .warning:  return DS.Tone.caution
+        case .critical: return DS.Tone.critical
         }
     }
 }

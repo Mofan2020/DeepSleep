@@ -4,6 +4,11 @@
 //
 //  「更新」页：应用自身的自动更新，以及特权助手的版本与更新。
 //
+//  界面约定：
+//    - 版本信息用 MetricTile + StatusPill：数字一眼可见，状态另有文字。
+//    - 「立即检查」是次要操作；真正要点的「立即更新并重启」才用主按钮。
+//    - 校验细节（edDSA 签名、摘要比对等）收进说明文字，不抢主线的注意力。
+//
 
 import SwiftUI
 
@@ -28,7 +33,7 @@ struct UpdateView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: DS.Space.lg) {
             applicationCard
             helperCard
             mechanismCard
@@ -45,38 +50,64 @@ struct UpdateView: View {
             symbol: "arrow.down.circle",
             accent: .accentColor
         ) {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 10) {
-                    Text("当前版本 \(updates.currentVersion)")
-                        .font(.callout.weight(.medium))
-                    Tag(text: updates.phase.text,
-                        color: phaseColor)
+            VStack(alignment: .leading, spacing: DS.Space.md) {
+                HStack(spacing: DS.Space.md) {
+                    MetricTile(
+                        title: "当前版本",
+                        value: updates.currentVersion,
+                        status: "已安装",
+                        tint: .primary
+                    )
+                    MetricTile(
+                        title: "最新版本",
+                        value: latestVersion,
+                        status: latestVersionStatus,
+                        tint: latestVersionTint
+                    )
+                }
+
+                HStack(spacing: DS.Space.sm) {
+                    StatusPill(text: updates.phase.text, isActive: updates.phase.isBusy, color: phaseColor)
                     Spacer(minLength: 0)
                 }
 
-                Toggle("自动检查更新", isOn: Binding(
+                Toggle(isOn: Binding(
                     get: { updates.automaticallyChecks },
                     set: { updates.automaticallyChecks = $0 }
-                ))
-                Toggle("安装前先询问", isOn: Binding(
+                )) {
+                    Text("自动检查更新").font(.body.weight(.medium))
+                }
+                .toggleStyle(.switch)
+
+                Toggle(isOn: Binding(
                     get: { updates.asksBeforeInstalling },
                     set: { updates.asksBeforeInstalling = $0 }
-                ))
+                )) {
+                    Text("安装前先询问").font(.body.weight(.medium))
+                }
+                .toggleStyle(.switch)
+
                 Text(updates.asksBeforeInstalling
                      ? "发现新版本时会自动下载并校验，但不会自行重启，等你确认后再安装。"
                      : "发现新版本时会自动下载、校验并直接重启完成安装。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
 
-                Toggle("跳过预发布版本（仅装正式版）", isOn: Binding(
+                Toggle(isOn: Binding(
                     get: { updates.skipPrereleaseUpdates },
                     set: { updates.skipPrereleaseUpdates = $0 }
-                ))
+                )) {
+                    Text("跳过预发布版本（仅装正式版）").font(.body.weight(.medium))
+                }
+                .toggleStyle(.switch)
+
                 Text(updates.skipPrereleaseUpdates
                      ? "只升级版本号严格更高且不是 Pre-release 的 Release。"
                      : "包括 Pre-release 版本（仓库当前发布习惯是标 Pre-release）。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 // 下载进度：phase 是 downloading 时显示；其它阶段不显示。
                 if case .downloading(_, let progress) = updates.phase {
@@ -87,7 +118,8 @@ struct UpdateView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                HStack(spacing: 10) {
+                HStack(spacing: DS.Space.sm) {
+                    // 检查是次要操作：不做主按钮样式。
                     Button {
                         Task { await updates.checkForUpdates() }
                     } label: {
@@ -112,13 +144,46 @@ struct UpdateView: View {
         }
     }
 
+    /// 最新可用版本。还没查过就是「—」，不拿当前版本冒充。
+    private var latestVersion: String {
+        switch updates.phase {
+        case .upToDate(let current):   return current
+        case .available(let version):  return version
+        case .downloading(let version, _): return version
+        case .ready(let version):      return version
+        default:                       return "—"
+        }
+    }
+
+    private var latestVersionStatus: String {
+        switch updates.phase {
+        case .upToDate:                return "已是最新"
+        case .available:               return "可更新"
+        case .downloading:             return "下载中"
+        case .ready:                  return "已就绪"
+        case .checking:                return "正在检查"
+        case .failed:                 return "检查失败"
+        default:                      return "尚未检查"
+        }
+    }
+
+    private var latestVersionTint: Color {
+        switch updates.phase {
+        case .upToDate:  return DS.Tone.good
+        case .available, .ready: return DS.Tone.caution
+        case .failed:    return DS.Tone.critical
+        case .checking, .downloading: return DS.Tone.info
+        default:         return DS.Tone.idle
+        }
+    }
+
     private var phaseColor: Color {
         switch updates.phase {
-        case .upToDate:   return .green
-        case .ready:      return .orange
-        case .failed:     return .red
-        case .available:  return .accentColor
-        default:          return .secondary
+        case .upToDate:   return DS.Tone.good
+        case .ready:      return DS.Tone.caution
+        case .failed:     return DS.Tone.critical
+        case .available:  return DS.Tone.info
+        default:          return DS.Tone.idle
         }
     }
 
@@ -131,14 +196,24 @@ struct UpdateView: View {
                 + "判据是两份文件的内容摘要 —— 助手代码没变就不会重装。"
                 + "助手已经是 root，可以自己替换自己，所以这种更新不需要再输密码。",
             symbol: "lock.shield",
-            accent: helper.state.needsAttention ? .orange : .green
+            accent: helper.state.needsAttention ? DS.Tone.caution : DS.Tone.good
         ) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 10) {
-                    Text("与内置助手比对")
-                        .font(.callout.weight(.medium))
-                    Tag(text: helper.state.needsAttention ? "需要处理" : "正常",
-                        color: helper.state.needsAttention ? .orange : .green)
+            VStack(alignment: .leading, spacing: DS.Space.md) {
+                HStack(spacing: DS.Space.md) {
+                    MetricTile(
+                        title: "助手状态",
+                        value: helperShortVersion,
+                        status: helper.state.needsAttention ? "需要处理" : "正常",
+                        tint: helper.state.needsAttention ? DS.Tone.caution : DS.Tone.good
+                    )
+                }
+
+                HStack(spacing: DS.Space.sm) {
+                    StatusPill(
+                        text: helper.state.needsAttention ? "需要处理" : "正常",
+                        isActive: !helper.state.needsAttention,
+                        color: helper.state.needsAttention ? DS.Tone.caution : DS.Tone.good
+                    )
                     Spacer(minLength: 0)
                 }
 
@@ -147,7 +222,7 @@ struct UpdateView: View {
                     .foregroundStyle(helper.state.needsAttention ? Color.primary : Color.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
-                HStack(spacing: 10) {
+                HStack(spacing: DS.Space.sm) {
                     Button {
                         Task { await checkHelper() }
                     } label: {
@@ -183,6 +258,24 @@ struct UpdateView: View {
         // 打开这一页就先探一次：状态是上一次探测的快照，
         // 不刷新的话刚启动那几秒会显示成「未安装」。
         .task { _ = await helper.refresh() }
+    }
+
+    /// 助手的版本标识：装好的那份与内置的那份的摘要前缀。
+    private var helperShortVersion: String {
+        switch helper.state {
+        case .upToDate(let installed):
+            return HelperVersionManager.State.short(installed)
+        case .outdated(let installed, let target):
+            return "\(HelperVersionManager.State.short(installed)) → \(HelperVersionManager.State.short(target))"
+        case .notInstalled:
+            return "未安装"
+        case .unreachable:
+            return "无响应"
+        case .needsReinstall:
+            return "旧版"
+        case .updateFailed:
+            return "更新失败"
+        }
     }
 
     // MARK: - 助手版本：检查与更新
@@ -273,7 +366,7 @@ struct UpdateView: View {
             subtitle: nil,
             symbol: "checklist"
         ) {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: DS.Space.sm) {
                 bullet("应用更新只在 Release 版本号**严格更高**时进行；"
                        + "版本号解析不了一律当作「没有更新」，绝不当作「有更新」。")
                 bullet("下载的 zip 必须能解开，里面的 .app 的 bundle id 必须是 "
@@ -294,11 +387,11 @@ struct UpdateView: View {
     }
 
     private func bullet(_ text: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: DS.Space.sm) {
             Image(systemName: "circle.fill")
                 .font(.system(size: 4))
                 .foregroundStyle(.secondary)
-                .padding(.top, 6)
+                .padding(.top, DS.Space.xs)
             Text(.init(text))
                 .font(.caption)
                 .foregroundStyle(.secondary)
