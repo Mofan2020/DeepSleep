@@ -1836,6 +1836,224 @@ macOS 图标的体积感靠**边缘反光 + 投影**撑，不靠装饰圈。所�
   交还 → 状态回传 → 应用通知」这条链没跑过。
 - 90°C 强制最大转速仍未真机触发验证。
 
+## v1.10.0 — 未响应应用误报 Telegram：判据从「问应用」改成「问系统」
+
+### 症状
+
+未响应应用检测一上线就反复把 Telegram 报成「未响应」，而 Telegram 用得好好的。
+
+### 第一版为什么错：拿辅助功能去问应用
+
+第一版判据是 `AXUIElementCopyAttributeValue(app, kAXWindowsAttribute)` 加 2 秒超时，
+超时就当卡死。这条判据把两件完全不同的事混成一件：
+
+1. 应用真的卡住，不处理消息；
+2. 应用活着，只是辅助功能树响应慢或者实现得不全。
+
+Telegram 属于第二类。它体量大、辅助功能查询经常赶不上 2 秒，
+于是被反复误报。**「AX 答不上来」根本不能证明应用卡死。**
+
+### 中间试过的一条：读内核线程状态
+
+想过用 `proc_pidinfo(PROC_PIDLISTTHREADS)` + `PROC_PIDTHREADINFO` 读主线程
+运行状态与累计 CPU 时间，只在「主线程空转」时再问应用复核。
+
+实测（本机 macOS 27.2）：
+
+| 场景 | 主线程 run_state |
+| --- | --- |
+| Telegram / 微信 / QQ / Safari / 访达（正常） | 3 = WAITING |
+| `sleep` 被 SIGSTOP 挂起 | **3 = WAITING**（没变） |
+| 主线程死循环的进程 | 1 = RUNNING，CPU 猛涨 |
+
+问题是 `pth_run_state` **不反映挂起**，正常空闲和等锁死锁都是 WAITING。
+这条只能证明「不正常」，证明不了「正常」，做闸门会漏掉绝大多数真卡死。
+放弃了。
+
+### 最终判据：WindowServer 自己那份状态
+
+活动监视器（Activity Monitor）和「强制退出」窗口显示的「未响应」来自
+WindowServer，用的是：
+
+```c
+CGSConnectionID cid = _CGSDefaultConnection();
+ProcessSerialNumber psn;
+GetProcessForPID(pid, &psn);
+bool hung = CGSEventIsAppUnresponsive(cid, &psn);
+```
+
+三个符号都不是公开 API。Swift 里用 `dlsym(RTLD_DEFAULT, ...)` 取
+（`GetProcessForPID` 被标成 10.9 起废弃、Swift 里直接不可用，符号本身还在，
+dlsym 能拿到）。`RTLD_DEFAULT` 在 Swift 里没有常量，约定值是 `-2`。
+
+### 实测数据
+
+| 场景 | `CGSEventIsAppUnresponsive` |
+| --- | --- |
+| Telegram / 微信 / QQ / Safari / 访达 等 13 个正常应用 | 全部 `false` |
+| 通过 LaunchServices 启动的 TextEdit，`kill -STOP` 之后 | **约 15 秒后转 `true`** |
+| 同上，`kill -CONT` 恢复 | 半秒内转回 `false` |
+
+那 15 秒是 WindowServer 自己的 ping 超时周期，不是我们加的延时 ——
+刚卡住的十几秒里系统自己也还认为它正常。界面上要如实说明这一点。
+
+### 附带的好处
+
+- **不需要辅助功能授权了**。判据不经过应用，用户少勾一个系统设置。
+- 「问不出结果」和「未响应」分得开：不存在的 pid 返回 `nil`，不当成卡死。
+- 符号取不到时整块停用并如实显示「系统判定接口不可用」，
+  **不退回猜的判据** —— 那正是 Telegram 那次误报的来路。
+
+### 回归测试
+
+`scripts/test-hang-verdict.swift`：符号可用性、正常应用零误报、
+Deep Sleep 自己判为正常、不存在的 pid 返回 nil、批量接口一致。
+
+真实卡死场景（SIGSTOP 一个 GUI 应用、等 15 秒）不进自动化测试 ——
+光等待就 15 秒，会拖垮整个回归。这一条保留在上面的手工实测记录里。
+
+---
+
+## v1.10.0 — 监控曲线的两个坑：下标当 X 轴、两条线不区分 series
+
+### 症状
+
+系统监控页的「最近 60 秒」曲线看起来在往回倒，像乱画的；紫色那条内存线根本看不见。
+
+### 坑一：X 轴用了数组下标
+
+```swift
+ForEach(Array(history.samples.enumerated()), id: \.offset) { index, point in
+    LineMark(x: .value("秒", index), y: .value("占用", point.cpuPercent))
+```
+
+`history` 是定长 60 的环形缓冲。满了之后每采一个新点就丢最旧的一个，
+**整个数组左移一格** —— 而这些点的 X 坐标是按「数组下标」算的，
+于是同一个样本的横坐标从 1 变成 0、从 2 变成 1……
+
+结果是每一帧整条曲线都被重新编号，看上去就是在往回缩、在抖动。
+
+改：X 轴用样本自己的采集时刻（`point.timestamp`）。时间戳是绝对的，
+缓冲怎么滑动都不影响已经画出来的点落在哪儿，曲线只会从左往右滑。
+
+### 坑二：两个 LineMark 没区分 series
+
+```swift
+// 同一次循环里画两条线
+LineMark(x: ..., y: .value("占用", point.cpuPercent))
+LineMark(x: ..., y: .value("占用", point.memoryPercent))
+```
+
+Swift Charts 靠 `series` 区分「哪些点连成同一条线」。不传 series 时，
+同一个 `ForEach` 里产生的所有 LineMark 被视为**同一条数据系列**，
+于是 CPU 的点与内存的点被交替连起来 —— 画出来的是一条来回折返的锯齿，
+紫线（后画）被蓝线盖住，界面上就只剩一条乱线。
+
+改：两条线各带 `series: .value("指标", "CPU")` / `"内存"`，
+插值方式也从 `.catmullRom` 换成 `.monotone` —— catmullRom 在折返数据上会
+画出夸张的回头弯，monotone 不会越过相邻点。
+
+### 验证方式：把图渲成 PNG 亲眼看
+
+光读代码判断不了「画得对不对」。写了个探针，把修前/修后的 Chart
+各渲染成一张 PNG：
+
+- 修之前：只有一条蓝线，密集折返锯齿，紫线完全不见
+- 修之后：两条平滑曲线，蓝 CPU 紫内存，方向从左往右
+
+再用**真实采集数据**（`host_statistics64` 的 CPU ticks 差分 + `vm_statistics64`
+的内存页）跑一遍，同样渲染成图确认 —— 蓝线随负载起伏、紫线平稳在 75~85%，
+没有锯齿，没有回头。
+
+### 顺带修的：同一秒内重复追加
+
+`onAppear` 里的首次追加与定时器第一拍常常落在同一帧，两个点时间戳一模一样。
+X 轴与 `ForEach` 的 id 都取时间戳，重复键会让这一帧的点被当成同一个。
+加一条「距上一个点不足 0.5 秒就跳过」的守卫。
+
+---
+
+## v1.10.0 — AI 保活「编辑任务打开新建页」的根因
+
+### 症状
+
+进 AI 保活页，第一次点某条任务的编辑按钮，打开的总是**新建表单**。
+关掉这个新建页，再点一次编辑，才正常进到那条任务。
+
+### 根因：sheet 的内容闭包求值时机早于状态写入
+
+原来的写法是两个状态：
+
+```swift
+@State private var showEditor = false
+@State private var editingTask: KeepAliveTask?
+
+// 点编辑
+editingTask = task
+showEditor = true
+
+.sheet(isPresented: $showEditor) {
+    KeepAliveTaskEditor(task: editingTask) { ... }
+}
+```
+
+问题出在两处叠加：
+
+1. `.sheet(isPresented:)` 的**内容闭包在 sheet 呈现的那一轮 body 求值时才被调用**，
+   而不是「点击的那一刻」。这一轮里 `editingTask` 还没写进去 —— SwiftUI 的
+   `@State` 写入要等下一轮渲染才生效。
+2. `KeepAliveTaskEditor` 把 `task` 存成 `let task: KeepAliveTask?`，
+   **构造时定型**，之后不再跟着 `editingTask` 变。
+
+于是编辑器永远拿到第一次求值时的 `nil` —— 也就是新建页。
+
+为什么第二次点又正常？关掉 sheet 后 `showEditor` 变 false，`editingTask` 这时
+已经是那条任务了；第二次点击时 `showEditor` 从 false 变 true，触发的求值里
+`editingTask` 有值了，所以编辑器拿到正确的任务。**第一次点击写进去的值被
+「下一次求值」消费掉了，所以要两次才成。**
+
+### 实测复现
+
+写了个最小 SwiftUI 程序，把旧写法与新写法各跑一遍，打印编辑器 `onAppear`
+时拿到的 task：
+
+```
+[OLD] click edit: editingTask=TASK, showEditor=true
+[OLD] editor onAppear, task=nil          ← 旧写法拿到 nil
+[NEW] click edit: target.task=TASK
+[NEW] editor onAppear, task=Optional("TASK")   ← 新写法正确
+```
+
+旧写法稳定复现「拿到 nil」，新写法稳定拿到正确值。
+
+### 改法：`.sheet(item:)`
+
+```swift
+struct KeepAliveEditorTarget: Identifiable {
+    let id = UUID()
+    let task: KeepAliveTask?
+}
+
+@State private var editorTarget: KeepAliveEditorTarget?
+
+.sheet(item: $editorTarget) { target in
+    KeepAliveTaskEditor(task: target.task) { ... }
+}
+```
+
+`.sheet(item:)` 的内容闭包拿到的是**那个 item 本身**，不是外部的
+`@State`。点击时把 task 装进 target 里一并交出去，闭包求值时手里就有值。
+
+每次点击都造新的 target，`id` 随之变化 → sheet 内容重建 → 表单不会残留
+上一条任务填过的字段。旧写法「关掉再点才正常」的副作用（表单状态残留）
+也一并没了。
+
+### 这条坑的通用形状
+
+**`@State` + `.sheet(isPresented:)` + 子视图把参数存成 `let`** —— 这三样
+同时出现时，内容闭包拿到的是「上一轮」的值。凡是要把「当前选中的那一条」
+传进 sheet，都该用 `.sheet(item:)`，不要用两个状态拼。
+
 ## v1.9.3 — 温度监控「不刷新」的根因：校准参考通道
 
 用户报「温度监控疑似无法正常刷新」。查下来采集链是好的，**坏的是取最高温

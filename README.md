@@ -20,7 +20,7 @@ macOS has never had a real answer to: *"I want my Mac to stay awake until this d
 - **App name**: Deep Sleep
 - **Minimum system**: macOS 26.0
 - **Language / framework**: Swift 5, SwiftUI + AppKit, IOKit, LocalAuthentication
-- **当前版本**：1.9.3
+- **当前版本**：1.10.0
 
 ## Highlights
 
@@ -121,6 +121,8 @@ Every tool sits on one page. The sidebar has a single **Toolbox** entry; each to
 | Image upscaler | Enlarge an image 2–4×: neural super-resolution, Lanczos, bicubic, or nearest neighbour. |
 | lsof query | Find which process holds a port or file — by port, PID, or path. |
 | Shell config | Edit `.zshrc` and friends, with a backup and a syntax check before saving. |
+| Device diagnostics | Check hardware, system, and configuration end to end, with a verdict and a fix for each item. |
+| Wake-on-LAN | Scan the local network and send a magic packet to the devices you pick. |
 
 ## AI Keep-Alive
 
