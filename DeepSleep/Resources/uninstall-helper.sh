@@ -24,6 +24,11 @@ set -eu
 
 /bin/launchctl bootout "system/$DAEMON_LABEL" 2>/dev/null || true
 
+# 卸载后不能在 launchd 的 disabled overlay 里留下这个 label 的标记。
+# 留下的后果是下次安装时 bootstrap 直接报「Bootstrap failed: 5: Input/output error」，
+# 而且报错完全指不到 disabled 这个原因。这里顺手清掉，保证可重复安装。
+/bin/launchctl enable "system/$DAEMON_LABEL" 2>/dev/null || true
+
 /bin/rm -f "$SOCKET_PATH"
 /bin/rm -f "$HELPER_DEST"
 /bin/rm -f "$DAEMON_PLIST"

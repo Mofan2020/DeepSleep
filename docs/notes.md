@@ -2949,3 +2949,45 @@ osascript，经系统服务执行）读得到；归属某个 App 的裸二进制
 - **`arp -l -a` 在没有该子命令的系统上的行为没测**（本机有）。
 - 界面上怎么显示「哪一路拿到了 MAC」由界面那侧改，这次只在
   `WakeOnLANService.swift` 里把信息暴露出来，界面本身没动。
+
+## v1.11.2 — 安装助手报「Bootstrap failed: 5: Input/output error」的根因
+
+现象：点「安装助手」、管理员授权通过之后立刻失败，错误是
+`0:520: execution error: Bootstrap failed: 5: Input/output error （5）`。
+前面的步骤全过了 —— 二进制复制、`chown root:wheel`、plist 写入、
+`plutil -lint` 都正常，只有 `launchctl bootstrap system` 这一步挂掉。
+
+根因不在脚本，在 launchd 的 disabled overlay：
+
+```
+$ launchctl print-disabled system | grep deepsleep
+		"com.skyc8266.deepsleep.helper" => disabled
+```
+
+被标记为 disabled 的 label，直接 `bootstrap` 必然返回 5（EIO）。那个 5 会让人
+往「文件读不到 / 权限不对 / 签名无效」三个错方向排查，实际跟这三样都无关。
+必须先 `launchctl enable system/<label>` 把标记清掉。实测 `enable` 之后
+同一条 `bootstrap` 立刻成功，进程直接起来。
+
+顺带查出第二个问题：从 Keka 解压的 Release zip 拖进 /Applications 的 app
+带着 `com.apple.quarantine: 01c2;00000000;Keka;`，`cp -f` 到
+`/Library/PrivilegedHelperTools` 之后属性跟着走 —— 等于把一个受隔离的文件
+交给 launchd。这不影响这次的失败，但没必要留着。
+
+修了三处：
+
+- `install-helper.sh`：bootstrap 前无条件 `launchctl enable`；`cp -f` 与写
+  plist 之后各加一次 `xattr -c`；bootstrap 失败时额外打印该 label 的 disabled
+  状态，免得下次又在「5」这个数字上猜。
+- `uninstall-helper.sh`：bootout 之后同样 `enable`。卸载不能在 overlay 里留标记，
+  留了下次装不上，而且症状跟这次完全一样 —— 这条是「可重复安装」的前置条件。
+- 已经装到 `/Applications/Deep Sleep.app` 的一份、以及 `build-*` 下的几份副本
+  都同步了新脚本，清了 app 的 quarantine，重做了 ad-hoc 签名。
+
+### 回归
+
+- `launchctl print system/com.skyc8266.deepsleep.helper` → `state = running`，pid 起来了
+- socket `/var/run/com.skyc8266.deepsleep.sock` 就绪
+- 启动 app 后助手日志收到 `releaseFanControl`、`listScheduledEvents`，
+  app ↔ 助手的 socket 通路端到端通
+- 两个脚本 `sh -n` 过

@@ -45,6 +45,9 @@ mkdir -p "$DEST_DIR"
 /bin/cp -f "$HELPER_SRC" "$HELPER_DEST"
 /usr/sbin/chown root:wheel "$HELPER_DEST"
 /bin/chmod 755 "$HELPER_DEST"
+# 从 zip / dmg 解压并拖进 app 的二进制会带 com.apple.quarantine，
+# 复制到系统目录后属性跟着走。不清掉等于把一个受隔离的文件交给 launchd。
+/usr/bin/xattr -c "$HELPER_DEST" 2>/dev/null || true
 
 # 写入 LaunchDaemon 描述。路径来自调用方，必须是绝对路径。
 /bin/cat > "$DAEMON_PLIST" <<PLIST_EOF
@@ -74,6 +77,7 @@ PLIST_EOF
 
 /usr/sbin/chown root:wheel "$DAEMON_PLIST"
 /bin/chmod 644 "$DAEMON_PLIST"
+/usr/bin/xattr -c "$DAEMON_PLIST" 2>/dev/null || true
 
 # plist 必须能被解析，否则 launchd 会静默拒绝加载。
 if ! /usr/bin/plutil -lint "$DAEMON_PLIST" >/dev/null; then
@@ -81,7 +85,17 @@ if ! /usr/bin/plutil -lint "$DAEMON_PLIST" >/dev/null; then
     exit 3
 fi
 
-/bin/launchctl bootstrap system "$DAEMON_PLIST"
+# launchd 里如果有这个 label 的 disabled 标记，bootstrap 会直接返回
+# 「Bootstrap failed: 5: Input/output error」—— 那个 5 是 EIO，不是文件读不到，
+# 光看这个错误完全指不到真正的原因。注册前先无条件清掉标记。
+/bin/launchctl enable "system/$DAEMON_LABEL" 2>/dev/null || true
+
+if ! /bin/launchctl bootstrap system "$DAEMON_PLIST" 2>&1; then
+    echo "bootstrap-failed: $DAEMON_LABEL" >&2
+    echo "--- disabled 状态 ---" >&2
+    /bin/launchctl print-disabled system 2>&1 | /usr/bin/grep "$DAEMON_LABEL" >&2 || true
+    exit 4
+fi
 
 # 等待 socket 就绪（最多 5 秒）。
 i=0
