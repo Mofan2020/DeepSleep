@@ -367,8 +367,8 @@ struct UpdateView: View {
                   isError: true)
         case .unreachable:
             reply(title: "助手没有响应",
-                  message: "助手已安装但没有回应，这属于 launchd 层面的问题，"
-                      + "对它发更新命令也不会有结果。可尝试在「完全控制」页停用再启用一次。",
+                  message: "助手装上了但没回应，卡在 launchd 那一层，"
+                      + "发更新命令也不会有结果。到「完全控制」页停用再启用一次试试。",
                   isError: true)
         case .updateFailed(let reason):
             reply(title: "上一次更新没成功", message: reason, isError: true)

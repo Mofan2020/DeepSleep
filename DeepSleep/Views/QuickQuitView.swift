@@ -259,7 +259,7 @@ struct QuickQuitView: View {
     private var protectedCard: some View {
         SectionCard(
             title: "不会结束的进程",
-            subtitle: "以下进程（以及位于它们子树内的进程）永远不会被结束，名单是硬编码的，任何开关都绕不过。",
+            subtitle: "下面这些进程连同它们的子进程永远不会被结束。名单写死在代码里，开关绕不过去。",
             symbol: "hand.raised"
         ) {
             VStack(alignment: .leading, spacing: DS.Space.xs) {

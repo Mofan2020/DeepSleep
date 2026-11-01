@@ -87,7 +87,7 @@ struct UninstallView: View {
                     .disabled(confirmText != requiredPhrase || executing)
 
                     if confirmText != requiredPhrase {
-                        Text("确认短语还没输对，按钮保持关闭。")
+                        Text("短语没输对，按钮还是灰的。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

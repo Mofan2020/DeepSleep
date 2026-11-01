@@ -168,7 +168,7 @@ struct DiagnosticsView: View {
             VStack(alignment: .leading, spacing: DS.Space.md) {
                 ProgressView()
                     .controlSize(.small)
-                Text("要跑几十条系统命令，通常几秒钟。温度与进程列表需要特权助手配合，助手不可用时会标成「无法读取」；个别项目需要管理员权限，这类会写成「无法读取」而不是故障。")
+                Text("要跑几十条系统命令，通常几秒钟。温度和进程列表要特权助手配合，助手不可用时会标成「无法读取」；需要管理员权限的项目也一样，那是读不到，不是坏了。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

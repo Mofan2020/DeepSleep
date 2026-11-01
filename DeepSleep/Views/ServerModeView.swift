@@ -132,7 +132,7 @@ struct ServerModeView: View {
                     mode.idleThresholdSeconds = TimeInterval(v * 60)
                 }
 
-                Text("空闲计时从你最后一次键盘 / 鼠标操作开始算。屏幕关掉之后计时停在零；你回来操作后重新从 \(idleMinutes) 分钟开始计。")
+                Text("空闲从你最后一次动键盘或鼠标开始算。屏幕关掉以后计时停住，你回来动一下重新从 \(idleMinutes) 分钟算起。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -144,8 +144,8 @@ struct ServerModeView: View {
 
     private var assertionsCard: some View {
         SectionCard(
-            title: "当前阻止睡眠的断言",
-            subtitle: "这些是此刻真正在拦着系统睡眠的东西。服务器模式期间至少会有「阻止系统睡眠」这一条。",
+            title: "当前阻止睡眠的请求",
+            subtitle: "此刻真正在拦着系统睡眠的东西。服务器模式开着时，至少有一条。",
             symbol: "lock.shield"
         ) {
             VStack(alignment: .leading, spacing: DS.Space.md) {
@@ -164,7 +164,7 @@ struct ServerModeView: View {
 
                 if controller.activeAssertions.isEmpty {
                     EmptyStateView(
-                        title: "当前没有持有任何断言",
+                        title: "当前没有阻止睡眠的请求",
                         message: "系统会按正常的电源设置睡眠。",
                         systemImage: "lock.open"
                     )
@@ -203,7 +203,7 @@ struct ServerModeView: View {
     private var detectionCard: some View {
         SectionCard(
             title: "空闲检测方式",
-            subtitle: "两种方式都判断「距离你上次操作过去多久」；开启后不能切换，需先关闭服务器模式。",
+            subtitle: "两种都按「距上次操作多久」计时。开启后不能切换，要先关掉服务器模式。",
             symbol: "clock.arrow.circlepath"
         ) {
             VStack(alignment: .leading, spacing: DS.Space.md) {

@@ -138,7 +138,7 @@ struct HostsView: View {
 
             SectionCard(
                 title: "谁能修改 Hosts",
-                subtitle: "空白名单表示任何 uid 都可改（默认开放）。填入 uid 后只有白名单内的用户能改 Hosts 与本白名单。uid 与用户名两组是独立的：填 uid 即便用户名不对也能通过；填用户名助手启动时会展开为 uid。",
+                subtitle: "空白名单表示谁都能改（默认开放）。填了之后只有名单里的人能改 Hosts 和这份名单。uid 和用户名可以分开填：填 uid 时用户名写错也能通过；填用户名会在助手启动时展开成 uid。",
                 symbol: "person.crop.circle.badge.checkmark"
             ) {
                 VStack(alignment: .leading, spacing: DS.Space.md) {

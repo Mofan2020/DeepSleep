@@ -130,7 +130,7 @@ struct QuarantineView: View {
                         } else {
                             EmptyStateView(
                                 title: "没有带 quarantine 的文件",
-                                message: "这个目录下没有找到带 quarantine 属性的文件。换一个目录，或打开「包含隐藏文件 / 子目录」再扫一次。",
+                                message: "这个目录下没有带 quarantine 属性的文件。换一个目录，或者打开「包含隐藏文件、子目录」再扫一次。",
                                 systemImage: "checkmark.shield"
                             )
                         }

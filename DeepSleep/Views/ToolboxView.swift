@@ -252,7 +252,7 @@ struct ToolCard: View {
                 pinIcon
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(isPinned ? "取消置顶\(title)" : "置顶\(title)")
+            .accessibilityLabel(isPinned ? "取消置顶「\(title)」" : "置顶「\(title)」")
             .accessibilityHint("置顶后这张卡会排在工具箱最前面")
             .opacity(isPinned || isHovering ? 1 : 0)
             // 看不见的按钮不该出现在 VoiceOver 焦点序列里。

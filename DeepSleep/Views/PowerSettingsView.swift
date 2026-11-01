@@ -48,15 +48,15 @@ struct PowerSettingsView: View {
         Item(key: "sleep", title: "系统睡眠", detail: "无操作多久后进入睡眠，0 表示从不", kind: .minutes),
         Item(key: "displaysleep", title: "显示器睡眠", detail: "无操作多久后关闭显示器，0 表示从不", kind: .minutes),
         Item(key: "disksleep", title: "硬盘睡眠", detail: "无操作多久后让硬盘休眠，0 表示从不", kind: .minutes),
-        Item(key: "hibernatemode", title: "休眠模式", detail: "0 仅内存、3 内存+磁盘、25 仅磁盘",
-             kind: .mode([("0", "0 仅内存"), ("3", "3 内存+磁盘"), ("25", "25 仅磁盘")])),
-        Item(key: "powernap", title: "Power Nap", detail: "睡眠中仍执行后台任务，1 开启 / 0 关闭", kind: .flag),
-        Item(key: "womp", title: "网络唤醒", detail: "允许通过网络唤醒，1 开启 / 0 关闭", kind: .flag),
-        Item(key: "ttyskeepawake", title: "远程登录保持唤醒", detail: "有活动会话时阻止睡眠，1 开启 / 0 关闭", kind: .flag),
-        Item(key: "lowpowermode", title: "低电量模式", detail: "1 开启 / 0 关闭", kind: .flag),
-        Item(key: "autorestart", title: "断电后自动重启", detail: "1 开启 / 0 关闭", kind: .flag),
-        Item(key: "lidwake", title: "开盖唤醒", detail: "打开盖子时唤醒，1 开启 / 0 关闭", kind: .flag),
-        Item(key: "networkoversleep", title: "网络保持服务", detail: "1 开启 / 0 关闭", kind: .flag)
+        Item(key: "hibernatemode", title: "休眠模式", detail: "0 仅内存，3 内存和磁盘，25 仅磁盘",
+             kind: .mode([("0", "仅内存"), ("3", "内存和磁盘"), ("25", "仅磁盘")])),
+        Item(key: "powernap", title: "Power Nap", detail: "睡眠中仍执行后台任务，1 开启，0 关闭", kind: .flag),
+        Item(key: "womp", title: "网络唤醒", detail: "允许通过网络唤醒，1 开启，0 关闭", kind: .flag),
+        Item(key: "ttyskeepawake", title: "远程登录保持唤醒", detail: "有活动会话时阻止睡眠，1 开启，0 关闭", kind: .flag),
+        Item(key: "lowpowermode", title: "低电量模式", detail: "1 开启，0 关闭", kind: .flag),
+        Item(key: "autorestart", title: "断电后自动重启", detail: "1 开启，0 关闭", kind: .flag),
+        Item(key: "lidwake", title: "开盖唤醒", detail: "打开盖子时唤醒，1 开启，0 关闭", kind: .flag),
+        Item(key: "networkoversleep", title: "网络保持服务", detail: "1 开启，0 关闭", kind: .flag)
     ]
 
     /// 分钟类与模式类的草稿值。写成功前不动系统里的真值。

@@ -350,7 +350,7 @@ struct ThermalView: View {
     private var bandCard: some View {
         SectionCard(
             title: "温度分档",
-            subtitle: "只影响本页的颜色与状态词，不参与任何判定；紧急阈值固定不可改。",
+            subtitle: "只影响本页的颜色和状态词，不参与任何判定。紧急阈值固定，改不了。",
             symbol: "slider.horizontal.below.rectangle",
             accent: DS.Tone.caution
         ) {

@@ -91,7 +91,7 @@ struct ImageUpscaleView: View {
             } else {
                 EmptyStateView(
                     title: "选一张图片开始",
-                    message: "支持 PNG / JPEG / TIFF / HEIC / BMP / GIF。放大在本机完成，不上传。",
+                    message: "支持 PNG、JPEG、TIFF、HEIC、BMP、GIF。放大在本机完成，不上传。",
                     systemImage: "photo",
                     actionTitle: "选择图片…",
                     action: pickSource

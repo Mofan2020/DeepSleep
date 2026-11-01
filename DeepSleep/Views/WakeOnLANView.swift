@@ -73,7 +73,7 @@ struct WakeOnLANView: View {
             accent: .accentColor
         ) {
             VStack(alignment: .leading, spacing: DS.Space.md) {
-                Text("目标设备必须自己在系统或网卡设置里开着「唤醒以供网络访问」，并且网卡支持 WOL。这里发出去只代表魔术包发出去了，能不能醒取决于目标机自己的设置和硬件。")
+                Text("目标机得自己在系统或网卡设置里开着「唤醒以供网络访问」，网卡也要支持 WOL。这里发出去只代表包走了，能不能醒取决于那台机器的设置和硬件。")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

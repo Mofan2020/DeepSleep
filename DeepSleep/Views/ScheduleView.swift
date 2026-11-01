@@ -68,7 +68,7 @@ struct ScheduleView: View {
     private var countdownCard: some View {
         SectionCard(
             title: "倒计时睡眠",
-            subtitle: "计时结束后自动进入睡眠，过程中会先释放本应用持有的保持状态，否则请求会被自己挡住。",
+            subtitle: "到点自动进入睡眠。开始前会先放掉本应用自己的阻止睡眠请求，否则会被自己挡住。",
             symbol: "timer",
             accessory: AnyView(
                 StatusPill(

@@ -115,7 +115,7 @@ struct DashboardView: View {
     private var assertionGrid: some View {
         SectionCard(
             title: "保持清醒",
-            subtitle: "打开后会持续向系统申请对应的电源 assertion，关闭即释放。",
+            subtitle: "打开后 Mac 不会因为空闲睡过去，关掉立刻释放。",
             symbol: "moon.zzz.fill"
         ) {
             LazyVGrid(
@@ -143,7 +143,7 @@ struct DashboardView: View {
     private var statusStrip: some View {
         SectionCard(
             title: "环境状态",
-            subtitle: "这三项是背景条件，不决定当前是醒着还是睡着了。",
+            subtitle: "背景情况，不决定当前是睡还是醒。",
             symbol: "info.circle"
         ) {
             HStack(alignment: .top, spacing: DS.Space.lg) {

@@ -300,7 +300,7 @@ struct MonitoringView: View {
     private var trendCard: some View {
         SectionCard(
             title: "最近 60 秒",
-            subtitle: "每秒一个采样点，从左上往右下走的是时间——越靠右越新。曲线只画趋势，不参与告警判定。",
+            subtitle: "每秒一个采样点，越靠右越新。曲线只画趋势，不参与告警。",
             symbol: "chart.xyaxis.line",
             accent: DS.Tone.info
         ) {
@@ -416,7 +416,7 @@ struct MonitoringView: View {
     private var memoryCard: some View {
         SectionCard(
             title: "内存明细",
-            subtitle: "口径与活动监视器一致：已用 = 应用 + 联动 + 压缩。",
+            subtitle: "口径和活动监视器一致：已用 = 应用 + 联动 + 压缩。",
             symbol: "memorychip",
             accent: .purple
         ) {
@@ -475,7 +475,7 @@ struct MonitoringView: View {
                     }
                 }
             } else {
-                Text("不可用：读不到 vm_statistics64。")
+                Text("读取不可用。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -532,7 +532,7 @@ struct MonitoringView: View {
             accent: DS.Tone.caution
         ) {
             if snapshot.volumes.isEmpty {
-                Text("不可用：读不到已挂载卷。")
+                Text("读取不可用。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
@@ -604,7 +604,7 @@ struct MonitoringView: View {
     private var processCard: some View {
         SectionCard(
             title: "进程排行",
-            subtitle: "数据来自特权助手的进程快照；面板不另起扫描。"
+            subtitle: "数据来自特权助手的进程快照，面板不另起扫描。"
                 + "点表头可按名称 / PID / RSS / CPU 排序。",
             symbol: "list.number",
             accent: DS.Tone.good
@@ -716,10 +716,10 @@ struct MonitoringView: View {
                             Task { await probeAndMaybeShowHint() }
                         }
                     }
-                Text("监控每 \(Int(config.sampleIntervalSeconds)) 秒抓一次进程快照；"
-                     + "对整体 RAM / CPU 持续超阈则提示冻结或终结 Top 3 占用者；"
-                     + "对单进程 RAM 超过阈值则立刻提示；"
-                     + "CPU 温度超阈时只告警，不冻结进程。")
+                Text("每 \(Int(config.sampleIntervalSeconds)) 秒抓一次进程快照。"
+                     + "整体 RAM 或 CPU 持续超标时，提示冻结或结束占用最多的 3 个进程；"
+                     + "单个进程 RAM 超标立刻提示；"
+                     + "CPU 温度超标只告警，不冻结进程。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -840,7 +840,7 @@ struct MonitoringView: View {
     private var panelThresholdSection: some View {
         VStack(alignment: .leading, spacing: DS.Space.md) {
             SubsectionHeader(title: "面板高亮线", symbol: "paintpalette")
-            Text("只决定面板上的颜色，不参与告警判定；改动立刻保存。")
+            Text("只决定面板上的颜色，不参与告警。改动立刻保存。")
                 .caption2()
 
             thresholdSlider(

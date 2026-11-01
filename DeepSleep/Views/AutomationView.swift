@@ -116,7 +116,7 @@ struct AutomationView: View {
     private var engineCard: some View {
         SectionCard(
             title: "自动化引擎",
-            subtitle: "每 5 秒评估一次全部规则；条件成立时自动申请对应的保持状态，条件失效后自动释放。",
+            subtitle: "每 5 秒检查一次规则，条件成立就自动保持，条件失效自动释放。",
             symbol: "wand.and.stars",
             accessory: AnyView(
                 StatusPill(
@@ -216,7 +216,7 @@ struct AutomationView: View {
     private var ruleAssertionsCard: some View {
         SectionCard(
             title: "规则生效的保持项",
-            subtitle: "这些保持状态由规则驱动，关闭规则才会释放；在总览页手动关闭会被拒绝。",
+            subtitle: "这些状态由规则维持，关掉规则才会释放。在总览页手动关会被拒绝。",
             symbol: "lock.circle"
         ) {
             if controller.ruleAssertions.isEmpty {
@@ -341,7 +341,7 @@ struct AutomationView: View {
                 )) {
                     VStack(alignment: .leading, spacing: DS.Space.xxs) {
                         Text("启用").font(.body.weight(.medium))
-                        Text("到点会执行 `sudo shutdown -r now` 重启 Mac。请确保届时已保存工作。")
+                        Text("到点会直接重启 Mac，届时请先保存工作。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)

@@ -405,7 +405,7 @@ struct ControlView: View {
                 PermissionStep(
                     index: 1,
                     title: "一次性管理员授权",
-                    detail: "启用完全控制时，系统弹出一次授权对话框（已配置 Touch ID 的机器可直接用指纹确认），用于写入特权助手。"
+                    detail: "启用时系统会弹一次授权框，配了 Touch ID 的可以直接用指纹确认。"
                 )
                 PermissionStep(
                     index: 2,
@@ -415,7 +415,7 @@ struct ControlView: View {
                 PermissionStep(
                     index: 3,
                     title: "可随时完全回退",
-                    detail: "「停用并卸载」会移除 /Library 下的全部文件与 launchd 任务，系统回到安装前状态。"
+                    detail: "「停用并卸载」会清掉 /Library 下的文件和相关系统任务，回到安装前的状态。"
                 )
 
                 Divider()

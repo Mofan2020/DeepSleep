@@ -39,8 +39,8 @@ struct ExternalActivityView: View {
     private var rivalsCard: some View {
         SectionCard(
             title: "可能争夺电源控制的程序",
-            subtitle: "这些程序不持有阻止睡眠的断言，所以不会出现在下面的列表里，"
-                + "但它们会直接改系统电源设置 —— 和 Deep Sleep 互相覆盖。",
+            subtitle: "这些程序自己不拦睡眠，所以不会出现在下面的列表里，"
+                + "但它们会直接改系统电源设置，和 Deep Sleep 互相覆盖。",
             symbol: "exclamationmark.triangle",
             accent: monitor.rivals.isEmpty ? DS.Tone.good : DS.Tone.critical
         ) {
@@ -81,8 +81,8 @@ struct ExternalActivityView: View {
     private var blockersCard: some View {
         SectionCard(
             title: "谁在阻止休眠",
-            subtitle: "系统当前所有持有电源断言的进程。数据由内核直接给出，"
-                + "Deep Sleep 自己的断言也列在里面，方便对照。",
+            subtitle: "系统里此刻所有拦着睡眠的进程。数据由内核直接给出，"
+                + "Deep Sleep 自己的也在里面，方便对照。",
             symbol: "hand.raised.fill",
             accent: DS.Tone.caution,
             accessory: AnyView(
