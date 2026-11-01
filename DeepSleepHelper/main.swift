@@ -429,6 +429,9 @@ private final class CommandHandler {
         case .getCPUTemperature:
             return getCPUTemperature()
 
+        case .readNeighborTable:
+            return readNeighborTable()
+
         // MARK: - 风扇控制（v1.9 起）
 
         case .getFanState:
@@ -557,12 +560,37 @@ private final class CommandHandler {
     /// 返回一份进程快照。CPU% 基于 ProcessSnapshotCache 内部的差值缓存。
     /// 第一次调用所有 cpuPercent=0（这是显式约定，不是计算失败）。
     private func getProcessStats() -> HelperResponse {
-        let snapshot = self.collectSnapshotSync()
+        // **优先取预热好的缓存**，不陪着等一次全量扫描。
+        //
+        // 全量扫描一次要 3~5 秒（这台机器上有 700+ 进程，每个都要开 Mach
+        // task port 再逐线程问一次）。App 侧默认每 3 秒就要一份 —— 请求速率
+        // 高于服务速率，于是这个 actor 永远在排队，客户端 6 秒超时，
+        // 界面上的数值一直不刷新，整个 App 也变得极慢。
+        //
+        // 现在由后台的预热器按固定节奏把缓存备好（见 HelperServer 的
+        // snapshotWarmer），这里直接取 —— 请求是 O(1) 的。
+        let snapshot = self.cachedSnapshot()
         // 整机占用单独取，不能用各进程 CPU% 求和 ——
         // 内核时间不属于任何用户进程，求和会漏掉。
         let systemCpu = SystemCPUSampler.shared.sample()
         let payload = ProcessStats(records: snapshot, systemCpuPercent: systemCpu).encode()
         return .ok("已抓取 \(snapshot.count) 个进程，整机 CPU \(String(format: "%.1f", systemCpu))%", payload: payload)
+    }
+
+    /// 取预热好的快照。缓存还空着（刚启动、预热器还没跑完第一轮）时，
+    /// 才同步算一次 —— 这种情况下宁可等一次，也不要空手返回。
+    private func cachedSnapshot() -> [ProcessStats.Record] {
+        let sem = DispatchSemaphore(value: 0)
+        var cached: [ProcessStats.Record] = []
+        Task.detached {
+            cached = await ProcessSnapshotCache.shared.peek()
+            sem.signal()
+        }
+        sem.wait()
+        if !cached.isEmpty {
+            return cached
+        }
+        return collectSnapshotSync()
     }
 
     /// 抓快照。`ProcessSnapshotCache` 是 actor，这里同步取结果再立刻返回；
@@ -1189,6 +1217,68 @@ private final class CommandHandler {
         ])
     }
 
+    // MARK: - 邻居表
+
+    /// 单个来源最多回传多少个字符。
+    ///
+    /// 协议帧上限是 4MB（见 `Shared/UnixSocket.swift` 的 `readFrame`）。
+    /// 正常机器上 `arp -a` + `arp -l -a` + `netstat -rn -f inet` 加起来
+    /// 也就几十 KB；这里留的余量足够大，正常输出不会被截断，同时保证
+    /// 帧不会因为某个来源异常膨胀而撑爆。
+    private static let neighborOutputLimit = 256 * 1024
+
+    /// 读邻居表的原始文本。
+    ///
+    /// 为什么要有这条命令：macOS 的「本地网络隐私」按**归属应用**决定谁能读
+    /// 邻居缓存。Deep Sleep.app 自己起的 `arp -a` 会返回 0 行、退出码 0、
+    /// 也不报错（实测：同一台机器，shell / python3 / osascript 里都有内容，
+    /// 第三方编译出的裸二进制里一律为空）。助手是 root 的 LaunchDaemon，
+    /// 不在 App 的那个上下文里，所以能读到 App 读不到的那份邻居表。
+    ///
+    /// **纯只读**：这三个命令都只读内核缓存，不写文件、不改任何系统状态。
+    ///
+    /// **不解析**：返回的是原文，解析在应用侧做（见
+    /// `DeepSleep/Core/WakeOnLANService.swift` 的 `parseClassicARP` /
+    /// `parseNeighborTable` / `parseNetstatNeighbors`）。理由：解析函数要能被
+    /// 普通权限的单测直接覆盖，不能要求 root 也不能要求网络。
+    private func readNeighborTable() -> HelperResponse {
+        struct Source {
+            let key: String
+            let path: String
+            let arguments: [String]
+        }
+        let sources = [
+            Source(key: "arp", path: "/usr/sbin/arp", arguments: ["-a"]),
+            Source(key: "neighbor", path: "/usr/sbin/arp", arguments: ["-l", "-a"]),
+            Source(key: "routes", path: "/usr/sbin/netstat", arguments: ["-rn", "-f", "inet"])
+        ]
+
+        var payload: [String: String] = [:]
+        var errors: [String] = []
+        for source in sources {
+            let result = runProcess(source.path, source.arguments)
+            guard result.status == 0 else {
+                errors.append("\(source.path) \(source.arguments.joined(separator: " ")) 退出码 \(result.status)")
+                continue
+            }
+            payload[source.key] = Self.truncateNeighborOutput(result.output)
+        }
+
+        guard !payload.isEmpty else {
+            logLine("readNeighborTable 失败：\(errors.joined(separator: "；"))")
+            return .failure("读取邻居表失败：\(errors.joined(separator: "；"))")
+        }
+        if !errors.isEmpty {
+            logLine("readNeighborTable 部分来源失败：\(errors.joined(separator: "；"))")
+        }
+        return .ok("neighbor table", payload: payload)
+    }
+
+    /// 截断过长的一段输出。
+    private static func truncateNeighborOutput(_ text: String) -> String {
+        text.count <= neighborOutputLimit ? text : String(text.prefix(neighborOutputLimit))
+    }
+
     /// 写入 hosts。**关键安全检查**：调用方 uid 必须在 hosts 白名单内
     /// （空白名单 → 放行任何 uid）。先备份原文，再写新内容，最后强制恢复
     /// `root:wheel` + `0644`，避免被任意调用方改成可执行。
@@ -1491,6 +1581,7 @@ private final class HelperServer {
         logLine("listening on \(HelperConstants.socketPath) (pid \(getpid()))")
 
         installSignalHandlers()
+        startSnapshotWarmer()
         acceptLoop()
     }
 
@@ -1523,6 +1614,46 @@ private final class HelperServer {
         unlink(HelperConstants.socketPath)
         exit(0)
     }
+
+    /// 预热进程快照。
+    ///
+    /// 为什么要有它：全量扫描要 3~5 秒（700+ 进程，每个都要开 Mach task
+    /// port 再逐线程问 CPU 时间）。以前是「谁要谁现算」—— App 默认每 3 秒
+    /// 要一份，而扫描要 3~5 秒，**请求速率高于服务速率**，助手的队列越滚
+    /// 越长：客户端 6 秒超时、数值不刷新，客户端那边每个请求还占着一个线程
+    /// 等超时，整个 App 变得极慢、点什么都像没反应。
+    ///
+    /// 现在改成**助手自己按固定节奏把缓存备好**，客户端来了直接取现成的，
+    /// 请求是 O(1) 的，扫描再慢也���会拖累谁。
+    private func startSnapshotWarmer() {
+        // 两档节奏：
+        //   轻量（2.5 秒一次）—— 不取 CPU 计数，几十毫秒，进程列表与内存很新；
+        //   全量（15 秒一次）  —— 取 CPU 计数，3~5 秒，是扫描里唯一的大头。
+        //
+        // 单飞由 actor 自己管（`inFlight`）：上一轮没算完时，这一轮直接返回
+        // 现成的缓存，不会再发起一次扫描。
+        let light = DispatchSource.makeTimerSource(queue: queue)
+        light.schedule(deadline: .now() + 1, repeating: 2.5)
+        light.setEventHandler {
+            Task.detached {
+                _ = await ProcessSnapshotCache.shared.snapshotLight()
+            }
+        }
+        light.resume()
+
+        let full = DispatchSource.makeTimerSource(queue: queue)
+        full.schedule(deadline: .now() + 3, repeating: 15)
+        full.setEventHandler {
+            Task.detached {
+                _ = await ProcessSnapshotCache.shared.snapshot()
+            }
+        }
+        full.resume()
+
+        snapshotWarmers = [light, full]
+    }
+
+    private var snapshotWarmers: [DispatchSourceTimer] = []
 
     private func acceptLoop() {
         while running {

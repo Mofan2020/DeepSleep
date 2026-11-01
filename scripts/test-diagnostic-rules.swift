@@ -8,6 +8,7 @@
 //  更不碰真机状态 —— 全部靠构造「事实」来驱动。
 //
 //  运行： swiftc -parse-as-library Shared/DiagnosticModel.swift \
+//                    DeepSleep/Core/DiagnosticsExtras.swift \
 //                    scripts/test-diagnostic-rules.swift -o /tmp/t_diag && /tmp/t_diag
 //
 
@@ -50,6 +51,14 @@ struct DiagnosticRuleTests {
         /// 按 id 找一项。
         func item(_ report: DiagnosticReport, _ id: String) -> DiagnosticItem? {
             for section in report.sections {
+                if let found = section.items.first(where: { $0.id == id }) { return found }
+            }
+            return nil
+        }
+
+        /// 按 id 在一组分组里找一项。
+        func item(_ sections: [DiagnosticSection], _ id: String) -> DiagnosticItem? {
+            for section in sections {
                 if let found = section.items.first(where: { $0.id == id }) { return found }
             }
             return nil
@@ -240,6 +249,344 @@ struct DiagnosticRuleTests {
         check("完全没采集时报告仍有内容", !missingReport.sections.isEmpty)
         check("完全没采集时总结仍是人话",
               !missingReport.summary.isEmpty, missingReport.summary)
+
+        // MARK: - 扩展检查项的解析
+
+        print("\n== 扩展检查项：解析 ==")
+
+        let hardwareText = """
+        Hardware:
+
+            Hardware Overview:
+
+              Model Name: MacBook Pro
+              Model Identifier: Mac14,7
+              Chip: Apple M2
+              Total Number of Cores: 8 (4 Performance and 4 Efficiency)
+              Memory: 8 GB
+              System Firmware Version: 20457.41.3
+              Activation Lock Status: Enabled
+        """
+
+        let hardware = DgExtra.parseHardwareProfile(hardwareText)
+        checkEqual("硬件：机型", hardware?.modelName ?? "", "MacBook Pro")
+        checkEqual("硬件：芯片", hardware?.chipName ?? "", "Apple M2")
+        checkEqual("硬件：固件版本", hardware?.firmwareVersion ?? "", "20457.41.3")
+        checkEqual("硬件：内存", hardware?.memoryText ?? "", "8 GB")
+        checkEqual("硬件：激活锁", hardware?.activationLock ?? "", "Enabled")
+        checkEqual("硬件：核心总数", hardware?.cores?.total ?? -1, 8)
+        checkEqual("硬件：性能核", hardware?.cores?.performance ?? -1, 4)
+        checkEqual("硬件：能效核", hardware?.cores?.efficiency ?? -1, 4)
+        checkEqual("硬件：核心构成的说法", hardware?.cores?.summary ?? "", "8 核（4 性能 + 4 能效）")
+        check("硬件：Apple Silicon 没有插槽数", hardware?.memorySlots == nil)
+        check("硬件：空输出解析不出东西", DgExtra.parseHardwareProfile("") == nil)
+        check("硬件：机型键不会误命中机型标识",
+              DgExtra.parseHardwareProfile("  Model Identifier: Mac14,7")?.modelName == nil)
+
+        let intelHardware = DgExtra.parseHardwareProfile("""
+          Model Name: iMac
+          Chip: Intel Core i9
+          Memory: 32 GB
+          Slots: 2
+        """)
+        checkEqual("硬件：Intel 机的插槽数", intelHardware?.memorySlots ?? -1, 2)
+        check("硬件：没有核心构成时不编数字", intelHardware?.cores == nil)
+
+        let graphics = DgExtra.parseGraphicsProfile("""
+        Graphics/Displays:
+
+            Apple M2:
+
+              Chipset Model: Apple M2
+              Type: GPU
+              Total Number of Cores: 10
+              Vendor: Apple (0x106b)
+        """)
+        checkEqual("显卡：型号", graphics?.chipsetModel ?? "", "Apple M2")
+        checkEqual("显卡：核心数", graphics?.coreCount ?? -1, 10)
+        check("显卡：Apple Silicon 没有显存字段", graphics?.videoMemory == nil)
+        let intelGraphics = DgExtra.parseGraphicsProfile("""
+          Chipset Model: AMD Radeon Pro 5500M
+          Total Number of Cores: 8
+          VRAM: 8192 MB
+        """)
+        checkEqual("显卡：Intel 独显的显存", intelGraphics?.videoMemory ?? "", "8192 MB")
+        check("显卡：空输出解析不出东西", DgExtra.parseGraphicsProfile("") == nil)
+
+        let drives = DgExtra.parseStorageDrives("""
+        Storage:
+
+            Macintosh HD:
+
+              Capacity: 494.38 GB
+              Physical Drive:
+                  Device Name: APPLE SSD AP0512Z
+                  Medium Type: SSD
+                  S.M.A.R.T. Status: Verified
+
+            Backup:
+
+              Physical Drive:
+                  Device Name: External Disk
+                  Medium Type: HDD
+                  S.M.A.R.T. Status: Failed
+        """)
+        checkEqual("磁盘：读出两块盘", drives.count, 2)
+        checkEqual("磁盘：第一块盘名", drives.first?.deviceName ?? "", "APPLE SSD AP0512Z")
+        check("磁盘：第一块盘 SMART 通过", drives.first?.smartVerified ?? false)
+        check("磁盘：第二块盘 SMART 没通过", !(drives.last?.smartVerified ?? true))
+        check("磁盘：没有 Physical Drive 时解析不出东西",
+              DgExtra.parseStorageDrives("Storage:\n\n  Macintosh HD:\n").isEmpty)
+
+        // 同一块物理盘会被多个卷重复列出来，磁盘镜像不是真盘。
+        let duplicatedDrives = DgExtra.parseStorageDrives("""
+        Storage:
+
+            Macintosh HD:
+
+              Physical Drive:
+                  Device Name: APPLE SSD AP0512Z
+                  Medium Type: SSD
+                  S.M.A.R.T. Status: Verified
+
+            Data:
+
+              Physical Drive:
+                  Device Name: APPLE SSD AP0512Z
+                  Medium Type: SSD
+                  S.M.A.R.T. Status: Verified
+
+            Update:
+
+              Physical Drive:
+                  Device Name: Disk Image
+                  Medium Type: SSD
+        """)
+        checkEqual("磁盘：重复列出的物理盘会去重", duplicatedDrives.count, 1)
+        check("磁盘：磁盘镜像不算真盘", DgExtra.parseStorageDrives("""
+              Physical Drive:
+                  Device Name: Disk Image
+                  Medium Type: SSD
+        """).isEmpty)
+        check("磁盘：没有 SMART 状态不算「没通过」",
+              !(DgStorageDrive(deviceName: "x", mediumType: nil, smartStatus: nil).smartFailed))
+
+        let software = DgExtra.parseSoftwareProfile("""
+          System Version: macOS 27.2 (26B118)
+          Boot Volume: Macintosh HD
+          Boot Mode: Normal
+          Secure Virtual Memory: Enabled
+        """)
+        checkEqual("软件：启动模式", software?.bootMode ?? "", "Normal")
+        checkEqual("软件：安全虚拟内存", software?.secureVirtualMemory ?? "", "Enabled")
+        check("软件：正常启动不是安全模式", !(software?.isSafeMode ?? true))
+        let safeSoftware = DgExtra.parseSoftwareProfile("Boot Mode: Safe Mode")
+        check("软件：安全启动模式能认出来", safeSoftware?.isSafeMode ?? false)
+
+        let power = DgExtra.parsePowerProfile("""
+        Now drawing from 'AC Power'
+         -InternalBattery-0 (id:9109603)\t80%; AC attached; not charging present: true
+        """)
+        checkEqual("电源：来源", power?.source ?? "", "交流电")
+        checkEqual("电源：电量", power?.percent ?? -1, 80)
+        let batteryPower = DgExtra.parsePowerProfile("Now drawing from 'Battery Power'")
+        checkEqual("电源：电池供电", batteryPower?.source ?? "", "电池")
+        check("电源：读不到时解析不出东西", DgExtra.parsePowerProfile("") == nil)
+
+        let blockers = DgExtra.parseSleepBlockers("""
+        System-wide power settings:
+         SleepDisabled\t\t0
+        Currently in use:
+         sleep                1 (sleep prevented by UURemote, 哔哩哔哩, powerd)
+         displaysleep         0 (display sleep prevented by 哔哩哔哩)
+        """)
+        check("阻止睡眠：读出三个进程", blockers.contains("powerd"), "\(blockers)")
+        check("阻止睡眠：显示器那条也算进来", blockers.contains("哔哩哔哩"), "\(blockers)")
+        check("阻止睡眠：没有就是空列表", DgExtra.parseSleepBlockers("sleep 1").isEmpty)
+
+        checkEqual("定时唤醒：读出计划条数",
+                   DgExtra.parseScheduledWake("  r  o  p  f  c  SAT    08:00:00    wake").count, 1)
+        check("定时唤醒：没有计划是空列表", DgExtra.parseScheduledWake("").isEmpty)
+
+        let top = DgExtra.parseTopCPU("""
+        PID    COMMAND          %CPU
+        58389  swift-frontend   70.1
+        196    WindowServer     33.3
+
+        PID    COMMAND          %CPU
+        58389  swift-frontend   75.5
+        196    WindowServer     30.2
+        """, limit: 2)
+        checkEqual("CPU 排行：取最后一次采样", top.count, 2)
+        checkClose("CPU 排行：第一个进程的占用", top.first?.cpuPercent ?? 0, 75.5)
+        checkEqual("CPU 排行：进程名", top.first?.name ?? "", "swift-frontend")
+        checkEqual("CPU 排行：PID", top.first?.pid ?? -1, 58389)
+        check("CPU 排行：没有表头就是空列表", DgExtra.parseTopCPU("随便一段文字").isEmpty)
+
+        let extensions = DgExtra.parseSystemExtensions("""
+        5 extension(s)
+        enabled\tactive\tteamID\tbundleID (version)\tname\t[state]
+        \t*\t4D7YV49724\tio.privado.main.smartroute (2.1.3/11)\tSmartRoute\t[activated disabled]
+        \t*\tTC3Q7MAJXF\tcom.adguard.mac.adguard.network-extension (2.20/2626)\tAdGuard\t[activated disabled]
+        *\t*\tMLZF7K7B5R\tat.obdev.littlesnitch.networkextension (6.5/7303)\tLittle Snitch\t[activated enabled]
+        """)
+        checkEqual("系统扩展：Apple 自家的不计入", extensions.count, 3)
+        checkEqual("系统扩展：名字", extensions.first?.name ?? "", "SmartRoute")
+        checkEqual("系统扩展：bundle id 去掉版本号", extensions.first?.bundleID ?? "", "io.privado.main.smartroute")
+        check("系统扩展：启用状态能读出来", extensions.last?.enabled ?? false)
+        check("系统扩展：没有扩展就是空列表", DgExtra.parseSystemExtensions("0 extension(s)").isEmpty)
+
+        let hosts = DgExtra.parseHostsEntries("""
+        #
+        # Host Database
+        #
+        127.0.0.1\tlocalhost
+        255.255.255.255\tbroadcasthost
+
+        ::1\tlocalhost
+        """)
+        checkEqual("hosts：去掉注释与空行", hosts.count, 3)
+        check("hosts：生效条目留着",
+              hosts.contains("127.0.0.1\tlocalhost"), "\(hosts)")
+
+        let inode = DgExtra.parseInodeProfile("""
+        Filesystem     512-blocks      Used Available Capacity iused      ifree %iused  Mounted on
+        /dev/disk3s1  965595304  27308888 340795272     8%  486810 1703976360    0%   /
+        """)
+        checkClose("inode：使用率", inode?.usedPercent ?? -1, 0)
+        checkEqual("inode：已用个数", inode?.used ?? -1, 486810)
+        check("inode：空输出解析不出东西", DgExtra.parseInodeProfile("") == nil)
+
+        checkEqual("权限组：读出组名", DgExtra.parseGroups("staff admin everyone\n").count, 3)
+        check("权限组：空输出是空列表", DgExtra.parseGroups("").isEmpty)
+        check("权限组：末尾换行不会混进组名里",
+              DgExtra.parseGroups("staff admin\n").last == "admin",
+              DgExtra.parseGroups("staff admin\n").last ?? "")
+
+        // MARK: - 扩展检查项的判定
+
+        print("\n== 扩展检查项：判定 ==")
+
+        // 全都读不到时：不能报成故障，只能是「无法读取」。
+        let emptyExtra = DgExtra.sections(from: DgExtraFacts())
+        check("扩展项：读不到时也有分组", emptyExtra.count == 4, "实际 \(emptyExtra.count)")
+        check("扩展项：读不到时不产生问题项",
+              emptyExtra.flatMap(\.items).allSatisfy { $0.severity == .info })
+        check("扩展项：读不到时写明「无法读取」",
+              emptyExtra.flatMap(\.items).allSatisfy { $0.value.contains("无法读取") })
+        check("扩展项：读不到时不给处理建议",
+              emptyExtra.flatMap(\.items).allSatisfy { $0.suggestion == nil })
+
+        var goodExtra = DgExtraFacts()
+        goodExtra.hardware = .value(DgHardwareProfile(modelName: "MacBook Pro",
+                                                     chipName: "Apple M2",
+                                                     cores: DgCoreProfile(total: 8, performance: 4, efficiency: 4),
+                                                     memoryText: "8 GB",
+                                                     firmwareVersion: "20457.41.3",
+                                                     activationLock: "Enabled",
+                                                     memorySlots: nil))
+        goodExtra.graphics = .value(DgGraphicsProfile(chipsetModel: "Apple M2",
+                                                      coreCount: 10,
+                                                      videoMemory: nil))
+        goodExtra.storage = .value([DgStorageDrive(deviceName: "APPLE SSD AP0512Z",
+                                                   mediumType: "SSD",
+                                                   smartStatus: "Verified")])
+        goodExtra.software = .value(DgSoftwareProfile(bootMode: "Normal",
+                                                      secureVirtualMemory: "Enabled",
+                                                      bootVolume: "Macintosh HD"))
+        goodExtra.smcPresent = .value(true)
+        goodExtra.power = .value(DgPowerProfile(source: "交流电", percent: 80))
+        goodExtra.sleepBlockers = .value([])
+        goodExtra.scheduledWake = .value([])
+        goodExtra.topCPU = .value([DgCPUProcess(pid: 58389, name: "swift-frontend", cpuPercent: 12.5)])
+        goodExtra.systemExtensions = .value([DgSystemExtension(name: "Little Snitch",
+                                                              bundleID: "at.obdev.littlesnitch.networkextension",
+                                                              teamID: "MLZF7K7B5R",
+                                                              state: "[activated enabled]",
+                                                              enabled: true)])
+        goodExtra.crash = .value(DgCrashProfile(userReportCount: 29,
+                                                systemReportCount: 32,
+                                                panicCount: 0,
+                                                newestReportName: "swift-frontend-2026-11-01.ips",
+                                                newestReportDate: Date(timeIntervalSince1970: 0)))
+        goodExtra.timezone = .value("Asia/Shanghai")
+        goodExtra.timeSync = .value("已开启（与网络时间同步）")
+        goodExtra.groups = .value(["staff", "admin", "everyone"])
+        goodExtra.inode = .value(DgInodeProfile(usedPercent: 0, used: 486810, free: 1703976360))
+        goodExtra.hostsEntries = .value(["127.0.0.1\tlocalhost"])
+        goodExtra.thirdPartyLaunchItems = .value(["/Library/LaunchAgents/io.example.plist"])
+
+        let goodExtraSections = DgExtra.sections(from: goodExtra)
+        checkEqual("扩展项：正常事实分成四组", goodExtraSections.count, 4)
+        check("扩展项：正常事实不产生问题项",
+              goodExtraSections.flatMap(\.items).allSatisfy { $0.severity == .info })
+        checkEqual("扩展项：固件版本", item(goodExtraSections, "dg.firmware")?.value ?? "", "20457.41.3")
+        checkEqual("扩展项：CPU 核心构成",
+                   item(goodExtraSections, "dg.cpu_cores")?.value ?? "", "8 核（4 性能 + 4 能效）")
+        checkEqual("扩展项：电源来源", item(goodExtraSections, "dg.power_source")?.value ?? "", "交流电 · 电量 80%")
+        checkEqual("扩展项：时区", item(goodExtraSections, "dg.timezone")?.value ?? "", "Asia/Shanghai")
+        check("扩展项：没有阻止睡眠的程序时是正常",
+              item(goodExtraSections, "dg.sleep_blockers")?.severity == .info)
+        check("扩展项：没有定时唤醒计划时不是「无法读取」",
+              item(goodExtraSections, "dg.scheduled_wake")?.value == "没有定时唤醒计划")
+        check("扩展项：崩溃报告没有内核崩溃时是正常",
+              item(goodExtraSections, "dg.crash_reports")?.severity == .info)
+        check("扩展项：SMIC 在位时说明读数要看特权助手",
+              (item(goodExtraSections, "dg.smc")?.detail ?? "").contains("特权助手"))
+
+        // 系统组件常驻在「sleep prevented by」里，只有第三方程序才值得提醒。
+        var systemOnlyBlockers = goodExtra
+        systemOnlyBlockers.sleepBlockers = .value(["powerd", "coreaudiod"])
+        let systemOnlySections = DgExtra.sections(from: systemOnlyBlockers)
+        checkEqual("阻止睡眠：只有系统组件时是正常",
+                   item(systemOnlySections, "dg.sleep_blockers")?.severity, .info)
+        check("阻止睡眠：系统组件时说明属正常",
+              (item(systemOnlySections, "dg.sleep_blockers")?.value ?? "").contains("正常"))
+
+        // 坏事实：出现需要注意的地方。
+        var badExtra = goodExtra
+        badExtra.storage = .value([DgStorageDrive(deviceName: "External Disk",
+                                                   mediumType: "HDD",
+                                                   smartStatus: "Failed")])
+        badExtra.software = .value(DgSoftwareProfile(bootMode: "Safe Mode",
+                                                      secureVirtualMemory: "Disabled",
+                                                      bootVolume: nil))
+        badExtra.sleepBlockers = .value(["UURemote", "powerd"])
+        badExtra.crash = .value(DgCrashProfile(userReportCount: 3,
+                                                systemReportCount: 4,
+                                                panicCount: 2,
+                                                newestReportName: "kernel-2026-11-01.panic",
+                                                newestReportDate: nil))
+        badExtra.topCPU = .value([DgCPUProcess(pid: 42, name: "build", cpuPercent: 180)])
+        badExtra.hardware = .value(DgHardwareProfile(modelName: "MacBook Pro",
+                                                     chipName: "Apple M2",
+                                                     cores: nil,
+                                                     memoryText: "8 GB",
+                                                     firmwareVersion: "20457.41.3",
+                                                     activationLock: "Disabled",
+                                                     memorySlots: nil))
+
+        let badExtraSections = DgExtra.sections(from: badExtra)
+        checkEqual("扩展项：SMART 没通过是需要注意",
+                   item(badExtraSections, "dg.smart")?.severity, .warning)
+        check("扩展项：SMART 没通过要给建议",
+              !(item(badExtraSections, "dg.smart")?.suggestion ?? "").isEmpty)
+        checkEqual("扩展项：安全启动是需要注意",
+                   item(badExtraSections, "dg.boot_mode")?.severity, .warning)
+        checkEqual("扩展项：安全虚拟内存关闭是需要注意",
+                   item(badExtraSections, "dg.secure_memory")?.severity, .warning)
+        checkEqual("扩展项：激活锁关闭是需要注意",
+                   item(badExtraSections, "dg.activation_lock")?.severity, .warning)
+        checkEqual("扩展项：有程序阻止睡眠是需要注意",
+                   item(badExtraSections, "dg.sleep_blockers")?.severity, .warning)
+        checkEqual("扩展项：有内核崩溃报告是需要注意",
+                   item(badExtraSections, "dg.crash_reports")?.severity, .warning)
+        checkEqual("扩展项：单进程占满一整核是需要注意",
+                   item(badExtraSections, "dg.top_cpu")?.severity, .warning)
+        check("扩展项：问题项都有处理建议",
+              badExtraSections.flatMap(\.items)
+                  .filter { $0.severity != .info }
+                  .allSatisfy { !($0.suggestion ?? "").isEmpty })
 
         // MARK: - 汇总计数
 

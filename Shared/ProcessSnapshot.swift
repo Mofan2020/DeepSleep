@@ -36,6 +36,37 @@ public actor ProcessSnapshotCache {
     }
 
     private var lastSamples: [pid_t: Sample] = [:]
+    /// 上一份扫描的结果。用于「间隔内复用」。
+    private var cachedRecords: [ProcessStats.Record] = []
+    /// 上一份扫描的时刻（不管是全量还是轻量）。
+    private var lastSnapshotAt: TimeInterval = 0
+    /// 上一次**全量**扫描的时刻。全量扫描贵，间隔要单独算。
+    private var lastFullScanAt: TimeInterval = 0
+    /// 上一轮算出来的 CPU%。轻量扫描时沿用。
+    private var lastCpuPercent: [pid_t: Double] = [:]
+    /// 是否已有一轮扫描在跑。防止连着发起多次全量扫描。
+    private var inFlight = false
+
+    /// 两次全量扫描之间的**最小间隔**（秒）。
+    ///
+    /// 为什么要它：一次全量扫描要 3~5 秒（对每个进程做 proc_name +
+    /// 两次 proc_pidinfo + Mach 的 CPU 计数），进程越多越慢。而 App 侧要数据
+    /// 的地方不止一个：系统监控的定时采样、监控页自己的刷新、进程优先级页。
+    /// 默认采样间隔 3 秒 —— **请求速率高于服务速率**，于是这个 actor 永远在
+    /// 排队：每个请求都要等前一次扫描做完，客户端 6 秒超时，界面上的数值
+    /// 一直不刷新；客户端那边每个请求还占着一个线程等超时，越积越多，
+    /// 整个 App 变得极慢、点什么都像没反应。
+    ///
+    /// 所以：**离上次扫描不到这个间隔时，直接复用上一份结果**，不重算。
+    /// actor 本身是串行的，所以排队中的请求一个接一个进来时都会命中这个
+    /// 判断 —— 队列因此会排空，而不是越滚越大。
+    ///
+    /// 代价：拿到的数据最多旧 `minimumSnapshotInterval` 秒。对「谁在占 CPU」
+    /// 这种用途完全够用（人眼分辨不出两秒的差别）。
+    public static let minimumSnapshotInterval: TimeInterval = 2.0
+
+    /// 两次**轻量**扫描之间的最小间隔（秒）。轻量扫描很便宜，可以很密。
+    public static let minimumLightInterval: TimeInterval = 1.0
 
     /// 抓一份新快照。CPU% 基于上一次缓存；首次调用的记录写 0。
     ///
@@ -46,15 +77,35 @@ public actor ProcessSnapshotCache {
     ///   per-core percent = delta_cpu_nanos / dt_seconds / 1e7
     ///   whole-cpu percent = per-core percent / coreCount
     /// coreCount 用 `hw.ncpu` 一次缓存，整个 [ThermalBoard] 寿命内不变。
-    public func snapshot(now: TimeInterval = Date().timeIntervalSince1970) -> [ProcessStats.Record] {
+    ///
+    /// **重活在 actor 之外跑。** 扫描要 3~5 秒（这台机器上有 700+ 进程），
+    /// 放在 actor 里会把 `peek()` 也堵在后面 —— 客户端来取数据就得跟着等，
+    /// 那正是「界面上的数值一直不刷新」的由来。现在 actor 只管状态：
+    /// 扫描在 detached task 里做，算完再回来写状态。
+    public func snapshot(now: TimeInterval = Date().timeIntervalSince1970) async -> [ProcessStats.Record] {
+        // 间隔内直接复用：这一段是「别让请求把扫描打爆」的关键。
+        if !cachedRecords.isEmpty,
+           now - lastFullScanAt < Self.minimumSnapshotInterval {
+            return cachedRecords
+        }
+        // 已经有一轮扫描在跑 → 不再发起第二轮，直接给现成的。
+        if inFlight {
+            return cachedRecords
+        }
+        inFlight = true
+        defer { inFlight = false }
+
+        // 上一轮的 CPU 计数，用来算增量。取一份拷贝：扫描在 actor 之外，
+        // 期间 actor 是可重入的，但 inFlight 保证同一时刻只有一轮扫描。
+        let previous = lastSamples
         let coreCount = Self.cpuCoreCount()
-        let current = Self.collectRaw()
+        let current = await Task.detached(priority: .utility) { Self.collectRaw() }.value
         var records: [ProcessStats.Record] = []
         records.reserveCapacity(current.count)
 
         for raw in current {
             let cpuPercent: Double
-            if let last = lastSamples[raw.pid] {
+            if let last = previous[raw.pid] {
                 let dt = now - last.timestamp
                 // CPU 计数单位是**纳秒**。per-core 单核 100% = 1 秒内 1e9 纳秒；
                 // 多核可叠加 → per-core percent。whole-cpu = per-core / coreCount。
@@ -79,8 +130,67 @@ public actor ProcessSnapshotCache {
             next[raw.pid] = Sample(cpuTime: raw.cpuTime, timestamp: now)
         }
         lastSamples = next
+        cachedRecords = records
+        lastSnapshotAt = now
+        lastFullScanAt = now
+        lastCpuPercent = Dictionary(
+            records.map { ($0.pid, $0.cpuPercent) },
+            uniquingKeysWith: { _, last in last }
+        )
 
         return records
+    }
+
+    /// 轻量扫描：**不取 CPU 计数**，CPU% 沿用上一轮算出来的值。
+    ///
+    /// 为什么要分两档：全量扫描里唯一的大头是 Mach 的 CPU 计数
+    /// （每个进程一次 task_for_pid + 每个线程一次 thread_info；这台机器上
+    /// 700 多个进程就是几千次 Mach 调用，实测 3~5 秒）。跳过它之后，
+    /// 整轮只要几十毫秒 —— 于是「进程列表、内存占用」可以一直很新，
+    /// 而 CPU% 每隔一段时间才更新一次（见助手的预热节奏）。
+    ///
+    /// 对「谁在占 CPU」这种用途，CPU% 平均窗口长一点反而更稳。
+    public func snapshotLight(now: TimeInterval = Date().timeIntervalSince1970) async -> [ProcessStats.Record] {
+        if !cachedRecords.isEmpty,
+           now - lastSnapshotAt < Self.minimumLightInterval {
+            return cachedRecords
+        }
+        if inFlight {
+            return cachedRecords
+        }
+        inFlight = true
+        defer { inFlight = false }
+
+        let carried = lastCpuPercent
+        let current = await Task.detached(priority: .utility) {
+            Self.collectRaw(includeCPU: false)
+        }.value
+
+        var records: [ProcessStats.Record] = []
+        records.reserveCapacity(current.count)
+        for raw in current {
+            records.append(ProcessStats.Record(
+                pid: raw.pid,
+                name: raw.name,
+                rssBytes: raw.rssBytes,
+                cpuPercent: carried[raw.pid] ?? 0,
+                startTime: raw.startTime
+            ))
+        }
+
+        cachedRecords = records
+        lastSnapshotAt = now
+
+        return records
+    }
+
+    /// 拿上一份快照，**不触发新的扫描**。
+    ///
+    /// 给「请求来了就秒回」用：助手自己按固定节奏把缓存预热好，
+    /// 客户端问的时候直接取现成的，不陪着等一次 3~5 秒的全量扫描。
+    /// 缓存还没有内容时返回空数组。
+    public func peek() -> [ProcessStats.Record] {
+        cachedRecords
     }
 
     /// 物理 CPU 核心数（hw.ncpu）。读不到时回 1（保守值：避免 per-core / 0）。
@@ -107,7 +217,11 @@ public actor ProcessSnapshotCache {
 
     /// 抓一次原始数据，不算 CPU%。
     /// 读不到的进程（其他用户、内核线程）静默跳过。
-    private static func collectRaw() -> [RawSample] {
+    ///
+    /// `includeCPU: false` 时**跳过 Mach 的 CPU 计数** —— 那是整个扫描里
+    /// 唯一的大头（每个进程一次 task_for_pid + 每个线程一次 thread_info，
+    /// 700 多个进程就是几千次 Mach 调用）。跳过后整轮只要几十毫秒。
+    private static func collectRaw(includeCPU: Bool = true) -> [RawSample] {
         var pids = [pid_t](repeating: 0, count: 8192)
         let bytes = pids.withUnsafeMutableBytes { buffer in
             proc_listpids(UInt32(PROC_ALL_PIDS), 0, buffer.baseAddress, Int32(buffer.count))
@@ -121,14 +235,14 @@ public actor ProcessSnapshotCache {
         for i in 0..<min(count, pids.count) {
             let pid = pids[i]
             guard pid > 0 else { continue }
-            if let raw = describe(pid: pid) {
+            if let raw = describe(pid: pid, includeCPU: includeCPU) {
                 result.append(raw)
             }
         }
         return result
     }
 
-    private static func describe(pid: pid_t) -> RawSample? {
+    private static func describe(pid: pid_t, includeCPU: Bool = true) -> RawSample? {
         // 进程名：p_comm 限长 16 字节，最稳定也最省权限。
         var comm = [CChar](repeating: 0, count: 32)
         let commLen = proc_name(pid, &comm, UInt32(comm.count))
@@ -161,7 +275,7 @@ public actor ProcessSnapshotCache {
         // 在本机 macOS 27.2 上少报 42 倍，不能用。
         // 拿不到 task 端口（别的用户的进程，非 root）时记 0 —— 宁可少报，
         // 也不能拿一个错的数字去凑。
-        let cpuTime = ProcessCPUTime.nanoseconds(pid: pid) ?? 0
+        let cpuTime = includeCPU ? (ProcessCPUTime.nanoseconds(pid: pid) ?? 0) : 0
 
         let startTime = Int64(info.pbi_start_tvsec)
 

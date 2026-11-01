@@ -76,6 +76,15 @@ enum DS {
         static let hairlineStrong = Color.primary.opacity(0.18)
     }
 
+    // MARK: 尺寸
+
+    /// 固定尺寸。跟间距一样是「不能写死」的量 —— 写进令牌里，
+    /// 换尺寸时只改一处，页面里不会出现第二个魔法数字。
+    enum Metric {
+        /// 环形仪表的直径。仪表盘顶部那个圈。
+        static let gaugeDiameter: CGFloat = 72
+    }
+
     // MARK: 动效
 
     enum Animation {

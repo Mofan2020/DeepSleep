@@ -20,6 +20,11 @@
 //    - 扫描状态用 StatusPill + 文字双编码。
 //    - 手动 MAC 输入用原生 TextField，格式不对时给具体原因。
 //
+//  2026-11 v1.11.1：
+//    - 扫到设备却拿不到 MAC 时，列表上方说清楚原因，并告诉用户去哪里
+//      开本地网络权限（系统设置 → 隐私与安全性 → 本地网络）。
+//    - 「没扫到设备」「没拿到 MAC」「扫描中」三种状态分开，不混着说。
+//
 
 import SwiftUI
 
@@ -236,11 +241,28 @@ struct WakeOnLANView: View {
 
     // MARK: - 扫描状态
 
+    /// 扫描结果摘要：区分「有 MAC」「只有 IP」「什么都没扫到」。
+    ///
+    /// 助手兜底的情况一并带上 —— 界面要靠它区分「还没试过助手」
+    /// 和「试过了、也没帮上忙」，这两句提示语不一样。
+    private var summary: WoScanSummary {
+        let scanner = NetworkScanner.shared
+        return WoScanSummary(
+            devices: devices,
+            helperFallbackAttempted: scanner.lastHelperFallbackAttempted,
+            helperFallbackRecoveredCount: scanner.lastHelperFallbackRecoveredCount
+        )
+    }
+
+    /// 在线但拿不到 MAC 的设备数。
+    private var missingMACCount: Int { summary.missingMACCount }
+
     /// 扫描状态。颜色 + 文字双编码：光靠颜色分不出「没扫」和「扫完没扫到」。
     private var scanStatusText: String {
         if isScanning { return "扫描中" }
         if !scanned { return "未扫描" }
         if devices.isEmpty { return "未扫到设备" }
+        if summary.wakeableCount == 0 { return "扫到 \(devices.count) 台，没拿到 MAC" }
         return "扫描完成，共 \(devices.count) 台"
     }
 
@@ -248,6 +270,7 @@ struct WakeOnLANView: View {
         if isScanning { return DS.Tone.info }
         if !scanned { return DS.Tone.idle }
         if devices.isEmpty { return DS.Tone.caution }
+        if summary.wakeableCount == 0 { return DS.Tone.caution }
         return DS.Tone.good
     }
 
@@ -278,7 +301,10 @@ struct WakeOnLANView: View {
                     )
                 }
             } else {
-                VStack(alignment: .leading, spacing: DS.Space.xs) {
+                VStack(alignment: .leading, spacing: DS.Space.sm) {
+                    if missingMACCount > 0 {
+                        missingMACNotice
+                    }
                     headerRow
                     Divider()
                     ScrollView {
@@ -297,15 +323,59 @@ struct WakeOnLANView: View {
         }
     }
 
+    /// 有设备在线却拿不到 MAC —— 这时发不了唤醒包，必须说清楚为什么。
+    ///
+    /// 三种情况说三句话：
+    ///   - 助手还没试过 → 多半是这台 App 没被允许访问本地网络，用户自己能解决；
+    ///   - 助手试过了、补到了一些 → 说明主路读不到但兜底管用，剩下的仍然拿不到；
+    ///   - 助手试过了、也没补到 → 助手（root）也读不到，这时才提「更新/重装助手」。
+    private var missingMACNotice: some View {
+        HStack(alignment: .top, spacing: DS.Space.sm) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(DS.Tone.caution)
+            VStack(alignment: .leading, spacing: DS.Space.xxs) {
+                Text("有 \(missingMACCount) 台设备在线，但没拿到 MAC 地址，发不了唤醒包。")
+                    .foregroundStyle(.primary)
+                Text(missingMACReason)
+                    .foregroundStyle(.secondary)
+                if summary.didHelperRecover {
+                    Text("特权助手这一轮补到了 \(summary.helperFallbackRecoveredCount) 台的 MAC 地址。")
+                        .foregroundStyle(DS.Tone.good)
+                }
+            }
+            .font(.caption)
+            .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(DS.Space.md)
+        .insetPanel()
+    }
+
+    /// 缺 MAC 的原因说明 —— 按「助手试过了没有」分两种说法。
+    private var missingMACReason: String {
+        if summary.isMissingMACAfterHelper {
+            return "这台 App 读不到本地网络的设备记录，特权助手（root 身份）这一轮也没读到。到「系统设置 → 隐私与安全性 → 本地网络」里允许 Deep Sleep，再重新扫描一次；如果仍然不行，说明这台 Mac 的系统没有把邻居缓存暴露出来。"
+        }
+        if summary.helperFallbackAttempted {
+            return "这台 App 读不到本地网络的设备记录。到「系统设置 → 隐私与安全性 → 本地网络」里允许 Deep Sleep，再重新扫描一次。"
+        }
+        return "多半是这台 App 读不到本地网络的设备记录。到「系统设置 → 隐私与安全性 → 本地网络」里允许 Deep Sleep，再重新扫描一次。"
+    }
+
     private var deviceSubtitle: String {
         if devices.isEmpty { return "还没有扫描结果。" }
-        let wakeable = devices.filter(\.canWake).count
-        return "共 \(devices.count) 台，其中 \(wakeable) 台有 MAC 可以唤醒，已勾选 \(selected.count) 台。"
+        let wakeable = summary.wakeableCount
+        let missing = summary.missingMACCount
+        if missing == 0 {
+            return "共 \(devices.count) 台，其中 \(wakeable) 台有 MAC 可以唤醒，已勾选 \(selected.count) 台。"
+        }
+        return "共 \(devices.count) 台，其中 \(wakeable) 台有 MAC 可以唤醒，\(missing) 台没拿到 MAC，已勾选 \(selected.count) 台。"
     }
 
     private var emptyMessage: String {
         if scanned {
-            return "这个网段没扫到设备。可能设备都关着、挡了 ICMP，或者这台 Mac 读不到 ARP 表（系统版本差异），此时只能拿到 ping 回应但没有 MAC。也可以在下面手填 MAC 直接发。"
+            return "这个网段没扫到设备。可能设备都关着、挡了 ICMP，或者这台 App 没被允许访问本地网络、读不到局域网里的设备记录。也可以在下面手填 MAC 直接发。"
         }
         return "点上面的「扫描」开始。扫描会读一次 ARP 表、并发 ping 本网段、再读一次 ARP 表。"
     }
@@ -412,6 +482,7 @@ struct WakeOnLANView: View {
                 BulletLine("发送成功只说明魔术包交给了系统，不代表目标设备会醒。唤醒能不能成，取决于目标机自己有没有开「唤醒以供网络访问」、网卡支不支持 WOL。")
                 BulletLine("macOS 上从本机发广播包可能被系统防火墙拦掉，这时包根本没出网卡，但界面上仍会显示已发送。")
                 BulletLine("设备列表来自 ARP 表和 ping。设备如果挡了 ICMP、又没和这台 Mac 通过信，扫不到它。")
+                BulletLine("扫到设备却拿不到 MAC 地址，多半是系统没允许 Deep Sleep 访问本地网络。到「系统设置 → 隐私与安全性 → 本地网络」里允许后重新扫描。")
                 BulletLine("只能唤醒当前网段里的设备。跨网段要路由器转发定向广播，这个工具不做。")
                 BulletLine("默认广播地址是 255.255.255.255，端口 9；有些设备只认端口 7，换一下再试。")
             }
@@ -449,7 +520,19 @@ struct WakeOnLANView: View {
         scanned = true
         isScanning = false
         if !found.isEmpty {
-            statusText = "扫描完成，共 \(found.count) 台设备。"
+            let summary = WoScanSummary(
+                devices: found,
+                helperFallbackAttempted: scanner.lastHelperFallbackAttempted,
+                helperFallbackRecoveredCount: scanner.lastHelperFallbackRecoveredCount
+            )
+            if summary.missingMACCount > 0 {
+                statusText = "扫描完成，共 \(found.count) 台设备，\(summary.missingMACCount) 台没拿到 MAC。"
+            } else {
+                statusText = "扫描完成，共 \(found.count) 台设备。"
+            }
+            if summary.didHelperRecover {
+                statusText += "特权助手补到了 \(summary.helperFallbackRecoveredCount) 台的 MAC 地址。"
+            }
         }
     }
 

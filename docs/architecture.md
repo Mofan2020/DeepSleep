@@ -66,6 +66,7 @@
 | `suspendProcesses` | 用 SIGSTOP 挂起一组 pid（监控场景；仍走保护名单） |
 | `killProcesses` | 用 SIGKILL 杀掉一组 pid（监控场景；仍走保护名单） |
 | `getCPUTemperature` | 读 Apple SMC（`TCMz` / `TCMb` / `TCDX`）拿 CPU Die Max / Average / Aggregate °C。算法借鉴自 dkorunic/iSMC（GPL-3.0），见 `DeepSleepHelper/SMCTemperature.swift` 顶部借鉴声明；DeepSleep 仍是 MIT，未复制 iSMC Go 源码。**仅 helper 能在 root 下连 SMC**，普通进程会失败 |
+| `readNeighborTable` | 以 root 身份读本机邻居表的**原始文本**（payload `arp` = `arp -a`、`neighbor` = `arp -l -a`、`routes` = `netstat -rn -f inet`）。**纯只读**（不写文件、不改系统状态），**助手侧不解析** —— 解析在应用侧 `DeepSleep/Core/WakeOnLANService.swift`。用途：macOS 的本地网络隐私会让 App 进程里的 `arp -a` 返回 0 行（退出码 0、不报错），root 的助手不在那个上下文里。旧版助手回 `unknown command`，应用侧降级 |
 | `sleepDisplay` | 立刻关显示器（`pmset displaysleepnow`）；供服务器模式用 |
 | `lockScreen` | 与 `sleepDisplay` 同一实现（`pmset displaysleepnow`）。是否等效锁屏取决于系统设置里的「立即要求密码」 |
 | `getProcessNice` | 读一组 pid 的 nice（payload `nice:<pid>=<value>` / `missing:<pid>=1`） |
@@ -375,6 +376,8 @@ starting ──(initialSleepDelaySeconds 后)──▶ 关屏 ──▶ locked
 | `Shared/TerminationReport.swift` | 强杀结果的结构与编解码 | 协议 payload 是 `[String:String]`，中文与分隔符都要能往返 |
 | `Shared/ServerModeIdlePolicy.swift` | 服务器模式空闲判定的纯逻辑（阶段 + 判定） | 抽出来是为了能单测；改语义要同步 `scripts/test-servermode-fsm.swift` |
 | `Shared/IdleTime.swift` | 读内核空闲时间（`IOHIDSystem.HIDIdleTime`） | 持有 noidle 断言时 powerd 可能不累加该计数器，见 `docs/gotchas.md` 第 17 节 |
+| `Shared/NgAcceleratorMetrics.swift` | GPU / NPU 使用率的模型与解码（纯逻辑） | 读不到就是 nil，不许填 0；实测记录见 `docs/notes.md` 的 v1.11.1 一节 |
+| `DeepSleep/Core/NgAcceleratorReader.swift` | 读 IOKit `IOAccelerator` 的 `PerformanceStatistics`（GPU）；找 ANE 节点（NPU） | 普通权限就能读，不需要特权助手，所以协议里没有新增命令；NPU 在 macOS 上读不到 |
 | `DeepSleep/Core/ServerModeController.swift` | 服务器模式状态机：首次 / 超时关屏、全程 tick、双模式空闲检测 | 首次与超时关屏共用 `performSleepAndLock`；tick 全程不停 |
 | `DeepSleep/Core/SleepController.swift` | 核心状态机：意图合并、对账、日志、CLI 状态输出 | 全项目最核心的文件，改动前先读本节 3.1–3.3 |
 | `DeepSleep/Core/PowerWatcher.swift` | 电源事件监听（睡前拦截 + 唤醒后对账） | 拦截窗口里有兜底超时，别去掉 |

@@ -10,6 +10,8 @@
 //     CPU 曲线 / 内存曲线 / 每核心占用 / 内存明细 / 卷 / 网络速率 / 负载 / 开机时长。
 //   - 三秒一次：SystemMonitor.liveSnapshot()（走特权助手拿进程快照）。
 //     进程排行与整机累计口径来自这里；助手不可用时这些项显示「不可用」。
+//   - 三秒一次：GPU / NPU 使用率（本机 IOKit 的 IOAccelerator 性能计数器，
+//     不需要特权助手）。NPU 在 macOS 上没有公开接口，那一格显示「不可用」。
 //
 //  为什么曲线用本机采样而不是助手：助手一次快照要 3~5 秒，拿来喂
 //  每秒一个点的曲线会变成台阶。曲线的目的是看趋势，1 秒粒度才有意义；
@@ -107,7 +109,9 @@ struct MonitoringView: View {
             metricThresholds = .load()
             SystemMonitor.shared.updateConfig(config)
             // 面板的实时数据不依赖「系统监控」总开关 —— 打开页面就开始采。
-            SystemMetricsCollector.shared.start()
+            // GPU / NPU 跟着监控配置的采样间隔走，不另起一套更快的轮询。
+            SystemMetricsCollector.shared.start(
+                acceleratorIntervalSeconds: config.sampleIntervalSeconds)
             refreshLastEvent()
             Task {
                 await refreshLiveSnapshot()
@@ -152,6 +156,8 @@ struct MonitoringView: View {
                     memoryTile
                     temperatureTile
                     rootVolumeTile
+                    gpuTile
+                    npuTile
                 }
 
                 liveReadoutPanel
@@ -217,6 +223,36 @@ struct MonitoringView: View {
             tint: rootVolumeColor,
             progress: fraction,
             symbol: "internaldrive"
+        )
+    }
+
+    /// GPU 使用率。数据来自本机 IOKit 的 `IOAccelerator` 性能计数器，
+    /// 不需要特权助手 —— 助手没装也能读到。
+    private var gpuTile: some View {
+        let value = snapshot.accelerator?.gpuDevicePercent
+        return MetricTile(
+            title: "GPU",
+            value: value.map { String(format: "%.0f", $0) } ?? "不可用",
+            unit: value == nil ? nil : "%",
+            status: gpuStatusText,
+            tint: value == nil ? DS.Tone.idle : DS.Tone.info,
+            progress: value.map { $0 / 100 },
+            symbol: "display.2"
+        )
+    }
+
+    /// NPU 使用率。macOS 没有把 Apple Neural Engine 的使用率暴露给应用，
+    /// 这一格大多数机器上就是「不可用」—— 如实说，别拿 0 冒充。
+    private var npuTile: some View {
+        let value = snapshot.accelerator?.npuPercent
+        return MetricTile(
+            title: "NPU",
+            value: value.map { String(format: "%.0f", $0) } ?? "不可用",
+            unit: value == nil ? nil : "%",
+            status: npuStatusText,
+            tint: value == nil ? DS.Tone.idle : DS.Tone.info,
+            progress: value.map { $0 / 100 },
+            symbol: "brain.head.profile"
         )
     }
 
@@ -998,6 +1034,42 @@ struct MonitoringView: View {
         let percent = fraction * 100
         if percent >= metricThresholds.diskUsagePercent { return DS.Tone.caution }
         return DS.Tone.good
+    }
+
+    /// GPU 那一格的状态词。
+    ///
+    /// 不设阈值 —— GPU 使用率只做显示，不参与告警（用户明确只要求看数）。
+    /// 所以这里不写「正常 / 偏高」，只说读到了什么、读到了多少。
+    private var gpuStatusText: String {
+        guard let sample = snapshot.accelerator else {
+            return "不可用 · 还没有采到加速器数据"
+        }
+        guard sample.hasGPUReading else {
+            return "不可用 · 这台机器没有 GPU 性能计数器"
+        }
+        let renderer = sample.gpuRendererPercent.map { String(format: "%.0f", $0) } ?? "—"
+        let tiler = sample.gpuTilerPercent.map { String(format: "%.0f", $0) } ?? "—"
+        return "已读数 · 渲染 \(renderer)% · 分块 \(tiler)%"
+    }
+
+    /// NPU 那一格的状态词。
+    ///
+    /// macOS 没有公开 NPU 使用率，所以这一格基本上永远是「不可用」。
+    /// 原因要说清楚：是系统里根本没有 ANE 设备节点，还是有节点但没有
+    /// 使用率计数器 —— 两种情况以后 macOS 补上接口时的表现不一样。
+    private var npuStatusText: String {
+        guard let sample = snapshot.accelerator else {
+            return "不可用 · 还没有采到加速器数据"
+        }
+        switch sample.npuUnavailableReason {
+        case .noANEDevice:
+            return "不可用 · 系统没有暴露 NPU 设备节点"
+        case .noUtilizationCounter:
+            return "不可用 · NPU 节点里没有使用率计数器"
+        case nil:
+            if sample.hasNPUReading { return "已读数" }
+            return "不可用 · 系统没有暴露 NPU 使用率"
+        }
     }
 
     private var loadAverageText: String {

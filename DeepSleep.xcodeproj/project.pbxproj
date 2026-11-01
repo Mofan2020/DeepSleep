@@ -11,8 +11,10 @@
 		017E43688EF7300FD313BCA4 /* ServerModeController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9984708438247E1D6DD0C2DF /* ServerModeController.swift */; };
 		02FA7C7E50BA9D94C198223D /* HelperVersionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E1D45DC75AB25D3BC5214F5 /* HelperVersionManager.swift */; };
 		034839185EA8864A606DF6EF /* ProcessPriority.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBB5D215E2943FDD3FC7BEDB /* ProcessPriority.swift */; };
+		03F5C074CDC97DAC945F7EB6 /* DiagnosticsExtras.swift in Sources */ = {isa = PBXBuildFile; fileRef = B512BF901C7EBC8852FA3219 /* DiagnosticsExtras.swift */; };
 		04AADB1A90517C6AFA89E030 /* URLCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DFE7EA8FCC931540BB46584 /* URLCommands.swift */; };
 		04E9E649615877F270D223AA /* PMSetOutput.swift in Sources */ = {isa = PBXBuildFile; fileRef = 575A45B0E6499C686C4827CF /* PMSetOutput.swift */; };
+		0615EFBFB45436D148BC0A46 /* UpdateFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78F748CFEB3C9AEC6F6976EE /* UpdateFlow.swift */; };
 		07869D7E846656DBC963A4CE /* SMCTemperatureIOHID.swift in Sources */ = {isa = PBXBuildFile; fileRef = 208F03A64FF92975883CA9D7 /* SMCTemperatureIOHID.swift */; };
 		0B6E7356695F7E831C9EEE27 /* KeepAliveEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51DC08B3654D7031295EBD13 /* KeepAliveEngine.swift */; };
 		13A54F5D7BFF305F29C3E501 /* ImageUpscaleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DAF3C6A60D4EA7E2A137094 /* ImageUpscaleView.swift */; };
@@ -21,6 +23,7 @@
 		1C970D88D66C4F43D8AD1DAC /* PowerWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2DD20BF1CBB3194597701CA /* PowerWatcher.swift */; };
 		293AAE69A3F01595AF98272F /* ScheduledCommand.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE95755CD1A5144551AD6774 /* ScheduledCommand.swift */; };
 		2CF3383D939893655F3DD14A /* QuickQuitView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69AD70CC1E39560226333763 /* QuickQuitView.swift */; };
+		2CF4C1ADB098CC0FE7C49E64 /* NgAcceleratorMetrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BD96F0645D3309864F4EF24 /* NgAcceleratorMetrics.swift */; };
 		2E04E5FA5A3F0EE1C6D77B07 /* MonitoringCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = E75BB13FF2F018F746DC727B /* MonitoringCoordinator.swift */; };
 		30B151DC27ACB9ECBD8AFEA4 /* DiskUsage.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2908A142A34184EE666FF94 /* DiskUsage.swift */; };
 		313486F9C714E8AC1436BE78 /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = 178D52B0BEF95859AB8B6D88 /* Components.swift */; };
@@ -38,6 +41,7 @@
 		46F0FD7486AF2AD5E745E69A /* Version.swift in Sources */ = {isa = PBXBuildFile; fileRef = F67CFF72B57B6842BFE84727 /* Version.swift */; };
 		48A8411A91BC1725A62EAE46 /* HelperInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64A44533D85F54CB2BC70D48 /* HelperInstaller.swift */; };
 		49BA4D1FF2BB3180D79AA7D5 /* uninstall-helper.sh in Resources */ = {isa = PBXBuildFile; fileRef = 5C4F13990352AAC1FC42479A /* uninstall-helper.sh */; };
+		4AB25F4953CEC0D898530878 /* NgAcceleratorReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA55B6B5C6AC4BF4906831F0 /* NgAcceleratorReader.swift */; };
 		4CC529F69FC171A6A59CD5E3 /* AssertionKind.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0322343BBDEB6A664F907E5 /* AssertionKind.swift */; };
 		4FB227FEAF25239D85D96593 /* EmailThrottleStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC22A1E420A2DE3FB800D6F0 /* EmailThrottleStore.swift */; };
 		4FCF72BA3A4B673DEBC24AD5 /* GlobalHotkey.swift in Sources */ = {isa = PBXBuildFile; fileRef = 566F4ACAAB91680B697CC74D /* GlobalHotkey.swift */; };
@@ -103,6 +107,7 @@
 		B6A73FE056BDB671EA8AEAA3 /* AlertRule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F135C3A75CFEA2A9867579F /* AlertRule.swift */; };
 		BB3A3C58E54678870163A762 /* DeepSleepAppShortcuts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52354ED18755C8CF314F230E /* DeepSleepAppShortcuts.swift */; };
 		BC562F38039D60B8597B927C /* AlertRulesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07D54DD1D4D5168D7EA9FF30 /* AlertRulesView.swift */; };
+		BF1A0FB9C43CA2D257E63BEF /* NgAcceleratorMetrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BD96F0645D3309864F4EF24 /* NgAcceleratorMetrics.swift */; };
 		C0A6034F59D6236C649E5465 /* DeviceDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37EFA717B50E8CBF1D6993F8 /* DeviceDiagnostics.swift */; };
 		C0EB5F908D427F907D33B32D /* SystemNotifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76A414E466231BC9EA4876AB /* SystemNotifier.swift */; };
 		C58D488668AB8F3B538FC28C /* PowerSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0E2DA26DEFB4FB3396D7063 /* PowerSettingsView.swift */; };
@@ -170,6 +175,7 @@
 		07D54DD1D4D5168D7EA9FF30 /* AlertRulesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertRulesView.swift; sourceTree = "<group>"; };
 		09942C2FCA248432F203B05D /* ProcessGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessGuard.swift; sourceTree = "<group>"; };
 		09E4540A7ED2046DEB126599 /* DeepSleepIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepSleepIntents.swift; sourceTree = "<group>"; };
+		0BD96F0645D3309864F4EF24 /* NgAcceleratorMetrics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NgAcceleratorMetrics.swift; sourceTree = "<group>"; };
 		0DEE905EAF64EFC038DFC418 /* ControlView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlView.swift; sourceTree = "<group>"; };
 		13496FAE978C672E3F2EA8B8 /* AutoStartSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoStartSettings.swift; sourceTree = "<group>"; };
 		13BD008C8B73D8005C11EFAC /* MenuBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarController.swift; sourceTree = "<group>"; };
@@ -226,6 +232,7 @@
 		69B10B1FADA3DF8080DA3076 /* KeepAliveClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeepAliveClient.swift; sourceTree = "<group>"; };
 		73544675806A1C9BE67304B3 /* FanControlView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FanControlView.swift; sourceTree = "<group>"; };
 		76A414E466231BC9EA4876AB /* SystemNotifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemNotifier.swift; sourceTree = "<group>"; };
+		78F748CFEB3C9AEC6F6976EE /* UpdateFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateFlow.swift; sourceTree = "<group>"; };
 		7C643740D2392EB1F876E8BA /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		8D28D1837B362CAF3FC59D63 /* FanMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FanMode.swift; sourceTree = "<group>"; };
 		8F1CCE72967AB0DD99C9E36F /* KeepAliveStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeepAliveStore.swift; sourceTree = "<group>"; };
@@ -246,11 +253,13 @@
 		A4120515887C376197CCE7F9 /* AutomationRule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationRule.swift; sourceTree = "<group>"; };
 		A84DDB9E0CFBF5F7269C34B8 /* HostsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostsView.swift; sourceTree = "<group>"; };
 		A8EA071AFAF53B9AAEAEC928 /* KeepAliveView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeepAliveView.swift; sourceTree = "<group>"; };
+		AA55B6B5C6AC4BF4906831F0 /* NgAcceleratorReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NgAcceleratorReader.swift; sourceTree = "<group>"; };
 		ADF8BD245306888F8A3A0AB6 /* HangDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HangDetector.swift; sourceTree = "<group>"; };
 		AE02139511172EAC3BE83EDC /* FanModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FanModels.swift; sourceTree = "<group>"; };
 		B1455596C8E8AD1DC865EFA1 /* DiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsView.swift; sourceTree = "<group>"; };
 		B20EF4F84074F785EE30C16A /* QuarantineService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuarantineService.swift; sourceTree = "<group>"; };
 		B4F0B4163E1F57C80031517F /* UninstallView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UninstallView.swift; sourceTree = "<group>"; };
+		B512BF901C7EBC8852FA3219 /* DiagnosticsExtras.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsExtras.swift; sourceTree = "<group>"; };
 		B527587ED1D0F7A77206BE2C /* AlertWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertWindowController.swift; sourceTree = "<group>"; };
 		B977BD301346F61F48D15CDB /* EmailChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmailChannel.swift; sourceTree = "<group>"; };
 		BB9386B873800E6F1ADCEFDB /* FanWriteFailureTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FanWriteFailureTracker.swift; sourceTree = "<group>"; };
@@ -346,6 +355,7 @@
 				A4120515887C376197CCE7F9 /* AutomationRule.swift */,
 				432740AF96D744E5DAB258F4 /* AutoStartManager.swift */,
 				37EFA717B50E8CBF1D6993F8 /* DeviceDiagnostics.swift */,
+				B512BF901C7EBC8852FA3219 /* DiagnosticsExtras.swift */,
 				6012695D8816727E333287FF /* FanController.swift */,
 				DAE18F7C52D61C3E6970A309 /* FanDisclaimer.swift */,
 				8D28D1837B362CAF3FC59D63 /* FanMode.swift */,
@@ -359,6 +369,7 @@
 				9B115A0DDB6BDEF6504E291C /* LsofService.swift */,
 				93466523D815E2238BF5E8FA /* MonitorConfig.swift */,
 				E75BB13FF2F018F746DC727B /* MonitoringCoordinator.swift */,
+				AA55B6B5C6AC4BF4906831F0 /* NgAcceleratorReader.swift */,
 				C993F30605CB3C3BB8F0EC18 /* PowerActivityMonitor.swift */,
 				A2DD20BF1CBB3194597701CA /* PowerWatcher.swift */,
 				584DF06C95A2B1C65C62BDDB /* ProcessNiceService.swift */,
@@ -374,6 +385,7 @@
 				76A414E466231BC9EA4876AB /* SystemNotifier.swift */,
 				EE29964E7F239AC43FECBDCF /* ThermalMonitor.swift */,
 				CF2BAA4DC2FE609833A597C3 /* Uninstaller.swift */,
+				78F748CFEB3C9AEC6F6976EE /* UpdateFlow.swift */,
 				03B58135C030FD6D97DD7D84 /* UpdateManager.swift */,
 				1DFE7EA8FCC931540BB46584 /* URLCommands.swift */,
 				4228F84119F4BA05C8196F81 /* WakeOnLANService.swift */,
@@ -413,6 +425,7 @@
 				DE3295E35F8D28B69A629A8F /* HelperProtocol.swift */,
 				E6450BE748FD8543755017DE /* HostsAllowedEditors.swift */,
 				CFD43F8F82DD114B7424CF91 /* IdleTime.swift */,
+				0BD96F0645D3309864F4EF24 /* NgAcceleratorMetrics.swift */,
 				397AFF18E2E49FCA4EF4C9B6 /* NicePageSize.swift */,
 				575A45B0E6499C686C4827CF /* PMSetOutput.swift */,
 				09942C2FCA248432F203B05D /* ProcessGuard.swift */,
@@ -672,6 +685,7 @@
 				CFB897161D498FDF81E386EA /* DesignSystem.swift in Sources */,
 				C0A6034F59D6236C649E5465 /* DeviceDiagnostics.swift in Sources */,
 				87026E48AE69B0854C9D2E4C /* DiagnosticModel.swift in Sources */,
+				03F5C074CDC97DAC945F7EB6 /* DiagnosticsExtras.swift in Sources */,
 				1B50B96638C755B7E8655E91 /* DiagnosticsView.swift in Sources */,
 				B375FF39CCDF2A267D7E2192 /* DiskUsage.swift in Sources */,
 				777A351396E1CB2C231820FD /* EmailChannel.swift in Sources */,
@@ -714,6 +728,8 @@
 				A7E27ED5426A3136EBE40F08 /* MonitorConfig.swift in Sources */,
 				2E04E5FA5A3F0EE1C6D77B07 /* MonitoringCoordinator.swift in Sources */,
 				FE67385E6FABA2694AF79A83 /* MonitoringView.swift in Sources */,
+				BF1A0FB9C43CA2D257E63BEF /* NgAcceleratorMetrics.swift in Sources */,
+				4AB25F4953CEC0D898530878 /* NgAcceleratorReader.swift in Sources */,
 				55F671363B5B444E79AD7D65 /* NicePageSize.swift in Sources */,
 				6CE01DD4BAA6D26B9C73121A /* NiceView.swift in Sources */,
 				8BD0DC602D72415D81D2B19D /* PMSetOutput.swift in Sources */,
@@ -752,6 +768,7 @@
 				9C6985268F6B8781B2C5A955 /* UninstallView.swift in Sources */,
 				D0CC2A42F432A1A7D0DEEEE4 /* Uninstaller.swift in Sources */,
 				E2B0737ADBFCBC9D4C33F3A6 /* UnixSocket.swift in Sources */,
+				0615EFBFB45436D148BC0A46 /* UpdateFlow.swift in Sources */,
 				EDD6AC5A315B659622797185 /* UpdateManager.swift in Sources */,
 				62404108B725BBFBFE76C583 /* UpdateView.swift in Sources */,
 				F46459160672CE1350637D97 /* Version.swift in Sources */,
@@ -777,6 +794,7 @@
 				373014038B076AA90C1FA300 /* HelperProtocol.swift in Sources */,
 				7B5449CB86A23F58E0331611 /* HostsAllowedEditors.swift in Sources */,
 				629AF9961611BE5DEBCFE641 /* IdleTime.swift in Sources */,
+				2CF4C1ADB098CC0FE7C49E64 /* NgAcceleratorMetrics.swift in Sources */,
 				86F56C2B39366C7DF6A219EB /* NicePageSize.swift in Sources */,
 				04E9E649615877F270D223AA /* PMSetOutput.swift in Sources */,
 				E648F9B8460CA4DC6467A511 /* ProcessGuard.swift in Sources */,
@@ -987,7 +1005,7 @@
 				INFOPLIST_FILE = DeepSleep/Resources/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
-				MARKETING_VERSION = 1.11.0;
+				MARKETING_VERSION = 1.11.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.skyc8266.deepsleep;
 				PRODUCT_NAME = "Deep Sleep";
 				SDKROOT = macosx;
@@ -1004,7 +1022,7 @@
 				INFOPLIST_FILE = DeepSleep/Resources/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
-				MARKETING_VERSION = 1.11.0;
+				MARKETING_VERSION = 1.11.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.skyc8266.deepsleep;
 				PRODUCT_NAME = "Deep Sleep";
 				SDKROOT = macosx;

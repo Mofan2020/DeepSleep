@@ -383,6 +383,17 @@ enum LsofService {
     ///
     /// 所以判断顺序是：stdout 有内容 → 照常解析；stdout 空 → 才看
     /// stderr 决定是「没找到」还是「真的出错了」。
+    ///
+    /// **stderr 里也可能只有无害的警告**（见 `benignStderr`）：macOS 26
+    /// 上 lsof 每次都会抱怨 cryptexd 挂载点 stat 不到：
+    ///
+    ///     lsof: WARNING: can't stat() apfs file system /private/var/run/...
+    ///           Output information may be incomplete.
+    ///           assuming "dev=1000023" from mount table
+    ///
+    /// 那是**每次都出现**的，与查询结果无关。以前把它当成错误 → 「按端口查」
+    /// 只要那个端口没人占，lsof 退出码 1 + 这段警告 → 整个查询被报成失败，
+    /// 界面上是一片空白而不是「这个端口没人占」。
     static func interpret(_ result: RunResult) throws -> [LsofEntry] {
         let stdout = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         if !stdout.isEmpty {
@@ -390,7 +401,7 @@ enum LsofService {
         }
 
         if result.status != 0 {
-            let stderr = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+            let stderr = benignStderr(result.stderr).trimmingCharacters(in: .whitespacesAndNewlines)
             if stderr.isEmpty {
                 // 查不到时 lsof 退出码是 1 且什么都不打印 —— 这不是错误，
                 // 是「没有占用」。
@@ -402,6 +413,26 @@ enum LsofService {
         }
 
         return parse(result.stdout)
+    }
+
+    /// 去掉 lsof 每次都会打印的无害警告。
+    ///
+    /// 只去掉**已知**的那几行，不做模糊匹配 —— 真出错的 stderr 必须原样保留，
+    /// 否则用户看到的就变成「什么都没发生」。判断依据是这几行固定的开头。
+    static func benignStderr(_ text: String) -> String {
+        let benignPrefixes = [
+            "lsof: WARNING: can't stat()",           // cryptexd 挂载点 stat 不到
+            "Output information may be incomplete.",
+            "assuming \"dev="                          // assuming "dev=1000023" from mount table
+        ]
+        let kept = text
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { rawLine in
+                let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
+                if trimmed.isEmpty { return false }
+                return !benignPrefixes.contains { trimmed.hasPrefix($0) }
+            }
+        return kept.joined(separator: "\n")
     }
 
     /// 执行 lsof。整个过程放到全局队列上做 —— `waitUntilExit` 是阻塞调用，

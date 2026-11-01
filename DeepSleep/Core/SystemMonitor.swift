@@ -18,6 +18,9 @@
 //   - 负载均值 / 开机时长 / 热压力
 //  这些全是本机读，不需要特权助手 —— 面板在助手不可用时照样有数。
 //
+// v1.11.1 起：多了一项 GPU / NPU 使用率（IOKit 的 IOAccelerator 性能计数器）。
+// 它不跟每秒采样一起跑 —— 按 MonitorConfig.sampleIntervalSeconds 的间隔取。
+//
 
 import Foundation
 import Combine
@@ -149,6 +152,8 @@ public final class SystemMonitor {
         public var localCPUPercent: Double?
         /// 最近一次本地采样的时间戳。
         public var localSampledAt: Date?
+        /// GPU / NPU 使用率。读不到的那一项是 nil。
+        public var accelerator: NgAcceleratorSample?
 
         public var isStale: Bool {
             Date().timeIntervalSince(updatedAt) > 30
@@ -210,6 +215,7 @@ public final class SystemMonitor {
             snapshot.topByMemory = _latestTopByMemory
             snapshot.localCPUPercent = local.overallCPUPercent
             snapshot.localSampledAt = local.sampledAt == .distantPast ? nil : local.sampledAt
+            snapshot.accelerator = local.accelerator
             return snapshot
         }
     }
@@ -463,6 +469,8 @@ public final class SystemMetricsCollector: @unchecked Sendable {
         public var loadAverage: [Double] = []
         public var uptimeSeconds: Double?
         public var thermalState: SystemMetrics.ThermalState?
+        /// GPU / NPU 使用率。读不到的那一项是 nil，不填 0。
+        public var accelerator: NgAcceleratorSample?
         public var sampledAt: Date = .distantPast
     }
 
@@ -480,6 +488,14 @@ public final class SystemMetricsCollector: @unchecked Sendable {
     private var cachedPageSize: UInt64 = 0
     private var cachedTotalMemory: UInt64 = 0
 
+    /// 最近一次 GPU / NPU 读数。跨轮保留 —— 加速器不是每秒都要重读的量，
+    /// 到点之前继续用上一次的读数，别让那一格在两次采样之间闪成「不可用」。
+    private var latestAccelerator: NgAcceleratorSample?
+    /// 上一次读加速器的时间戳。
+    private var lastAcceleratorReadAt: Date?
+    /// 加速器的采样间隔（秒）。跟 `MonitorConfig.sampleIntervalSeconds` 一致。
+    private var acceleratorInterval: TimeInterval = 3
+
     public init() {}
 
     /// 最近一次采样结果。同步读，不触发采集。
@@ -493,9 +509,13 @@ public final class SystemMetricsCollector: @unchecked Sendable {
     ///
     /// 与 `SystemMonitor.start()` 解耦：面板要不要实时数据由 UI 决定，
     /// 不取决于「系统监控」总开关是否打开。
-    public func start() {
+    ///
+    /// `acceleratorIntervalSeconds` 只管 GPU / NPU 那一组的节奏 ——
+    /// 它走的是 IOKit，跟本机的每秒采样不是一回事，按监控配置的间隔取。
+    public func start(acceleratorIntervalSeconds: TimeInterval = 3) {
         queue.async { [weak self] in
             guard let self, self.timer == nil else { return }
+            self.acceleratorInterval = max(1, acceleratorIntervalSeconds)
             // 立刻采一次，别让面板空着等第一秒。
             self.collect()
             let timer = DispatchSource.makeTimerSource(queue: self.queue)
@@ -516,6 +536,10 @@ public final class SystemMetricsCollector: @unchecked Sendable {
             // 这几分钟的总量摊成「一秒的占用」，曲线会突然跳一下。
             self?.previousCoreTicks = []
             self?.previousNetworkTotals = nil
+            // 加速器的读数也清掉：重新进页面时先显示「不可用」，
+            // 拿到新读数再显示数字，比拿离开页面前的旧读数冒充当前值诚实。
+            self?.latestAccelerator = nil
+            self?.lastAcceleratorReadAt = nil
         }
     }
 
@@ -565,6 +589,20 @@ public final class SystemMetricsCollector: @unchecked Sendable {
             }
             previousNetworkTotals = (totals.down, totals.up, now)
         }
+
+        // GPU / NPU：IOKit 读数。跟本机的每秒采样分开算 —— 按监控配置的
+        // 间隔取就够了，GPU 使用率不是需要盯到秒级抖动的量。
+        let acceleratorDue: Bool
+        if let last = lastAcceleratorReadAt {
+            acceleratorDue = now.timeIntervalSince(last) >= acceleratorInterval
+        } else {
+            acceleratorDue = true
+        }
+        if acceleratorDue {
+            lastAcceleratorReadAt = now
+            latestAccelerator = NgAcceleratorReader.read()
+        }
+        snapshot.accelerator = latestAccelerator
 
         lock.lock()
         latest = snapshot

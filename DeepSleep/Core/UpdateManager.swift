@@ -18,6 +18,12 @@
 //    5. 解出来的 .app 能通过 codesign 结构校验；
 //    6. Release 若附带 DeepSleep.zip.sha256，则比对摘要。
 //
+//  链路上每一步都必须是用户看得见的（v1.11.1 修的就是这件事）：
+//    检查 → 发现新版本 → **自动下载** → 校验 → （按开关）安装 → 重启
+//  以前「自动检查」在下载之前就 return 了 —— 界面上写着「会自动下载」，
+//  代码里根本没下过包。这条链路现在由 UpdateFlow（纯逻辑，可离线回归）
+//  判定下一步该做什么，UpdateManager 只负责执行。
+//
 
 import AppKit
 import CryptoKit
@@ -42,6 +48,10 @@ final class UpdateManager: ObservableObject {
     private static let askKey = "com.skyc8266.deepsleep.askBeforeInstalling"
     private static let lastCheckKey = "com.skyc8266.deepsleep.lastUpdateCheckAt"
     private static let skipPrereleaseKey = "com.skyc8266.deepsleep.skipPrereleaseUpdates"
+    /// 「上一轮真的动过手」的标记。应用下次启动时看到它，就去读结果文件。
+    private static let pendingInstallKey = "com.skyc8266.deepsleep.pendingUpdateInstall"
+    /// 上一次安装结果（结果文件的原文）。存一份是为了跨重启还在。
+    private static let lastResultKey = "com.skyc8266.deepsleep.lastUpdateResult"
     /// 自动重试退避：网络 / 临时错误按指数退避（5s / 30s / 5min），非临时错误不再试。
     private static let retryDelays: [TimeInterval] = [5, 30, 5 * 60]
     private var retryCount = 0
@@ -58,7 +68,17 @@ final class UpdateManager: ObservableObject {
         case upToDate(current: String)
         case available(version: String)
         case downloading(version: String, progress: Double)
+        /// 下载完了，正在校验（摘要 / bundle id / 版本号 / 签名）。
+        case verifying(version: String)
+        /// 已下载并校验通过，等用户点「立即更新并重启」。
         case ready(version: String)
+        /// 正在替换应用本体。
+        case installing(version: String)
+        /// 已经发起一次性管理员授权，正在等用户输密码。
+        case awaitingAuthorization(version: String)
+        /// 替换失败（权限被拒、磁盘满、被取消…）。
+        case installFailed(version: String, reason: String)
+        /// 检查或准备阶段失败。
         case failed(String)
 
         var text: String {
@@ -69,15 +89,31 @@ final class UpdateManager: ObservableObject {
             case .available(let version):    return "发现新版本 \(version)"
             case .downloading(let version, let progress):
                 return "正在下载 \(version)（\(Int(progress * 100))%）"
+            case .verifying(let version):    return "正在校验 \(version)"
             case .ready(let version):        return "\(version) 已就绪，可立即安装"
-            case .failed(let reason):        return "检查失败：\(reason)"
+            case .installing(let version):   return "正在安装 \(version)"
+            case .awaitingAuthorization(let version):
+                return "等待管理员授权（安装 \(version)）"
+            case .installFailed(let version, let reason):
+                return "\(version) 安装失败：\(reason)"
+            case .failed(let reason):        return "失败：\(reason)"
             }
         }
 
         var isBusy: Bool {
             switch self {
-            case .checking, .downloading: return true
+            case .checking, .downloading, .verifying, .installing, .awaitingAuthorization:
+                return true
             default:                      return false
+            }
+        }
+
+        /// 已下载并校验通过、可以装的版本号（没有就 nil）。
+        var readyVersion: String? {
+            switch self {
+            case .ready(let version):        return version
+            case .installFailed(let version, _): return version
+            default:                         return nil
             }
         }
     }
@@ -110,15 +146,34 @@ final class UpdateManager: ObservableObject {
     /// 已下载并校验通过、等待安装的新版本。
     private var prepared: (version: String, appPath: String, workDirectory: String)?
 
+    /// 上一次更新的结果。启动时读一次 —— 用户只有重启之后才知道更新成没成。
+    @Published private(set) var lastUpdateOutcome: UpdateFlow.LastOutcome = .never
+
     /// 当前应用版本。取自 bundle，保证与「关于」里显示的一致。
     var currentVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
+    }
+
+    /// 替换应用本体时需不需要管理员权限。
+    ///
+    /// 判据是「目标目录当前用户能不能写」：~/Applications 与开发期 build 目录
+    /// 能写（直接换），/Applications 一般不能（要一次管理员授权）。
+    var installNeedsAdministrator: Bool {
+        UpdateFlow.installMethod(
+            targetDirectoryWritable: FileManager.default.isWritableFile(atPath: targetDirectory)
+        ) == .elevated
+    }
+
+    /// 应用本体所在目录（替换时的目标）。
+    private var targetDirectory: String {
+        Bundle.main.bundleURL.deletingLastPathComponent().path
     }
 
     private init() {
         automaticallyChecks = UserDefaults.standard.object(forKey: Self.autoCheckKey) as? Bool ?? true
         asksBeforeInstalling = UserDefaults.standard.object(forKey: Self.askKey) as? Bool ?? true
         skipPrereleaseUpdates = UserDefaults.standard.object(forKey: Self.skipPrereleaseKey) as? Bool ?? true
+        lastUpdateOutcome = Self.loadLastOutcome()
     }
 
     // MARK: - 检查
@@ -128,76 +183,107 @@ final class UpdateManager: ObservableObject {
         guard automaticallyChecks else { return }
         let last = UserDefaults.standard.object(forKey: Self.lastCheckKey) as? Date ?? .distantPast
         guard Date().timeIntervalSince(last) > Self.checkInterval else { return }
-        await checkForUpdates()
+        // 标记这是「自动触发」的一次调用。
+        await checkForUpdates(automaticallyInstall: true)
     }
 
-    /// 检查是否有新版本可用。
-    /// - Parameter automaticallyInstall: 准备好后不等用户确认直接安装。
+    /// 检查是否有新版本可用；发现有就**继续往下走**。
+    ///
+    /// 完整链路：检查 → 发现新版本 → 自动下载 → 校验 → （按开关）安装。
+    /// 以前这里有一句 `guard automaticallyInstall || !asksBeforeInstalling else { return }`
+    /// 挡在下载之前 —— 默认参数是 false、开关默认又是 true，于是**自动检查从来
+    /// 没下载过任何东西**，而界面上写着「会自动下载并校验」。承诺与代码不一致，
+    /// 这句 guard 就是根因。现在没有提前 return 的地方了。
+    ///
+    /// - Parameter automaticallyInstall: 这一次调用是不是**自动触发**的
+    ///   （自动检查 = true，界面上手点「立即检查」= false）。
+    ///   它只影响日志措辞与重试行为，**不决定要不要直接装** ——
+    ///   装不装由「安装前先询问」这个开关决定：用户的显式选择优先于调用方。
     func checkForUpdates(automaticallyInstall: Bool = false) async {
         guard !phase.isBusy else { return }
         phase = .checking
         UserDefaults.standard.set(Date(), forKey: Self.lastCheckKey)
 
+        let release: ReleaseInfo
         do {
-            let release = try await fetchLatestRelease(
+            release = try await fetchLatestRelease(
                 skipPrerelease: skipPrereleaseUpdates
             )
-
-            // 版本判断全压在 isUpgrade 上：它只在「严格更新」时返回 true，
-            // 版本号解析不了时返回 false。这样即使 GitHub 那边 tag 写错了，
-            // 也只会「不更新」，不会陷入反复安装。
-            guard SemanticVersion.isUpgrade(from: currentVersion, to: release.version) else {
-                let note = SemanticVersion.parse(release.version) == nil
-                    ? "最新 Release 的版本号「\(release.version)」无法解析，已忽略"
-                    : "已是最新版本（\(currentVersion)）"
-                phase = .upToDate(current: currentVersion)
-                updateLog(note)
-                retryCount = 0  // 「无更新」也是成功路径，重置退避计数
-                return
-            }
-
-            phase = .available(version: release.version)
-            updateLog("发现新版本 \(release.version)（当前 \(currentVersion)）")
-            retryCount = 0
-
-            guard automaticallyInstall || !asksBeforeInstalling else { return }
-            await downloadAndPrepare(release)
         } catch let error as UpdateError {
-            // 分类：可重试 vs 永久
-            if error.isRetryable, retryCount < Self.retryDelays.count {
-                let delay = Self.retryDelays[retryCount]
-                retryCount += 1
-                let detail = error.errorDescription ?? "未知"
-                phase = .failed("\(detail)（\(Int(delay))s 后重试）")
-                updateLog("检查更新失败：\(detail)。\(Int(delay))s 后自动重试。")
-                Task {
-                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-                    await checkForUpdates(automaticallyInstall: automaticallyInstall)
-                }
-            } else {
-                phase = .failed(error.errorDescription ?? "未知错误")
-                updateLog("检查更新失败：\(error.errorDescription ?? "未知错误")")
-            }
+            await handleFailure(error, prefix: "检查更新失败",
+                               automaticallyInstall: automaticallyInstall)
+            return
         } catch {
             phase = .failed(error.localizedDescription)
             updateLog("检查更新失败：\(error.localizedDescription)")
+            return
+        }
+
+        // 版本判断全压在 isUpgrade 上：它只在「严格更新」时返回 true，
+        // 版本号解析不了时返回 false。这样即使 GitHub 那边 tag 写错了，
+        // 也只会「不更新」，不会陷入反复安装。
+        switch UpdateFlow.action(afterCheck: currentVersion, releaseVersion: release.version) {
+        case .none:
+            let note = SemanticVersion.parse(release.version) == nil
+                ? "最新 Release 的版本号「\(release.version)」无法解析，已忽略"
+                : "已是最新版本（\(currentVersion)）"
+            phase = .upToDate(current: currentVersion)
+            updateLog(note)
+            retryCount = 0  // 「无更新」也是成功路径，重置退避计数
+            return
+        case .download(let version):
+            phase = .available(version: version)
+            updateLog("\(automaticallyInstall ? "自动检查" : "手动检查")："
+                    + "发现新版本 \(version)（当前 \(currentVersion)），开始下载")
+            retryCount = 0
+        case .awaitConfirmation, .install:
+            return  // 走不到：这两个分支只在校验之后才出现
+        }
+
+        // 发现新版本 → 直接进入下载与校验，不等用户点任何按钮。
+        do {
+            try await downloadAndPrepare(release)
+        } catch let error as UpdateError {
+            await handleFailure(error, prefix: "更新准备失败",
+                               automaticallyInstall: automaticallyInstall)
+        } catch {
+            phase = .failed(error.localizedDescription)
+            updateLog("更新准备失败：\(error.localizedDescription)")
+        }
+    }
+
+    /// 失败处理：可重试的按指数退避重试，不可重试的就如实说。
+    private func handleFailure(_ error: UpdateError, prefix: String,
+                               automaticallyInstall: Bool) async {
+        if error.isRetryable, retryCount < Self.retryDelays.count {
+            let delay = Self.retryDelays[retryCount]
+            retryCount += 1
+            let detail = error.errorDescription ?? "未知"
+            phase = .failed("\(detail)（\(Int(delay))s 后重试）")
+            updateLog("\(prefix)：\(detail)。\(Int(delay))s 后自动重试。")
+            Task {
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                await checkForUpdates(automaticallyInstall: automaticallyInstall)
+            }
+        } else {
+            phase = .failed(error.errorDescription ?? "未知错误")
+            updateLog("\(prefix)：\(error.errorDescription ?? "未知错误")")
         }
     }
 
     // MARK: - 下载与校验
 
     /// 拉取最新发布信息 + zip + sha256（顺序执行；sha256 用来校验）。
-    /// `onDownloadProgress` 接收 0.0–1.0，下载阶段 UI 用它显示进度条。
-    private func downloadAndPrepare(_ release: ReleaseInfo,
-                                     onDownloadProgress: @escaping (Double) -> Void = { _ in }
-    ) async {
+    ///
+    /// 校验顺序一步都不放宽：摘要对不上、bundle id 不对、版本号对不上、
+    /// 签名不过 —— 任何一条不满足都直接抛错，**绝不安装**。
+    /// 失败会抛给调用方，由调用方决定是退避重试还是如实报给用户。
+    private func downloadAndPrepare(_ release: ReleaseInfo) async throws {
         phase = .downloading(version: release.version, progress: 0)
 
-        var workDirectory: String?
+        // 每次更新都用全新的临时目录，避免上一次的残留被误当成新包。
+        let work = NSTemporaryDirectory() + "DeepSleepUpdate-\(UUID().uuidString)"
         do {
-            // 每次更新都用全新的临时目录，避免上一次的残留被误当成新包。
-            let work = NSTemporaryDirectory() + "DeepSleepUpdate-\(UUID().uuidString)"
-            workDirectory = work
             try FileManager.default.createDirectory(
                 atPath: work, withIntermediateDirectories: true)
 
@@ -205,12 +291,14 @@ final class UpdateManager: ObservableObject {
             let zipData = try await fetch(release.downloadURL, onProgress: { progress in
                 Task { @MainActor in
                     self.phase = .downloading(version: release.version, progress: progress)
-                    onDownloadProgress(progress)
                 }
             })
             guard zipData.count > 0 else { throw UpdateError.emptyDownload }
             let zipPath = work + "/\(Self.assetName)"
             try zipData.write(to: URL(fileURLWithPath: zipPath))
+
+            // 下载完了，接下来是校验。单独一个阶段，用户能看出卡在哪一步。
+            phase = .verifying(version: release.version)
 
             // 2) 若 Release 提供 sha256，先比对摘要
             if let checksumURL = release.checksumURL {
@@ -257,16 +345,25 @@ final class UpdateManager: ObservableObject {
 
             prepared = (version: release.version, appPath: appPath, workDirectory: work)
             phase = .ready(version: release.version)
-            updateLog("\(release.version) 已下载并校验通过，可立即安装")
+            updateLog("\(release.version) 已下载并校验通过")
 
-            if !asksBeforeInstalling {
-                installAndRelaunch()
+            // 装不装由「安装前先询问」决定：
+            //   开着 → 停在 .ready，等用户点「立即更新并重启」；
+            //   关着 → 校验通过就直接装，并重启。
+            switch UpdateFlow.action(afterVerification: release.version,
+                                     asksBeforeInstalling: asksBeforeInstalling) {
+            case .install:
+                updateLog("「安装前先询问」已关闭，直接安装 \(release.version)")
+                await installAndRelaunch()
+            case .awaitConfirmation:
+                updateLog("等你确认后安装 \(release.version)")
+            case .none, .download:
+                break
             }
         } catch {
-            if let workDirectory { try? FileManager.default.removeItem(atPath: workDirectory) }
+            try? FileManager.default.removeItem(atPath: work)
             prepared = nil
-            phase = .failed(error.localizedDescription)
-            updateLog("更新准备失败：\(error.localizedDescription)")
+            throw error
         }
     }
 
@@ -280,19 +377,38 @@ final class UpdateManager: ObservableObject {
 
     // MARK: - 安装
 
-    /// 启动临时目录里的更新器，然后退出自己。
+    /// 替换应用本体，然后退出自己。
     ///
     /// 更新器等本进程真的退出后才动手 —— 直接用 `mv` 覆盖正在运行的
     /// .app 会让进程读到已释放的 inode，行为不可预期。
-    func installAndRelaunch() {
+    ///
+    /// 两条路：
+    ///   · 目标目录当前用户可写（~/Applications、开发期 build 目录）→ 直接跑脚本；
+    ///   · 目标目录不可写（典型是 /Applications）→ 用 osascript 请求**一次性**
+    ///     管理员授权，让脚本以 root 身份跑。
+    ///
+    /// 为什么不走特权助手：助手那条命令要改 `DeepSleepHelper/main.swift`，
+    /// 而助手不一定装了（用户可能没启用「完全控制」）。osascript 这条路
+    /// 不依赖任何前置条件，装不装助手都能用。
+    func installAndRelaunch() async {
         guard let prepared else { return }
 
         let targetPath = Bundle.main.bundleURL.path
+        let writable = FileManager.default.isWritableFile(atPath: targetDirectory)
+        let method = UpdateFlow.installMethod(targetDirectoryWritable: writable)
+
+        let resultPath = Self.resultFilePath()
+        // 上一轮的结果不能被当成本轮的结果：先清掉。
+        // 目录是用户自己的，所以即使用 root 写的文件也删得掉。
+        try? FileManager.default.removeItem(atPath: resultPath)
+
         let script = Self.updaterScript(
             target: targetPath,
             source: prepared.appPath,
             workDirectory: prepared.workDirectory,
-            pid: getpid())
+            pid: getpid(),
+            resultPath: resultPath,
+            version: prepared.version)
         let scriptPath = prepared.workDirectory + "/updater.sh"
 
         do {
@@ -300,75 +416,183 @@ final class UpdateManager: ObservableObject {
             try FileManager.default.setAttributes(
                 [.posixPermissions: 0o700], ofItemAtPath: scriptPath)
         } catch {
-            phase = .failed("无法写入更新器：\(error.localizedDescription)")
+            phase = .installFailed(version: prepared.version,
+                                   reason: "无法写入更新器：\(error.localizedDescription)")
             return
         }
 
+        switch method {
+        case .direct:
+            phase = .installing(version: prepared.version)
+            updateLog("正在安装 \(prepared.version)（目标目录可写，不需要管理员权限）")
+            guard launchInstaller(scriptPath) else {
+                phase = .installFailed(version: prepared.version,
+                                       reason: "无法启动更新器")
+                return
+            }
+            markInstallPending()
+            terminateSoon()
+
+        case .elevated:
+            // 目标目录不可写 —— 明说需要管理员权限，再去要这个授权。
+            phase = .awaitingAuthorization(version: prepared.version)
+            updateLog("目标目录 \(targetDirectory) 当前用户不可写，"
+                    + "安装 \(prepared.version) 需要管理员权限")
+            do {
+                try await Self.runInstallerWithAdministratorPrivileges(scriptPath: scriptPath)
+            } catch {
+                // 授权被拒或失败：应用不动，继续跑，告诉用户为什么。
+                let reason = error.localizedDescription
+                phase = .installFailed(version: prepared.version, reason: reason)
+                updateLog("安装没有开始：\(reason)")
+                return
+            }
+            markInstallPending()
+            terminateSoon()
+        }
+    }
+
+    /// 启动更新器脚本，并让它活过我们自己的退出。
+    ///
+    /// 用 `nohup … &` 把它甩到后台：脚本要等本进程退出才动手，
+    /// 如果它是我们的子进程，我们退出时它得还在。
+    private func launchInstaller(_ scriptPath: String) -> Bool {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = [scriptPath]
+        process.arguments = ["-c",
+            "/usr/bin/nohup /bin/sh \(UpdateFlow.shellQuoted(scriptPath)) >/dev/null 2>&1 &"]
         do {
             try process.run()
+            return true
         } catch {
-            phase = .failed("无法启动更新器：\(error.localizedDescription)")
-            return
+            return false
         }
+    }
 
-        updateLog("更新器已启动，即将退出以完成替换")
-        // 给日志与 banner 一点落盘时间，然后退出。更新器会负责重启。
+    /// 用 osascript 请求一次性管理员授权，把更新器脚本以 root 身份跑起来。
+    ///
+    /// 脚本必须**后台**跑：osascript 会等命令结束，而脚本要等本进程退出才
+    /// 动手 —— 前台跑就是互相等，死锁。
+    private static func runInstallerWithAdministratorPrivileges(scriptPath: String) async throws {
+        let command = "/usr/bin/nohup /bin/sh \(UpdateFlow.shellQuoted(scriptPath))"
+            + " >/dev/null 2>&1 &"
+
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            DispatchQueue.global(qos: .userInitiated).async {
+                // AppleScript 字符串内的反斜杠与双引号需要转义。
+                let escaped = command
+                    .replacingOccurrences(of: "\\", with: "\\\\")
+                    .replacingOccurrences(of: "\"", with: "\\\"")
+                let appleScript = "do shell script \"\(escaped)\" with administrator privileges"
+
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+                process.arguments = ["-e", appleScript]
+
+                let pipe = Pipe()
+                process.standardOutput = pipe
+                process.standardError = pipe
+
+                do {
+                    try process.run()
+                } catch {
+                    continuation.resume(throwing: UpdateError.commandFailed(
+                        "无法请求管理员授权：\(error.localizedDescription)"))
+                    return
+                }
+
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                process.waitUntilExit()
+                let output = String(data: data, encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+                if process.terminationStatus == 0 {
+                    continuation.resume()
+                } else if output.contains("-128")
+                            || output.localizedCaseInsensitiveContains("User canceled") {
+                    continuation.resume(throwing: UpdateError.commandFailed(
+                        "已取消管理员授权，没有改动任何文件"))
+                } else {
+                    continuation.resume(throwing: UpdateError.commandFailed(
+                        "管理员授权失败："
+                        + (output.isEmpty ? "退出码 \(process.terminationStatus)" : output)))
+                }
+            }
+        }
+    }
+
+    /// 记下「这一轮真的动过手」。
+    ///
+    /// 应用退出前读不到结果没关系 —— 下次启动时看到这个标记，就去读结果文件，
+    /// 那一行才是「上一次更新到底成没成」的答案。
+    private func markInstallPending() {
+        UserDefaults.standard.set(true, forKey: Self.pendingInstallKey)
+    }
+
+    /// 给日志与 banner 一点落盘时间，然后退出。更新器会负责重启。
+    private func terminateSoon() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
             NSApp.terminate(nil)
         }
     }
 
+    // MARK: - 上一次安装结果
+
+    /// 结果文件的位置。
+    ///
+    /// 放在用户自己的 Application Support 下，而不是临时目录 —— 临时目录会被
+    /// 更新器脚本清掉，而且结果要活过一次重启。
+    /// 目录由应用（普通用户身份）先建好，这样 root 写出来的文件也在
+    /// 用户自己的目录里，用户读得到、也删得掉。
+    static func resultFilePath() -> String {
+        let base = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/DeepSleep",
+                                    isDirectory: true)
+        try? FileManager.default.createDirectory(at: base,
+                                                 withIntermediateDirectories: true)
+        return base.appendingPathComponent("update-result.txt").path
+    }
+
+    /// 读上一次安装的结果。
+    ///
+    /// 顺序很重要：先看有没有「正在安装」的标记 ——
+    ///   · 有标记：说明上一轮我们真的动过手，结果文件才是那一轮的权威答案；
+    ///     读不到就如实说「不知道」，不猜。
+    ///   · 没标记：说明没有正在进行的安装，读缓存（跨重启保留）即可。
+    private static func loadLastOutcome() -> UpdateFlow.LastOutcome {
+        let pending = UserDefaults.standard.bool(forKey: pendingInstallKey)
+        let cached = UserDefaults.standard.string(forKey: lastResultKey) ?? ""
+
+        if pending {
+            let text = (try? String(contentsOfFile: resultFilePath(),
+                                    encoding: .utf8)) ?? ""
+            UserDefaults.standard.set(false, forKey: pendingInstallKey)
+            if let result = UpdateFlow.InstallResult.parse(text) {
+                UserDefaults.standard.set(text, forKey: lastResultKey)
+                return UpdateFlow.LastOutcome(result)
+            }
+            // 没拿到结果：如实说「没成」，但别编一个原因出来。
+            return .failure(version: nil, message: "安装没有完成，也没有留下结果")
+        }
+
+        if let result = UpdateFlow.InstallResult.parse(cached) {
+            return UpdateFlow.LastOutcome(result)
+        }
+        return .never
+    }
+
     /// 生成更新器脚本。
+    ///
     /// 做成静态方法是为了让 `--update-script` 能在不执行任何东西的前提下把它
     /// 打印出来：替换正在运行的应用是本项目第二危险的动作，执行前应该能一眼看完。
+    /// 脚本本体放在 `UpdateFlow` 里 —— 那里不依赖 AppKit，可以被测试直接断言。
     static func updaterScript(target: String, source: String,
-                              workDirectory: String, pid: Int32) -> String {
-        """
-        #!/bin/sh
-        # 由 Deep Sleep 生成：等应用退出后替换它，然后重新打开。
-        # 这个脚本在临时目录里，因此不会被它自己要替换的 .app 带走。
-        set -u
-
-        TARGET=\(Self.quoted(target))
-        SOURCE=\(Self.quoted(source))
-        PID=\(getpid())
-        WORK=\(Self.quoted(workDirectory))
-        OLD=\(Self.quoted(target + ".updating"))
-
-        # 等应用真正退出（最多 30 秒）。不这么做的话，替换会发生在它还在运行时。
-        i=0
-        while [ "$i" -lt 150 ]; do
-            /bin/kill -0 "$PID" 2>/dev/null || break
-            /bin/sleep 0.2
-            i=$((i + 1))
-        done
-
-        /bin/rm -rf "$OLD" 2>/dev/null || true
-
-        # 先挪走旧的，再放新的。特意不写成「先 rm -rf 清干净再放」：
-        # 如果挪走那一步失败，rm 会把用户的应用直接删掉，而回滚又会因为
-        # 备份根本不存在而同样失败 —— 应用就彻底没了。
-        if /bin/mv -f "$TARGET" "$OLD" 2>/dev/null; then
-            if /bin/mv -f "$SOURCE" "$TARGET" 2>/dev/null; then
-                /bin/rm -rf "$OLD" 2>/dev/null || true
-                /bin/rm -rf "$WORK" 2>/dev/null || true
-                /usr/bin/open "$TARGET"
-            else
-                # 新的放不进去（磁盘满、权限不足…）就把旧的放回原位。
-                # 宁可停在旧版本，也不能留下一个装不上的应用。
-                /bin/mv -f "$OLD" "$TARGET" 2>/dev/null || true
-                /usr/bin/open "$TARGET"
-            fi
-        else
-            # 旧的压根没挪动，说明原状未被破坏，直接重开即可。
-            /usr/bin/open "$TARGET"
-        fi
-
-        /bin/rm -f "$0"
-        """
+                              workDirectory: String, pid: Int32,
+                              resultPath: String = "",
+                              version: String = "") -> String {
+        UpdateFlow.updaterScript(target: target, source: source,
+                                 workDirectory: workDirectory, pid: pid,
+                                 resultPath: resultPath, version: version)
     }
 
     // MARK: - 网络
@@ -528,10 +752,6 @@ final class UpdateManager: ObservableObject {
             throw UpdateError.commandFailed(
                 "\((executable as NSString).lastPathComponent)：\(text.isEmpty ? "退出码 \(process.terminationStatus)" : text)")
         }
-    }
-
-    private static func quoted(_ value: String) -> String {
-        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     private func updateLog(_ text: String) {

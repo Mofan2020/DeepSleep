@@ -9,6 +9,7 @@
 //    - 命令跑不到（工具不存在 / 权限不足 / 超时）就如实记「无法读取（原因）」，
 //      绝不编数字。判定在 Shared/DiagnosticModel.swift，这里只管取数。
 //    - 每条外部命令单条 10 秒上限，超时杀掉，不留僵尸进程。
+//      扩展检查项的命令另用 3~5 秒的更紧上限，免得一个慢命令把整轮拖长。
 //    - 全部在后台队列上跑，不卡主线程。
 //
 //  为什么特权数据（温度 / 进程统计）走协议注入：
@@ -267,8 +268,15 @@ enum DeviceDiagnostics {
 
     /// 跑一次完整采集，直接出报告。
     static func collectReport(privileged: DiagnosticsPrivilegedSource = LiveDiagnosticsPrivilegedSource.shared) async -> DiagnosticReport {
+        // 扩展检查项与主采集并发跑 —— 两边互不依赖，整体耗时取决于最慢的那一条命令。
+        async let extras = collectExtraFacts()
+
         let facts = await collectFacts(privileged: privileged)
-        return DiagnosticEvaluator.evaluate(facts)
+        var report = DiagnosticEvaluator.evaluate(facts)
+        report.sections.append(contentsOf: DgExtra.sections(from: await extras))
+        // 总结句按最终分组重算 —— 扩展项里也可能有需要注意的地方。
+        report.summary = DiagnosticReport.summaryText(for: report.sections)
+        return report
     }
 
     // MARK: 硬件
@@ -938,6 +946,254 @@ enum DeviceDiagnostics {
             return .unavailable(reason: "vm.loadavg 里的数值无法解析")
         }
         return .value(values)
+    }
+
+    // MARK: 扩展检查项
+
+    /// 采集扩展检查项的事实。
+    ///
+    /// 全部命令互不依赖，一起并发跑；每条命令的超时都收到 3~5 秒，
+    /// 免得某一个慢命令把整轮诊断拖长。命令跑不动就记「读不到 + 原因」，
+    /// 不当成故障。
+    private static func collectExtraFacts() async -> DgExtraFacts {
+        var facts = DgExtraFacts()
+
+        async let hardware = runShell("/usr/sbin/system_profiler", ["SPHardwareDataType"], timeout: 5)
+        async let displays = runShell("/usr/sbin/system_profiler", ["SPDisplaysDataType"], timeout: 5)
+        async let storage = runShell("/usr/sbin/system_profiler", ["SPStorageDataType"], timeout: 5)
+        async let software = runShell("/usr/sbin/system_profiler", ["SPSoftwareDataType"], timeout: 5)
+        async let battery = runShell("/usr/bin/pmset", ["-g", "batt"], timeout: 4)
+        async let power = runShell("/usr/bin/pmset", ["-g"], timeout: 4)
+        async let schedule = runShell("/usr/bin/pmset", ["-g", "sched"], timeout: 4)
+        async let top = runShell("/usr/bin/top",
+                                 ["-l", "2", "-o", "cpu", "-n", "6", "-stats", "pid,command,cpu"],
+                                 timeout: 5)
+        async let extensions = runShell("/usr/bin/systemextensionsctl", ["list"], timeout: 4)
+        async let smc = runShell("/usr/sbin/ioreg", ["-c", "AppleSMC"], timeout: 4)
+        async let timeSync = runShell("/usr/sbin/systemsetup", ["-getusingnetworktime"], timeout: 4)
+        async let groups = runShell("/usr/bin/id", ["-Gn"], timeout: 3)
+        async let inode = runShell("/bin/df", ["-i", "/"], timeout: 4)
+
+        facts.hardware = parsedFact(await hardware, name: "system_profiler SPHardwareDataType") {
+            DgExtra.parseHardwareProfile($0)
+        }
+        facts.graphics = parsedFact(await displays, name: "system_profiler SPDisplaysDataType") {
+            DgExtra.parseGraphicsProfile($0)
+        }
+        facts.storage = parsedFact(await storage, name: "system_profiler SPStorageDataType") {
+            let drives = DgExtra.parseStorageDrives($0)
+            return drives.isEmpty ? nil : drives
+        }
+        facts.software = parsedFact(await software, name: "system_profiler SPSoftwareDataType") {
+            DgExtra.parseSoftwareProfile($0)
+        }
+        facts.power = parsedFact(await battery, name: "pmset -g batt") {
+            DgExtra.parsePowerProfile($0)
+        }
+        facts.sleepBlockers = parsedFact(await power, name: "pmset -g") {
+            let blockers = DgExtra.parseSleepBlockers($0)
+            return blockers.isEmpty ? nil : blockers
+        }
+        facts.scheduledWake = listFact(await schedule, name: "pmset -g sched") {
+            DgExtra.parseScheduledWake($0)
+        }
+        facts.topCPU = parsedFact(await top, name: "top") {
+            let processes = DgExtra.parseTopCPU($0, limit: 5)
+            return processes.isEmpty ? nil : processes
+        }
+        facts.systemExtensions = parsedFact(await extensions, name: "systemextensionsctl list") {
+            let list = DgExtra.parseSystemExtensions($0)
+            return list.isEmpty ? nil : list
+        }
+        facts.smcPresent = smcFact(await smc)
+        facts.timeSync = timeSyncFact(await timeSync)
+        facts.groups = parsedFact(await groups, name: "id -Gn") {
+            let list = DgExtra.parseGroups($0)
+            return list.isEmpty ? nil : list
+        }
+        facts.inode = parsedFact(await inode, name: "df -i") {
+            DgExtra.parseInodeProfile($0)
+        }
+
+        facts.timezone = readTimezone()
+        facts.hostsEntries = readHostsEntries()
+        facts.crash = await readCrashProfile()
+        facts.thirdPartyLaunchItems = readThirdPartyLaunchItems()
+
+        return facts
+    }
+
+    /// 命令输出 → 事实。解析不出来就是「读不到 + 原因」，不是故障。
+    private static func parsedFact<T>(_ result: ShellResult,
+                                       name: String,
+                                       parse: (String) -> T?) -> DiagnosticFact<T> {
+        if let failure = result.launchFailure {
+            return .unavailable(reason: failure)
+        }
+        if result.timedOut {
+            return .unavailable(reason: "\(name) 超时")
+        }
+        let text = result.stdout + (result.stderr.isEmpty ? "" : "\n" + result.stderr)
+        guard let value = parse(text) else {
+            return .unavailable(reason: "\(name) 没有返回可解析的内容")
+        }
+        return .value(value)
+    }
+
+    /// 命令输出 → 列表事实。
+    ///
+    /// 与 parsedFact 的区别：**空列表是有效结果**（比如 pmset -g sched 没有输出
+    /// 就是「没有定时唤醒计划」，不是「读不到」）。
+    private static func listFact<T>(_ result: ShellResult,
+                                     name: String,
+                                     parse: (String) -> [T]) -> DiagnosticFact<[T]> {
+        if let failure = result.launchFailure {
+            return .unavailable(reason: failure)
+        }
+        if result.timedOut {
+            return .unavailable(reason: "\(name) 超时")
+        }
+        return .value(parse(result.stdout))
+    }
+
+    /// SMC 控制器是否在位。
+    private static func smcFact(_ result: ShellResult) -> DiagnosticFact<Bool> {
+        if let failure = result.launchFailure {
+            return .unavailable(reason: failure)
+        }
+        if result.timedOut {
+            return .unavailable(reason: "ioreg 读取 SMC 超时")
+        }
+        return .value(result.stdout.contains("AppleSMC"))
+    }
+
+    /// 网络时间同步状态。
+    ///
+    /// systemsetup 只有管理员能跑，普通用户拿到的是一句「You need administrator
+    /// access」。这不是故障，是权限限制 —— 说清楚就好，诊断不请求提权。
+    private static func timeSyncFact(_ result: ShellResult) -> DiagnosticFact<String> {
+        if let failure = result.launchFailure {
+            return .unavailable(reason: failure)
+        }
+        if result.timedOut {
+            return .unavailable(reason: "systemsetup 超时")
+        }
+        let text = (result.stdout + result.stderr).lowercased()
+        if text.contains("administrator access") {
+            return .unavailable(reason: "systemsetup 需要管理员权限，诊断不请求提权")
+        }
+        if text.contains("network time: on") {
+            return .value("已开启（与网络时间同步）")
+        }
+        if text.contains("network time: off") {
+            return .value("已关闭（时间由本机时钟维护）")
+        }
+        return .unavailable(reason: "systemsetup 没有返回时间同步状态")
+    }
+
+    /// 时区。从 /etc/localtime 指向的 zoneinfo 路径里读，不需要任何权限。
+    private static func readTimezone() -> DiagnosticFact<String> {
+        let resolved = URL(fileURLWithPath: "/etc/localtime").resolvingSymlinksInPath().path
+        let marker = "/zoneinfo/"
+        guard let range = resolved.range(of: marker) else {
+            return .unavailable(reason: "/etc/localtime 不是指向 zoneinfo 的软链接")
+        }
+        let zone = String(resolved[range.upperBound...])
+        guard !zone.isEmpty else {
+            return .unavailable(reason: "读不到时区")
+        }
+        return .value(zone)
+    }
+
+    /// hosts 里生效的条目。
+    private static func readHostsEntries() -> DiagnosticFact<[String]> {
+        guard let text = try? String(contentsOf: URL(fileURLWithPath: "/etc/hosts"), encoding: .utf8) else {
+            return .unavailable(reason: "读不到 /etc/hosts")
+        }
+        return .value(DgExtra.parseHostsEntries(text))
+    }
+
+    /// 崩溃报告统计。
+    ///
+    /// 目录直接读，不用命令：用户目录与系统目录的报告文件名就带类型
+    /// （.panic 是内核崩溃，.ips 是应用崩溃）。
+    private static func readCrashProfile() async -> DiagnosticFact<DgCrashProfile> {
+        await withCheckedContinuation { (continuation: CheckedContinuation<DiagnosticFact<DgCrashProfile>, Never>) in
+            DispatchQueue.global(qos: .utility).async {
+                continuation.resume(returning: readCrashProfileBlocking())
+            }
+        }
+    }
+
+    private static func readCrashProfileBlocking() -> DiagnosticFact<DgCrashProfile> {
+        let fm = FileManager.default
+        let directories = [
+            fm.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Logs/DiagnosticReports", isDirectory: true),
+            URL(fileURLWithPath: "/Library/Logs/DiagnosticReports", isDirectory: true)
+        ]
+        var userCount = 0
+        var systemCount = 0
+        var panicCount = 0
+        var newestName: String?
+        var newestDate: Date?
+
+        for (index, directory) in directories.enumerated() {
+            guard let entries = try? fm.contentsOfDirectory(atPath: directory.path) else { continue }
+            var count = 0
+            for name in entries {
+                let url = directory.appendingPathComponent(name)
+                var isDirectory: ObjCBool = false
+                guard fm.fileExists(atPath: url.path, isDirectory: &isDirectory),
+                      !isDirectory.boolValue else { continue }
+                count += 1
+                if name.hasSuffix(".panic") { panicCount += 1 }
+                if let attributes = try? fm.attributesOfItem(atPath: url.path),
+                   let date = attributes[.modificationDate] as? Date {
+                    if let current = newestDate {
+                        if date > current {
+                            newestDate = date
+                            newestName = name
+                        }
+                    } else {
+                        newestDate = date
+                        newestName = name
+                    }
+                }
+            }
+            if index == 0 { userCount = count } else { systemCount = count }
+        }
+
+        guard userCount > 0 || systemCount > 0 else {
+            return .unavailable(reason: "没有找到崩溃报告目录")
+        }
+        return .value(DgCrashProfile(userReportCount: userCount,
+                                     systemReportCount: systemCount,
+                                     panicCount: panicCount,
+                                     newestReportName: newestName,
+                                     newestReportDate: newestDate))
+    }
+
+    /// 第三方开机项（用户级与系统级的 LaunchAgents / LaunchDaemons）。
+    ///
+    /// Apple 自带的 com.apple.* 不列出来 —— 用户关心的是「谁在我开机时自己启动」。
+    private static func readThirdPartyLaunchItems() -> DiagnosticFact<[String]> {
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser.path
+        let directories = [
+            "\(home)/Library/LaunchAgents",
+            "/Library/LaunchAgents",
+            "\(home)/Library/LaunchDaemons",
+            "/Library/LaunchDaemons"
+        ]
+        var items: [String] = []
+        for directory in directories {
+            guard let entries = try? fm.contentsOfDirectory(atPath: directory) else { continue }
+            for name in entries.sorted() where name.hasSuffix(".plist") && !name.hasPrefix("com.apple.") {
+                items.append("\(directory)/\(name)")
+            }
+        }
+        return .value(items)
     }
 
     // MARK: - 小工具

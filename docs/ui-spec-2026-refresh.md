@@ -39,6 +39,8 @@ DS.Tone.critical   // 失败 / 危险阈值（红）
 DS.Tone.info       // 强调、进行中（accent）
 DS.Tone.idle       // 未启用 / 静默（secondary）
 DS.Tone.hairline   // 卡片细描边
+
+DS.Metric.gaugeDiameter  // 环形仪表直径（72）
 ```
 
 视图修饰符：
@@ -64,6 +66,22 @@ DS.Tone.hairline   // 卡片细描边
 | `MetricTile(title:value:unit:status:tint:progress:symbol:)` | 大数值块。**status 必填**（颜色不能是唯一区分手段） |
 | `EmptyStateView(title:message:systemImage:actionTitle:action:)` | 空态，底层是系统 `ContentUnavailableView` |
 | `SubsectionHeader(title:symbol:accessory:)` | 卡内小标题 |
+
+### 1.1 总览页的专用结构（v1.11.1）
+
+总览页重做过一次，这几个结构是它专用的，别处不要照抄成通用组件：
+
+| 结构 | 位置 | 说明 |
+| --- | --- | --- |
+| 环形仪表 | `StatusHeroCard` | 原生 `Gauge` + `.accessoryCircularCapacity`。填充比例 = 生效的保持项 / 全部保持项，**是真实比例不是装饰** |
+| 保持项卡片 | `AssertionCard` | 两列网格的一格：图标 + 标题 + 说明 + 状态胶囊 + 开关 |
+| 环境状态条 | `DashboardView.statusStrip` | 电源 / 自动化 / 完全控制三项并成一条，视觉重量低于主状态 |
+
+**环形仪表必须配文字。** 环只能靠颜色传达状态，颜色在深色模式和色觉障碍下都不可靠。
+所以环旁边一定有 `StatusPill` 写的状态词 —— 这是规则 4 在仪表上的具体落法。
+
+`AssertionRow`（`Components.swift`）保留但总览页不再用它：一列四个长行要滚动才看全，
+而「哪几项开着」恰恰需要一眼看出。
 
 ---
 

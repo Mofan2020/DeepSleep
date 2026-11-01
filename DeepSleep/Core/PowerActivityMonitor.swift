@@ -91,6 +91,130 @@ struct PowerSettingChange: Identifiable, Equatable {
     let bySelf: Bool
 }
 
+// MARK: - 后台扫描
+
+/// 扫描的重活都在这里，**不占用主线程**。
+///
+/// 为什么要拆出来：`PowerActivityMonitor` 是 `@MainActor`（它要发布
+/// @Published 的结果），而它这一轮要做的事里有两个是慢的：
+/// 读每个应用的可执行文件找关键字（每个最多 8 MB）、spawn 一个 pmset
+/// 进程（20 毫秒）。慢活放在主线程上，用户点什么都顿。
+///
+/// 所以：慢活在**非隔离**的这个 enum 里做，做完再回主线程发布结果。
+enum PowerScanBackend {
+
+    /// 竞争者判定的缓存，键是应用可执行文件路径。
+    /// 同一个二进制的内容不会变，每次扫描都重读一遍纯属浪费。
+    private static var rivalCache: [String: Bool] = [:]
+    private static let rivalCacheLock = NSLock()
+
+    static func scanForRivals() -> [PowerRival] {
+        var found: [PowerRival] = []
+
+        for app in NSWorkspace.shared.runningApplications {
+            guard app.activationPolicy != .prohibited,
+                  let url = app.bundleURL,
+                  let bundleID = app.bundleIdentifier,
+                  !bundleID.hasPrefix("com.apple.") else { continue }
+
+            let key = url.path
+            let suspect: Bool
+            let cached = rivalCacheLock.withLock { rivalCache[key] }
+            if let cached {
+                suspect = cached
+            } else {
+                suspect = touchesPowerSettings(bundleURL: url)
+                rivalCacheLock.withLock { rivalCache[key] = suspect }
+            }
+            guard suspect else { continue }
+
+            found.append(PowerRival(
+                bundleID: bundleID,
+                name: app.localizedName ?? bundleID,
+                note: "程序里包含 pmset / 睡眠设置相关代码，可能自行修改系统电源设置。"
+                    + "Deep Sleep 不会去关掉它，但会把设置纠正回你要的状态。"
+            ))
+        }
+
+        return found.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    static func touchesPowerSettings(bundleURL: URL) -> Bool {
+        guard let executable = Bundle(url: bundleURL)?.executableURL,
+              let handle = try? FileHandle(forReadingFrom: executable) else { return false }
+        defer { try? handle.close() }
+
+        // 字符串常量在 __TEXT 段，读前 8 MB 足够覆盖，也不必把整个
+        // 几百 MB 的包读进内存。
+        let data = handle.readData(ofLength: 8 * 1024 * 1024)
+        // 二进制按 Latin-1 解码不会失败，正好用来做子串搜索。
+        guard let text = String(data: data, encoding: .isoLatin1) else { return false }
+        return text.contains("disablesleep") || text.contains("SleepDisabled")
+    }
+
+    static func currentBlockers() -> [SleepBlocker] {
+        var rawDict: Unmanaged<CFDictionary>?
+        let result = IOPMCopyAssertionsByProcess(&rawDict)
+        guard result == kIOReturnSuccess, let unmanaged = rawDict else { return [] }
+        // Copy 规则：+1 引用，交给 ARC。CFDictionary 与 NSDictionary
+        // 是 toll-free bridged，直接转换即可（用 as? 会被编译器警告恒真）。
+        let byProcess = unmanaged.takeRetainedValue() as NSDictionary
+
+        let ownPID = getpid()
+        var found: [SleepBlocker] = []
+
+        for (key, value) in byProcess {
+            guard let pidNumber = key as? NSNumber,
+                  let list = value as? [[String: Any]] else { continue }
+            let pid = pid_t(truncating: pidNumber)
+
+            let assertions = list.map { raw -> AssertionInfo in
+                AssertionInfo(
+                    type: raw["AssertType"] as? String ?? "?",
+                    name: raw["AssertName"] as? String ?? "",
+                    reason: raw["HumanReadableReason"] as? String ?? "",
+                    level: (raw["AssertLevel"] as? NSNumber)?.intValue ?? -1
+                )
+            }
+            // 只保留真正和睡眠有关的进程，UserIsActive 之类的噪声不要。
+            let relevant = assertions.filter {
+                $0.preventsSystemSleep || $0.preventsDisplaySleepOnly
+            }
+            guard !relevant.isEmpty else { continue }
+
+            let name = processName(for: pid)
+            found.append(SleepBlocker(
+                pid: pid,
+                name: name,
+                assertions: relevant,
+                isSelf: pid == ownPID || name == "deepsleep-helper"
+            ))
+        }
+
+        return found.sorted { lhs, rhs in
+            if lhs.isPreventingSystemSleep != rhs.isPreventingSystemSleep {
+                return lhs.isPreventingSystemSleep
+            }
+            return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+        }
+    }
+
+static func processName(for pid: pid_t) -> String {
+    if let app = NSRunningApplication(processIdentifier: pid),
+       let name = app.localizedName, !name.isEmpty {
+        return name
+    }
+    var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+    guard proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 else {
+        return "pid \(pid)"
+    }
+    let path = String(cString: buffer)
+    let leaf = (path as NSString).lastPathComponent
+    return leaf.isEmpty ? "pid \(pid)" : leaf
+}
+
+}
+
 @MainActor
 final class PowerActivityMonitor: ObservableObject {
 
@@ -119,9 +243,6 @@ final class PowerActivityMonitor: ObservableObject {
     private var recentKeys: [String: Date] = [:]
     private let dedupeWindow: TimeInterval = 30
 
-    /// 竞争者检测结果的缓存，键是应用包路径。
-    /// 同一个二进制的内容不会变，每次扫描都重读一遍纯属浪费。
-    private var rivalCache: [String: Bool] = [:]
 
     /// 只关注与睡眠控制有关的键。全量 diff 会被无关键的噪声淹没。
     private static let watchedKeys: Set<String> = [
@@ -138,10 +259,36 @@ final class PowerActivityMonitor: ObservableObject {
     /// 刷新一次断言列表与设置基线。
     /// - Parameter currentSettings: 调用方若刚读过设置可以传进来，省一次 `pmset` 调用。
     func scan(currentSettings: [String: String]? = nil) {
-        blockers = Self.currentBlockers()
-        rivals = scanForRivals()
+        // **重活不在主线程上做。**
+        //
+        // 这一轮要做三件事：枚举断言（便宜）、读每个应用的可执行文件找
+        // "pmset" 关键字（每个最多读 8 MB，几十到几百毫秒）、spawn 一个
+        // pmset 进程读设置（约 20 毫秒）。这个扫描每 6 秒跑一次 —— 放在
+        // 主线程上，用户点任何东西都会顿一下，而顿的时机还固定。
+        //
+        // 现在重活搬到后台线程，结果算完再回主线程发布。
+        //
+        // 结果的传递方式：`applyScan` 是 `@MainActor` 的方法，跨隔离域调用
+        // 必须 await。用 `await self?.applyScan(...)` 而不是
+        // `await MainActor.run { self?.applyScan(...) }` —— 后者会把 weak
+        // 捕获的 `self` 变量带进一个并发闭包里，编译器会警告
+        // "reference to captured var 'self' in concurrently-executing code"。
+        let settings = currentSettings
+        Task.detached(priority: .utility) { [weak self] in
+            let blockers = PowerScanBackend.currentBlockers()
+            let rivals = PowerScanBackend.scanForRivals()
+            let current = settings ?? PMSetOutput.readCurrent()
+            await self?.applyScan(blockers: blockers, rivals: rivals, current: current)
+        }
+    }
 
-        let current = currentSettings ?? PMSetOutput.readCurrent()
+    /// 把一轮扫描的结果落到界面上（主线程）。
+    private func applyScan(blockers: [SleepBlocker],
+                           rivals: [PowerRival],
+                           current: [String: String]) {
+        self.blockers = blockers
+        self.rivals = rivals
+
         defer {
             baseline = current
             lastScanAt = Date()
@@ -203,117 +350,17 @@ final class PowerActivityMonitor: ObservableObject {
     ///
     /// 只扫有界面的应用（跳过后台守护进程与 Apple 自带程序），
     /// 避免把一堆系统组件当成嫌疑人。
-    private func scanForRivals() -> [PowerRival] {
-        var found: [PowerRival] = []
-
-        for app in NSWorkspace.shared.runningApplications {
-            guard app.activationPolicy != .prohibited,
-                  let url = app.bundleURL,
-                  let bundleID = app.bundleIdentifier,
-                  !bundleID.hasPrefix("com.apple.") else { continue }
-
-            let key = url.path
-            let suspect: Bool
-            if let cached = rivalCache[key] {
-                suspect = cached
-            } else {
-                suspect = Self.touchesPowerSettings(bundleURL: url)
-                rivalCache[key] = suspect
-            }
-            guard suspect else { continue }
-
-            found.append(PowerRival(
-                bundleID: bundleID,
-                name: app.localizedName ?? bundleID,
-                note: "程序里包含 pmset / 睡眠设置相关代码，可能自行修改系统电源设置。"
-                    + "Deep Sleep 不会去关掉它，但会把设置纠正回你要的状态。"
-            ))
-        }
-
-        return found.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-    }
 
     /// 在应用的可执行文件里找 pmset 相关字符串。
     ///
     /// 只读文件、不执行任何东西。读不到一律当作「不是」—— 这个列表宁可漏报，
     /// 也不要误报：一个总会冤枉别的程序的警示等于没有警示。
-    private static func touchesPowerSettings(bundleURL: URL) -> Bool {
-        guard let executable = Bundle(url: bundleURL)?.executableURL,
-              let handle = try? FileHandle(forReadingFrom: executable) else { return false }
-        defer { try? handle.close() }
-
-        // 字符串常量在 __TEXT 段，读前 8 MB 足够覆盖，也不必把整个
-        // 几百 MB 的包读进内存。
-        let data = handle.readData(ofLength: 8 * 1024 * 1024)
-        // 二进制按 Latin-1 解码不会失败，正好用来做子串搜索。
-        guard let text = String(data: data, encoding: .isoLatin1) else { return false }
-        return text.contains("disablesleep") || text.contains("SleepDisabled")
-    }
 
     // MARK: - 断言枚举
 
     /// 枚举当前所有持有电源断言的进程。
-    static func currentBlockers() -> [SleepBlocker] {
-        var rawDict: Unmanaged<CFDictionary>?
-        let result = IOPMCopyAssertionsByProcess(&rawDict)
-        guard result == kIOReturnSuccess, let unmanaged = rawDict else { return [] }
-        // Copy 规则：+1 引用，交给 ARC。CFDictionary 与 NSDictionary
-        // 是 toll-free bridged，直接转换即可（用 as? 会被编译器警告恒真）。
-        let byProcess = unmanaged.takeRetainedValue() as NSDictionary
-
-        let ownPID = getpid()
-        var found: [SleepBlocker] = []
-
-        for (key, value) in byProcess {
-            guard let pidNumber = key as? NSNumber,
-                  let list = value as? [[String: Any]] else { continue }
-            let pid = pid_t(truncating: pidNumber)
-
-            let assertions = list.map { raw -> AssertionInfo in
-                AssertionInfo(
-                    type: raw["AssertType"] as? String ?? "?",
-                    name: raw["AssertName"] as? String ?? "",
-                    reason: raw["HumanReadableReason"] as? String ?? "",
-                    level: (raw["AssertLevel"] as? NSNumber)?.intValue ?? -1
-                )
-            }
-            // 只保留真正和睡眠有关的进程，UserIsActive 之类的噪声不要。
-            let relevant = assertions.filter {
-                $0.preventsSystemSleep || $0.preventsDisplaySleepOnly
-            }
-            guard !relevant.isEmpty else { continue }
-
-            let name = processName(for: pid)
-            found.append(SleepBlocker(
-                pid: pid,
-                name: name,
-                assertions: relevant,
-                isSelf: pid == ownPID || name == "deepsleep-helper"
-            ))
-        }
-
-        return found.sorted { lhs, rhs in
-            if lhs.isPreventingSystemSleep != rhs.isPreventingSystemSleep {
-                return lhs.isPreventingSystemSleep
-            }
-            return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
-        }
-    }
 
     /// 进程显示名。
     /// `NSRunningApplication` 对 powerd、coreaudiod 这类系统守护进程返回 nil，
     /// 所以退回用 libproc 取可执行文件路径的末段。
-    static func processName(for pid: pid_t) -> String {
-        if let app = NSRunningApplication(processIdentifier: pid),
-           let name = app.localizedName, !name.isEmpty {
-            return name
-        }
-        var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN))
-        guard proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 else {
-            return "pid \(pid)"
-        }
-        let path = String(cString: buffer)
-        let leaf = (path as NSString).lastPathComponent
-        return leaf.isEmpty ? "pid \(pid)" : leaf
-    }
 }

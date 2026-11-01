@@ -124,7 +124,7 @@ struct DiagnosticsView: View {
                 } else if !isRunning {
                     EmptyStateView(
                         title: "还没有检测结果",
-                        message: "跑一次只读体检，看看硬件、系统与配置有没有问题。",
+                        message: "跑一次只读体检，看看硬件、系统、能耗与配置有没有问题。",
                         systemImage: "stethoscope",
                         actionTitle: "开始检测",
                         action: { Task { await runDiagnostics() } }
@@ -136,7 +136,7 @@ struct DiagnosticsView: View {
 
     private var headerSubtitle: String {
         if isRunning { return "正在采集本机状态，请稍候……" }
-        guard let report else { return "只读检查硬件、系统与配置，不会改动任何设置。" }
+        guard let report else { return "只读检查硬件、系统、能耗与配置，不会改动任何设置。" }
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd HH:mm:ss"
         return "检测完成于 \(f.string(from: report.generatedAt)) · 共 \(report.allItems.count) 项检查 · 只读，不会改动任何设置。"
@@ -161,14 +161,14 @@ struct DiagnosticsView: View {
     private var runningCard: some View {
         SectionCard(
             title: "检测中",
-            subtitle: "正在读取硬件、系统与安全配置状态……",
+            subtitle: "正在读取硬件、系统、能耗与安全配置状态……",
             symbol: "hourglass",
             accent: .accentColor
         ) {
             VStack(alignment: .leading, spacing: DS.Space.md) {
                 ProgressView()
                     .controlSize(.small)
-                Text("要跑几十条系统命令，通常几秒钟。温度与进程列表需要特权助手配合，助手不可用时会标成「无法读取」。")
+                Text("要跑几十条系统命令，通常几秒钟。温度与进程列表需要特权助手配合，助手不可用时会标成「无法读取」；个别项目需要管理员权限，这类会写成「无法读取」而不是故障。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

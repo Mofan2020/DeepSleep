@@ -25,6 +25,34 @@
 //    - 发魔术包走 BSD socket（SO_BROADCAST + SO_SNDTIMEO），没有第三方依赖；
 //    - 构造魔术包是纯函数，可单独测（scripts/test-wol-packet.swift）。
 //
+//  MAC 从哪来（两路，缺一不可）：
+//    - 主路：本进程自己读 `arp -a` / `arp -l -a` 读邻居缓存，一条命令拿全表，最快；
+//    - 兜底：主路拿不到 MAC 时，请 root 的特权助手再取一次原文。
+//
+//  为什么需要兜底（本机实测，macOS 26）：
+//  读邻居表能不能成功，取决于进程所处的**本地网络隐私上下文** ——
+//  也就是「谁是这个进程的归属应用」。同一台机器上：
+//    - 终端 shell / /usr/bin/python3 / /usr/bin/osascript 里跑 `arp -a` → 366 行；
+//    - 第三方编译出的裸二进制里跑（哪怕经 bash / python3 中转、经 posix_spawn
+//      直接起、经 launchd 上下文起）→ **0 行，退出码 0，不报错**。
+//  所以 App 进程自己读邻居表可能读到一张空表 —— 扫到的设备全都只有 IP、
+//  发不了魔术包，界面上表现为「扫得到设备但点不动」。
+//
+//  为什么兜底是「特权助手」而不是别的办法：
+//    - 助手是 root 的 LaunchDaemon，不在 App 的本地网络隐私上下文里，能读到；
+//    - 走的是已有的 UNIX socket 协议，不用引入新的通信方式；
+//    - 助手那条命令**纯只读**（只读内核邻居缓存），不写文件、不改系统状态。
+//  助手不认识这条命令时（旧版助手）应用侧优雅降级：本地读到多少算多少，
+//  界面上说清楚「助手没帮上忙」还是「还没试过助手」。
+//
+//  为什么**不再**用 `route -n get <ip>` 取 lladdr（这条路已删）：
+//  `route -n get` 在 macOS 26 上**根本不输出 `lladdr:` 那一行** —— 在
+//  终端 shell 里跑也不输出，所以任何基于它的解析都是死路。留着只会让界面
+//  多等一轮（最多 64 次进程启动、10 秒预算）还拿不到结果。
+//  （内核其实知道这些设备的链路层地址：同一个二进制里 `route -n get` 的
+//  `flags:` 里带着 `WASCLONED`；路由套接字返回的 sockaddr_dl 里 MAC 也是
+//  `02:00:00:00:00:00` 占位符。拿不到真地址的是「让这个进程看见」。）
+//
 
 import Foundation
 import Darwin
@@ -61,6 +89,112 @@ public struct WakeOnLANDevice: Identifiable, Hashable, Sendable {
 
     /// 设备名兜底：ARP 表里只有 `?` 时显示 IP。
     public var displayName: String { deviceName.isEmpty ? ipAddress : deviceName }
+}
+
+// MARK: - 扫描结果摘要
+
+/// 一次扫描的结果摘要。
+///
+/// 为什么要单独一个类型：「扫到设备但拿不到 MAC」和「什么都没扫到」
+/// 是两回事 —— 前者这台 App 读不到本地网络的邻居记录（多半是没给
+/// 本地网络权限），后者是真的没有设备在线。界面必须分开说，
+/// 不然用户会以为网段里没人。
+public struct WoScanSummary: Sendable, Equatable {
+
+    /// 扫到的设备。
+    public let devices: [WakeOnLANDevice]
+    /// 有 MAC、能发魔术包的设备数。
+    public let wakeableCount: Int
+    /// 在线但没拿到 MAC 的设备数。
+    public let missingMACCount: Int
+    /// 这一轮扫描**是否尝试过**「特权助手兜底」。
+    ///
+    /// 为什么要单独标出来：「还没试过助手」和「试过了、助手也没帮上忙」
+    /// 是两回事，界面上该说的话不一样。旧版助手不认识新命令时也算
+    /// 「试过了」（试的结果是失败）。
+    public let helperFallbackAttempted: Bool
+    /// 特权助手兜底**补到了几条** MAC。
+    public let helperFallbackRecoveredCount: Int
+
+    /// 现有调用点零改动即可继续编译（后两个参数有默认值）。
+    public init(devices: [WakeOnLANDevice],
+                helperFallbackAttempted: Bool = false,
+                helperFallbackRecoveredCount: Int = 0) {
+        self.devices = devices
+        self.wakeableCount = devices.filter { $0.canWake }.count
+        self.missingMACCount = devices.filter { !$0.canWake }.count
+        self.helperFallbackAttempted = helperFallbackAttempted
+        self.helperFallbackRecoveredCount = helperFallbackRecoveredCount
+    }
+
+    /// 一台都没扫到。
+    public var isEmpty: Bool { devices.isEmpty }
+    /// 扫到了设备，但一台 MAC 都没拿到 —— 只有 IP，发不了魔术包。
+    public var isMissingMACOnly: Bool { !isEmpty && wakeableCount == 0 }
+    /// 助手兜底有没有真的补到东西。
+    public var didHelperRecover: Bool { helperFallbackRecoveredCount > 0 }
+    /// 「助手也试过了、还是没拿到 MAC」—— 界面该在这里说清楚没别的办法了。
+    public var isMissingMACAfterHelper: Bool {
+        missingMACCount > 0 && helperFallbackAttempted && !didHelperRecover
+    }
+}
+
+// MARK: - 邻居表原始文本
+
+/// 特权助手回传的邻居表原始文本。
+///
+/// 只是三段原文，**没有任何解析结果** —— 解析在 `NetworkScanner` 那几个
+/// `parse*` 纯函数里做，好处是：
+///   - 解析逻辑能被普通权限的单测直接覆盖（不需要 root、不需要网络）；
+///   - 助手那边不碰任何格式判断，格式变了只改应用侧一处。
+public struct WoNeighborTablePayload: Sendable, Equatable {
+    /// `/usr/sbin/arp -a` 的输出。
+    public let arp: String
+    /// `/usr/sbin/arp -l -a` 的输出。
+    public let neighbor: String
+    /// `/usr/sbin/netstat -rn -f inet` 的输出。
+    public let routes: String
+
+    public init(arp: String, neighbor: String, routes: String) {
+        self.arp = arp
+        self.neighbor = neighbor
+        self.routes = routes
+    }
+
+    /// 三段原文里有没有任何一行。
+    public var isEmpty: Bool {
+        arp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && neighbor.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && routes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
+/// 一轮扫描的结果：设备列表 + 助手兜底的情况。
+///
+/// 单独一个类型是因为界面需要同时知道「拿到了几台设备的 MAC」和
+/// 「没拿到的时候有没有试过特权助手兜底」—— 后者决定了界面该说
+/// 「正在想办法」还是「助手也没帮上忙」。
+public struct WoScanOutcome: Sendable {
+    public let devices: [WakeOnLANDevice]
+    /// 是否尝试过特权助手兜底。
+    public let helperFallbackAttempted: Bool
+    /// 助手兜底补到了几条 MAC。
+    public let helperFallbackRecoveredCount: Int
+
+    public init(devices: [WakeOnLANDevice],
+                helperFallbackAttempted: Bool = false,
+                helperFallbackRecoveredCount: Int = 0) {
+        self.devices = devices
+        self.helperFallbackAttempted = helperFallbackAttempted
+        self.helperFallbackRecoveredCount = helperFallbackRecoveredCount
+    }
+
+    /// 转成给界面用的摘要。
+    public func summary() -> WoScanSummary {
+        WoScanSummary(devices: devices,
+                      helperFallbackAttempted: helperFallbackAttempted,
+                      helperFallbackRecoveredCount: helperFallbackRecoveredCount)
+    }
 }
 
 // MARK: - 错误
@@ -457,6 +591,14 @@ public final class NetworkScanner {
     /// 进度变化回调。界面把它转成自己的 @State，避免为了进度引入额外依赖。
     public var onUpdate: ((Double, String) -> Void)?
 
+    /// 最近一轮扫描**是否尝试过**特权助手兜底。
+    ///
+    /// 界面靠它区分「还没试过助手」和「试过了、助手也没帮上忙」——
+    /// 这两种情况该给用户看的话不一样。
+    public private(set) var lastHelperFallbackAttempted = false
+    /// 最近一轮扫描，助手兜底**补到了几条** MAC。
+    public private(set) var lastHelperFallbackRecoveredCount = 0
+
     /// 扫描代号。进度回调要跨回主线程，晚到的旧回调不能把新一轮的状态改回去。
     private var generation = 0
 
@@ -475,6 +617,10 @@ public final class NetworkScanner {
     /// 扫当前网段。返回按 IP 排序的设备列表。
     ///
     /// 扫的过程中 `progress` / `statusText` 会持续更新；扫完 `isScanning` 回到 false。
+    ///
+    /// 助手兜底的情况记在 `lastHelperFallbackAttempted` /
+    /// `lastHelperFallbackRecoveredCount` 里 —— 界面要靠它区分
+    /// 「还没试过助手」和「试过了、助手也没帮上忙」。
     public func scan() async -> [WakeOnLANDevice] {
         guard !isScanning else { return [] }
         isScanning = true
@@ -483,14 +629,16 @@ public final class NetworkScanner {
         report(0, "正在读取本机网络信息…")
         defer { isScanning = false }
 
-        let devices = await NetworkScanner.performScan { [weak self] fraction, text in
+        let outcome = await NetworkScanner.performScan { [weak self] fraction, text in
             Task { @MainActor in
                 guard let self, self.generation == current else { return }
                 self.report(fraction, text)
             }
         }
-        report(1, devices.isEmpty ? "没有扫到设备。" : "扫描完成，共 \(devices.count) 台设备。")
-        return devices
+        lastHelperFallbackAttempted = outcome.helperFallbackAttempted
+        lastHelperFallbackRecoveredCount = outcome.helperFallbackRecoveredCount
+        report(1, outcome.devices.isEmpty ? "没有扫到设备。" : "扫描完成，共 \(outcome.devices.count) 台设备。")
+        return outcome.devices
     }
 
     private func report(_ fraction: Double, _ text: String) {
@@ -504,11 +652,11 @@ public final class NetworkScanner {
     /// 真正的扫描。nonisolated：整个流程跑在后台，只通过回调用报进度。
     nonisolated static func performScan(
         progress: @escaping @Sendable (Double, String) -> Void
-    ) async -> [WakeOnLANDevice] {
+    ) async -> WoScanOutcome {
 
         guard let network = localNetwork() else {
             progress(1, "读不到本机 IPv4 地址，无法扫描。")
-            return []
+            return WoScanOutcome(devices: [])
         }
 
         // 第一遍 ARP：已经通信过的设备，先收进来，界面能尽早点亮一部分。
@@ -518,7 +666,7 @@ public final class NetworkScanner {
         let hosts = network.scanHosts()
         guard !hosts.isEmpty else {
             progress(1, "本机网段内没有可扫的地址。")
-            return merge(table: table, alive: [], network: network)
+            return WoScanOutcome(devices: merge(table: table, alive: [], network: network))
         }
 
         let alive = await pingSweep(hosts: hosts) { done in
@@ -530,8 +678,21 @@ public final class NetworkScanner {
         progress(0.96, "扫描完成，正在读取 ARP 表…")
         table = await readARPTable()
 
+        // 兜底：本地读邻居表可能读到一张空表（本地网络隐私上下文）。
+        // 这时问 root 的特权助手再取一次原文，用同一套解析函数解析后合并。
+        let missingCount = alive.filter { table[$0]?.mac.isEmpty ?? true }.count
+        if missingCount > 0 {
+            progress(0.97, "扫描完成，正在通过特权助手补齐设备 MAC…")
+        }
+        let fallback = await applyHelperFallback(table: table, alive: alive)
+        table = fallback.table
+
         progress(0.99, "扫描完成，正在整理设备…")
-        return merge(table: table, alive: alive, network: network)
+        return WoScanOutcome(
+            devices: merge(table: table, alive: alive, network: network),
+            helperFallbackAttempted: fallback.attempted,
+            helperFallbackRecoveredCount: fallback.recoveredCount
+        )
     }
 
     /// 读本机 IPv4 网段。
@@ -723,6 +884,188 @@ public final class NetworkScanner {
         return entries
     }
 
+    // MARK: - 路由表里的邻居条目（netstat）
+
+    /// 解析 `netstat -rn -f inet` 里的邻居条目。
+    ///
+    /// 样本（macOS 26 实测）：
+    ///
+    ///     Routing tables
+    ///
+    ///     Internet:
+    ///     Destination        Gateway            Flags        Netif Expire
+    ///     default            192.168.1.1        UGSc           en0
+    ///     192.168.1          link#11            UCS            en0        !
+    ///     192.168.1/32       link#11            UCS            en0        !
+    ///     192.168.1.1        ec:e7:c2:9f:49:a1  UHLWIir        en0   1180
+    ///     192.168.1.2        link#21            UHLWIg     bridge100   !
+    ///
+    /// 第 1 列是目标，第 2 列是链路层地址 —— **只有主机路由的第 2 列才是 MAC**。
+    /// 所以规则是：
+    ///   - 第 1 列必须是纯 IPv4。`192.168.1.1/32`（主机路由）、`192.168.1`
+    ///     （网段路由）、`default` 都不是邻居，跳过；
+    ///   - 第 2 列必须能解析成 MAC。`link#21`（接口号）、网关 IP、主机名
+    ///     都解析不出来，跳过。
+    ///
+    /// 这一路是**补充**来源：ARP 表读不到时，路由表里往往还留着邻居条目。
+    nonisolated static func parseNetstatNeighbors(_ text: String) -> [(ip: String, mac: String, name: String)] {
+        var entries: [(ip: String, mac: String, name: String)] = []
+
+        for rawLine in text.split(separator: "\n", omittingEmptySubsequences: true) {
+            let line = String(rawLine).trimmingCharacters(in: .whitespaces)
+            guard !line.isEmpty else { continue }
+
+            let fields = line.split(whereSeparator: { $0 == " " || $0 == "\t" }).map(String.init)
+            guard fields.count >= 2 else { continue }
+
+            // 第 1 列：必须是纯 IPv4（带斜杠、带前缀的都不是邻居条目）。
+            let destination = fields[0]
+            guard isIPv4(destination) else { continue }
+
+            // 第 2 列：只有 MAC 才算数。
+            guard let mac = WakeOnLAN.normalizedMAC(fields[1]) else { continue }
+
+            entries.append((destination, mac, ""))
+        }
+
+        return entries
+    }
+
+    // MARK: - 特权助手兜底
+
+    /// 助手兜底的结果。
+    struct WoHelperFallbackResult {
+        /// 合并之后的邻居表。
+        let table: [String: (mac: String, name: String)]
+        /// 是否真的去问过助手。
+        let attempted: Bool
+        /// 助手补到了几条 MAC。
+        let recoveredCount: Int
+    }
+
+    /// 助手不认识这条命令（旧版本）时置位，之后不再白跑一趟。
+    private nonisolated(unsafe) static var helperLacksNeighborCommand = false
+
+    /// 问助手要邻居表的超时（秒）。
+    ///
+    /// 助手那边只是跑三条只读命令，正常是毫秒级的；10 秒是给系统慢 /
+    /// 助手刚好在重启兜底的。
+    nonisolated static let helperNeighborTimeout: TimeInterval = 10
+
+    /// 用特权助手补齐在线设备缺失的 MAC。
+    ///
+    /// 只在**主路确实缺 MAC** 时才走：在线设备里还有拿不到 MAC 的，
+    /// 才值得去问助手一趟。全都拿到了还去问，就是白跑一次进程。
+    ///
+    /// 助手那边只有一条只读命令（`readNeighborTable`），返回的是**原文**；
+    /// 解析用的是和主路完全相同的那几个纯函数，所以两条路不会解析出
+    /// 不一样的结果。
+    nonisolated static func applyHelperFallback(
+        table: [String: (mac: String, name: String)],
+        alive: Set<String>
+    ) async -> WoHelperFallbackResult {
+        let missing = alive.filter { table[$0]?.mac.isEmpty ?? true }
+        // 主路已经齐了：没缺的不去打扰助手。
+        guard !missing.isEmpty else {
+            return WoHelperFallbackResult(table: table, attempted: false, recoveredCount: 0)
+        }
+
+        guard let payload = await fetchNeighborTableViaHelper() else {
+            // 试过了，但没拿到（助手没装 / 版本太旧 / 助手不可达）。
+            return WoHelperFallbackResult(table: table, attempted: true, recoveredCount: 0)
+        }
+
+        let remote = parseNeighborTablePayload(payload)
+        let merged = mergeNeighborTables(local: table, remote: remote)
+        let recovered = missing.filter { !(merged[$0]?.mac.isEmpty ?? true) }.count
+        return WoHelperFallbackResult(table: merged, attempted: true, recoveredCount: recovered)
+    }
+
+    /// 通过特权助手读一次邻居表原文。
+    ///
+    /// 失败时返回 nil，不抛错：助手是**可选**路径，没装助手、助手是旧版、
+    /// 助手没跑起来，都不该让整次扫描失败。
+    nonisolated static func fetchNeighborTableViaHelper() async -> WoNeighborTablePayload? {
+        guard !helperLacksNeighborCommand else { return nil }
+
+        do {
+            let response = try await HelperClient.shared.send(
+                .init(command: .readNeighborTable),
+                timeout: helperNeighborTimeout
+            )
+            guard response.success else {
+                if response.message.localizedCaseInsensitiveContains("unknown command") {
+                    // 旧版助手：别再白跑一趟（和 ThermalMonitor 对温度命令的处理一样）。
+                    helperLacksNeighborCommand = true
+                    NSLog("[DeepSleep] 助手不支持邻居表命令（旧版本），MAC 兜底已降级")
+                } else {
+                    NSLog("[DeepSleep] 通过助手读取邻居表失败：%@", response.message)
+                }
+                return nil
+            }
+            let payload = WoNeighborTablePayload(
+                arp: response.payload["arp"] ?? "",
+                neighbor: response.payload["neighbor"] ?? "",
+                routes: response.payload["routes"] ?? ""
+            )
+            return payload.isEmpty ? nil : payload
+        } catch {
+            NSLog("[DeepSleep] 特权助手不可用（读取邻居表失败）：%@", error.localizedDescription)
+            return nil
+        }
+    }
+
+    /// 把助手回传的原文解析成邻居表。
+    ///
+    /// 三段原文各走各的解析函数，但**用的是和主路同一批函数** ——
+    /// 助手那边不做任何格式判断，格式变了只改这一处。
+    nonisolated static func parseNeighborTablePayload(
+        _ payload: WoNeighborTablePayload
+    ) -> [String: (mac: String, name: String)] {
+        var table: [String: (mac: String, name: String)] = [:]
+
+        for entry in parseClassicARP(payload.arp) {
+            table[entry.ip] = (entry.mac, entry.name)
+        }
+        for entry in parseNeighborTable(payload.neighbor) {
+            if table[entry.ip] == nil || table[entry.ip]?.mac.isEmpty == true {
+                table[entry.ip] = (entry.mac, table[entry.ip]?.name ?? entry.name)
+            }
+        }
+        for entry in parseNetstatNeighbors(payload.routes) {
+            if table[entry.ip] == nil || table[entry.ip]?.mac.isEmpty == true {
+                table[entry.ip] = (entry.mac, table[entry.ip]?.name ?? entry.name)
+            }
+        }
+
+        return table
+    }
+
+    /// 合并两张邻居表：**本地已有的 MAC 不动**，只补空缺。
+    ///
+    /// 不覆盖本地已有的 MAC：本地表是这一轮扫描刚读到的，更贴近当下；
+    /// 助手的表可能是几秒前的快照。
+    nonisolated static func mergeNeighborTables(
+        local: [String: (mac: String, name: String)],
+        remote: [String: (mac: String, name: String)]
+    ) -> [String: (mac: String, name: String)] {
+        var merged = local
+        for (ip, entry) in remote {
+            let existing = merged[ip]
+            if let existing, !existing.mac.isEmpty {
+                // 本地已经有 MAC：只补名字（本地没名字、助手有名字的情况）。
+                if existing.name.isEmpty && !entry.name.isEmpty {
+                    merged[ip] = (existing.mac, entry.name)
+                }
+                continue
+            }
+            let localName = existing?.name ?? ""
+            let name = localName.isEmpty ? entry.name : localName
+            merged[ip] = (entry.mac, name)
+        }
+        return merged
+    }
+
     // MARK: 合并
 
     /// ARP 表（有 MAC）和 ping 结果（可能有 MAC、可能只有 IP）合并成设备列表。
@@ -741,6 +1084,8 @@ public final class NetworkScanner {
         // 先放有 MAC 的：ARP 表里在本网段内的条目（不管这次有没有 ping 通，
         // 它确实在这个网段上，用户可能就想唤醒那台睡着的机器）。
         for (ip, entry) in table where hosts.contains(ip) {
+            // 只有 IP、没有 MAC 的条目交给下面那条处理（它发不了魔术包）。
+            guard !entry.mac.isEmpty else { continue }
             guard !seen.contains(entry.mac) else { continue }
             seen.insert(entry.mac)
             result.append(WakeOnLANDevice(
@@ -753,7 +1098,9 @@ public final class NetworkScanner {
 
         // 再放只有 IP 的：ping 有回应但 ARP 表里没 MAC。
         for ip in alive where hosts.contains(ip) {
-            guard !table.keys.contains(ip) else { continue }
+            // 表里有 MAC 的已经在上面加过了；表里只有一条没 MAC 的记录，
+            // 或者压根没有记录，都走下面这条 —— 这台设备在线但发不了魔术包。
+            if let entry = table[ip], !entry.mac.isEmpty { continue }
             guard !result.contains(where: { $0.ipAddress == ip }) else { continue }
             result.append(WakeOnLANDevice(
                 ipAddress: ip,

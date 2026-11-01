@@ -420,7 +420,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 这里用实时查询而不是界面上的缓存，命令行取到的就是此刻的状态。
     @MainActor
     private static func emitBlockers() {
-        let blockers = PowerActivityMonitor.currentBlockers()
+        let blockers = PowerScanBackend.currentBlockers()
         guard !blockers.isEmpty else {
             emit("当前没有任何进程在阻止休眠")
             return

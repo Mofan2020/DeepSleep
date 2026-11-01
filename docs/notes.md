@@ -2447,3 +2447,505 @@ macOS 26 的 `glassEffect` 很好看，但整页都用会互相干扰：卡片�
   免得键位跟页面位置对不上。
 - 视觉验收：这一版只做了编译与逻辑回归，没做离屏渲染截图。密度、行高、
   卡片在 760pt 内容宽下的表现，要人眼过一遍。
+
+## v1.11.1 — WOL 拿不到 MAC 的根因：arp -a 对第三方二进制返回空
+
+### 现象
+
+网络唤醒页扫得到设备 —— ping 回应了 9 台，列表里也有 9 行 —— 但每一行的
+MAC 地址那一列都是空的。设备行里写着「没有 MAC，发不了」，勾选框是灰的，
+「发送魔术包」按钮点不动。用户看到的就是「扫到设备了，但一台都唤醒不了」。
+
+### 根因
+
+两件事叠在一起。
+
+一，`DeepSleep/Core/WakeOnLANService.swift` 里读 MAC 的主路是
+`/usr/sbin/arp -a`（外加 macOS 26 起的 `arp -l -a` 邻居表）。这个命令在
+Deep Sleep 这样的第三方二进制里派生的进程里**返回 0 行、退出码 0、没有
+stderr** —— 不报错，就是空的。同一台机器上用 Apple 自带的
+`/usr/bin/python3` 派生同一个命令，能出 286 行。
+
+所以第一遍、第二遍 ARP 读到的表都是空的，ping 扫出来的在线设备全都只剩
+IP。合并时没有 MAC 的条目照样进列表（不隐藏设备是对的），但每一台都
+发不了魔术包。
+
+二，`DeepSleep/Resources/Info.plist` 里没有 `NSLocalNetworkUsageDescription`。
+macOS 15 起，访问局域网要声明这个用途；没声明时系统**静默拒绝**（不弹窗，
+没有日志），第三方二进制读邻居缓存这类操作就会变成空结果。声明补上后，
+系统会在第一次访问时弹窗询问「是否允许 Deep Sleep 访问本地网络」。
+
+### 修法
+
+三处：
+
+1. `DeepSleep/Resources/Info.plist` 加 `NSLocalNetworkUsageDescription`：
+   「需要访问本地网络才能扫描同一网段里的设备并发送网络唤醒包。」
+2. `DeepSleep/Core/WakeOnLANService.swift` 加一条 MAC 后备路径。
+   ~~ARP 表里没有 MAC 的在线 IP，逐个跑 `/sbin/route -n get <ip>`，从输出里的
+   `lladdr:` 行取链路层地址~~ —— **这条已经删掉了**：macOS 26 上
+   `route -n get` 根本不输出 `lladdr:` 那一行（终端 shell 里跑也不输出），
+   留着只会让界面白等一轮（最多 64 次进程启动、10 秒预算）还拿不到结果。
+   现在改成请 root 的特权助手代读邻居表，详见下面
+   「网络唤醒扫得到设备却发不了包」一节。
+   - 解析仍然是纯函数（`NetworkScanner.parseClassicARP(_:)` /
+     `parseNeighborTable(_:)` / `parseNetstatNeighbors(_:)`，参数是文本），
+     回归测试在 `scripts/test-wol-neighbor-table.swift`。
+3. 界面把三种情况分开说，不再静默：
+   - (a) 扫到设备且有 MAC → 可唤醒；
+   - (b) 扫到设备但没有 MAC → 设备列表上方写一行「有 N 台设备在线，但没
+     拿到 MAC 地址，发不了唤醒包」，并指向「系统设置 → 隐私与安全性 →
+     本地网络」；设备行的结果列也标「没拿到 MAC，发不了」；
+   - (c) 一台都没扫到 → 仍是「未扫到设备」，空态文案里补上「可能被系统
+     拒绝了本地网络访问」这条可能。
+   区分靠 `WoScanSummary`（有 MAC 的台数 / 缺 MAC 的台数），是个纯结构体，
+   可单测。
+
+「扫描中 / 未扫描 / 未扫到设备」这三个状态没动，后备路径不参与状态判断。
+
+### 本地网络权限
+
+macOS 15 起，任何要访问局域网的 App 都得在 Info.plist 里写
+`NSLocalNetworkUsageDescription`，并在首次访问时由用户授权。授权入口在
+「系统设置 → 隐私与安全性 → 本地网络」，列表里能看到 Deep Sleep 的开关。
+
+没授权时的症状是**静默**的：不弹窗、不报错、命令返回空。用户只能看到
+「扫不到设备」或者「拿不到 MAC」，所以界面上必须把这句写出来 ——
+不然用户会一直以为是网络本身的问题。
+
+授权后如果还是拿不到 MAC，那是内核路由缓存里本来就没有这条邻居记录
+（设备挡了 ICMP、又没和这台 Mac 通过信），这时只能手填 MAC。
+
+## v1.11.1 — 设备诊断扩项：新增了哪些检查、怎么读数据、哪些项在普通用户下拿不到
+
+设备诊断原来一次跑二十来条命令，覆盖机型、内存、温度、卷空间、电池、系统版本、
+电源断言、代理、防火墙这一圈。用户说「太少了」，这一版把覆盖面扩到 **21 项新检查**，
+分成四个新分组。全部只读，没有一条写操作，也没有一条要管理员权限。
+
+### 新增了什么
+
+**硬件与固件**（`system_profiler SPHardwareDataType` / `SPDisplaysDataType` / `SPStorageDataType`）
+
+- 系统固件版本：Apple Silicon 机型能装哪些系统版本由它决定。
+- CPU 核心构成：把「8 核」拆成「4 性能 + 4 能效」，能效核才是省电的关键。
+- 内存构成：容量 + 插槽数。Apple Silicon 是统一内存，没有插槽，界面上直接写明
+  「统一内存（无独立插槽）」，不编一个插槽数出来。
+- 显卡：型号、GPU 核心数、显存（Intel 独显才有显存这个字段）。
+- 磁盘 SMART 状态：逐块物理盘看自检结果，不是「已验证」就报需要注意。
+- SMC 温度传感器：只判断控制器在不在位。温度读数本身要走特权助手，
+  所以这里写明「读数见「最高传感器温度」」，不重复报一个数。
+
+**能耗与电源**（`pmset -g batt` / `pmset -g` / `pmset -g sched` / `top -l 2`）
+
+- 电源来源与电量：交流电还是电池、当前百分之多少。
+- 阻止自动睡眠的进程：`pmset -g` 里 `sleep 1 (sleep prevented by ...)` 那一段。
+  **powerd、coreaudiod 这类系统组件常驻在里面**，只有第三方程序才值得提醒，
+  界面会把两者分开写（「1 个第三方程序正在阻止睡眠」，详情里列出全部）。
+- 定时唤醒计划：`pmset -g sched`。没有输出就是「没有定时唤醒计划」，
+  这是一个有效结论，不是「读不到」。
+- CPU 占用 Top 5：用 `top -l 2` 取最后一次采样的瞬时值。
+  `ps -o %cpu` 算的是进程启动以来的平均值，拿它报「当前谁在烧 CPU」会误导，
+  所以没用 ps。
+
+**系统状态与日志**
+
+- 时区：从 `/etc/localtime` 指向的 zoneinfo 路径里读，不需要任何权限。
+- 网络时间同步：`systemsetup -getusingnetworktime`。见下面的「拿不到」。
+- 启动模式：`SPSoftwareDataType` 的 `Boot Mode`。安全启动（Safe Mode）标成需要注意 ——
+  很多「一重启就好」的毛病就是安全启动模式造成的。
+- 当前用户与权限组：`id -Gn`。是否属于 admin 组写进值里。
+- 磁盘 inode 使用：`df -i /`。空间还够但 inode 用光是另一种「写不进去」。
+- 崩溃与内核转储报告：读 `~/Library/Logs/DiagnosticReports` 与
+  `/Library/Logs/DiagnosticReports`，数 `.panic`（内核崩溃）与总份数，给出最近一份。
+
+**扩展与加固**
+
+- 第三方系统扩展：`systemextensionsctl list`，去掉 Apple 自带的，
+  列出名字、bundle id、启用状态。
+- 安全虚拟内存（交换空间加密）：关了会报需要注意 —— 睡眠时内存内容明文落盘。
+- 激活锁：没绑 Apple ID 的机器转手后会被别人锁住。
+- hosts 生效条目：去掉注释与空行后的真实条目数。
+- 第三方开机项：`~/Library/LaunchAgents`、`/Library/LaunchAgents` 与两个 Daemons 目录里
+  非 `com.apple.*` 的 plist（原来只有数量，现在给出名字与路径）。
+
+### 怎么读的数据
+
+- 全部命令走 `DeviceDiagnostics.runShell` 这一个封装：后台队列跑、管道并发读、
+  超时杀掉、不留僵尸进程。**没有另起一套进程逻辑。**
+- 新增命令的超时收到 3~5 秒（比原来 10 秒的默认更紧），免得一个慢命令把整轮拖长。
+  实测：`system_profiler` 约 0.3 秒，`top -l 2` 约 1.8 秒，其余都在 0.1 秒内。
+- 13 条新命令互不依赖，一起并发跑，整体仍在 10 秒以内。
+- 解析与判定放在 `DeepSleep/Core/DiagnosticsExtras.swift`（纯逻辑，只依赖 Foundation），
+  采集仍在 `DeepSleep/Core/DeviceDiagnostics.swift`。这样判定层能被
+  `scripts/test-diagnostic-rules.swift` 单独编译起来跑断言，不用启动 App。
+- 新增类型一律 `Dg` 前缀（`DgExtraFacts`、`DgHardwareProfile`……），避免跟别的并行改动重名。
+
+### 哪些项在普通用户下拿不到
+
+| 检查项 | 现象 | 原因 |
+| --- | --- | --- |
+| 网络时间同步 | 「无法读取（systemsetup 需要管理员权限，诊断不请求提权）」 | `systemsetup` 只允许管理员跑。诊断坚持不请求提权，所以如实说读不到。 |
+| 最高传感器温度 | 「无法读取（特权助手未运行或不支持温度快照……）」 | 走特权助手；助手没起来就是读不到。 |
+| 内存占用 Top 10 | 「无法读取（读取进程快照失败……）」 | 同上，进程快照需要助手。 |
+| SMC 温度读数 | 只报控制器在不在位 | Apple Silicon 的温度读数要特权助手，普通用户拿不到具体数值。 |
+| 内存插槽数 | Apple Silicon 上没有这个字段 | 统一内存架构本来就没有插槽，界面写明「无独立插槽」，不是失败。 |
+
+**读不到就是读不到**：这些项在报告里是「无法读取（原因）」，严重度仍然是「正常」，
+不会混进「需要注意」里。判定层有一条断言专门守这件事：所有读不到的项都必须是
+正常项、都不能带处理建议。
+
+### 顺带修掉的三个解析坑
+
+1. `df -i` 的**表头里也有 `%iused` 这一列**。按列号直接取会把表头当数据，
+   现在先定位表头再取下面第一行。
+2. `pmset -g batt` 的电量行上面那行有 `(id=9109603)`，里面也有数字。
+   直接取全文第一个数字会拿到电池 id 而不是电量，现在只取带 `%` 的那一行。
+3. `SPStorageDataType` 里同一块物理盘会被多个卷重复列出来，还混着 `Disk Image`
+   （挂载的磁盘镜像，不是真盘）。现在按「盘名 + 介质类型」去重并跳过镜像 ——
+   否则 SMART 会误报成「3 块盘没通过自检」。
+
+### 回归
+
+`scripts/test-diagnostic-rules.swift` 从 84 项断言加到 167 项，覆盖：
+每个解析器「有输出时能解析」「没输出时是 nil / unavailable」，
+以及新条目的严重度判定（SMART 没通过、安全启动、安全虚拟内存关闭、
+激活锁关闭、第三方程序阻止睡眠、内核崩溃、占满一整核 → 需要注意）。
+
+## v1.11.1 — NPU / GPU 使用率：能读到什么、读不到的是什么、为什么
+
+结论先说：**GPU 能读到，NPU 读不到**。GPU 走 IOKit 的 `IOAccelerator` 性能计数器，
+普通用户进程就能读，不需要特权助手；NPU 在 macOS 上根本没有暴露给应用的接口，
+界面上如实写「不可用」并说明原因，没有拿 0 冒充。
+
+### GPU：读得到，且是系统自己报的数
+
+来源是 IORegistry 里 `IOAccelerator` 服务的 `PerformanceStatistics` 属性。
+命令行看到的原始形态：
+
+```
+$ ioreg -r -d 1 -w 0 -c IOAccelerator
++-o AGXAcceleratorG14G  <class AGXAcceleratorG14G, id 0x100000375, registered, matched, active, busy 0 (10433 ms), retain 109>
+    {
+      "model" = "Apple M2"
+      "gpu-core-count" = 10
+      "PerformanceStatistics" = {"In use system memory (driver)"=0,"Alloc system memory"=4071260160,"Tiler Utilization %"=32,"recoveryCount"=0,"lastRecoveryTime"=0,"Renderer Utilization %"=32,"TiledSceneBytes"=950272,"Device Utilization %"=33,"SplitSceneCount"=0,"Allocated PB Size"=79691776,"In use system memory"=478560256}
+      ...
+    }
+```
+
+三个百分比计数器（`Device Utilization %` / `Renderer Utilization %` /
+`Tiler Utilization %`）就在这一行里。同一台机器连着读几次，值是会变的：
+
+```
+$ for i in 1 2 3; do ioreg -r -d 1 -w 0 -c IOAccelerator | grep -oE '"(Device|Renderer|Tiler) Utilization %"=[0-9]+' | tr '\n' ' '; echo; sleep 2; done
+"Tiler Utilization %"=10 "Renderer Utilization %"=9 "Device Utilization %"=10
+"Tiler Utilization %"=0 "Renderer Utilization %"=0 "Device Utilization %"=0
+"Tiler Utilization %"=10 "Renderer Utilization %"=9 "Device Utilization %"=10
+```
+
+应用侧不 shell out 调 `ioreg`，而是直接用 IOKit 读同一个属性
+（`DeepSleep/Core/NgAcceleratorReader.swift`）：`IOServiceMatching("IOAccelerator")`
+拿到服务，`IORegistryEntryCreateCFProperty` 读 `PerformanceStatistics`。
+解码出来的字典长这样：
+
+```
+Alloc system memory = 4035936256   [number]
+Allocated PB Size = 68026368   [number]
+Device Utilization % = 10   [number]
+In use system memory = 471252992   [number]
+In use system memory (driver) = 0   [number]
+Renderer Utilization % = 9   [number]
+SplitSceneCount = 0   [number]
+TiledSceneBytes = 557056   [number]
+Tiler Utilization % = 10   [number]
+lastRecoveryTime = 0   [number]
+recoveryCount = 0   [number]
+```
+
+端到端跑一遍应用自己的读取代码（`NgAcceleratorReader.read()`），两次采样：
+
+```
+gpuDevicePercent   = 19      gpuRendererPercent = 18     gpuTilerPercent = 19
+gpuDevicePercent   = 4       gpuRendererPercent = 3      gpuTilerPercent = 4
+```
+
+**为什么不用特权助手：** 这一路是普通用户进程就能读的（实测 uid 501 直接读到），
+走助手反而要求用户先装上新版助手才能看到这一格。不需要提权的数据不该被提权通道卡住，
+所以协议里**没有**新增命令，`HelperCommand` 枚举一个字没动。
+
+### NPU：读不到，而且不是「还没找对方法」
+
+M2 确实带神经引擎（16 核），但 macOS 没有把它的**使用率**暴露给应用。
+实测过程：
+
+```
+$ ioreg -r -d 1 -w 0 -c IOANEDevice     # 无输出
+$ ioreg -r -d 1 -w 0 -c AppleANE        # 无输出
+$ ioreg -r -d 1 -w 0 -c AppleANEDevice  # 无输出
+```
+
+再用 IOKit 把整棵 IOService 树扫一遍（1312 个服务），找 class 名或 IOName 里
+带 ANE / NEURAL / NPU 的节点：
+
+```
+=== 全树扫描 class 名含 ANE/NEURAL/NPU ===
+IOService 全树 kr=0
+   扫过 1312 个服务，命中 0 个
+```
+
+也就是说：**注册表里根本没有 ANE 设备节点**，自然也没有使用率计数器。
+界面上这一格显示「不可用 · 系统没有暴露 NPU 设备节点」。
+
+`powermetrics` 确实会报 ANE 的**功耗**（`-ANE` 相关采样器），但那要 root，
+而且报的是估算功耗不是使用率百分比，拿它当「NPU 使用率」是错的，
+所以没有采用（也符合本仓不依赖 root 工具的既有做法）。
+
+代码里保留了 NPU 的读取路径（找 `IOANEDevice` / `AppleANE` / `AppleANEDevice`
+三类节点，再在里面找名字带 Utilization / Usage 的数字计数器），
+是为了将来 macOS 真把接口放出来时能直接用上。现在它返回的是
+`nil` + 原因 `.noANEDevice`，界面上据实说明。
+
+### 界面与节奏
+
+- 系统监控页「系统状态」卡里新增 GPU、NPU 两格，各用 `MetricTile`，
+  间距圆角全走 `DS.Space` / `DS.Radius`。
+- **GPU 读不到时**那格显示「不可用」，副标题写「不可用 · 这台机器没有 GPU 性能计数器」
+  （Intel Mac 没有 `IOAccelerator` 服务时就是这个状态）。
+- **NPU 读不到时**那格显示「不可用」，副标题按原因分两种说法：
+  系统里没有 ANE 设备节点 / 有节点但没有使用率计数器。
+- 只有显示，没有告警：不加阈值、不进自定义告警规则。GPU 的状态词因此不写
+  「正常 / 偏高」，只写「已读数 · 渲染 18% · 分块 19%」。
+- 采样节奏跟着 `MonitorConfig.sampleIntervalSeconds`（默认 3 秒）走，
+  不跟着面板的每秒采样跑，也没有新起一条轮询。
+
+### 回归测试
+
+`scripts/test-npu-gpu-metrics.swift` 覆盖解码层的三类输入：有值（用上面实测到的
+真实键名与数值）、无值（字典为空 / 键缺失 / 键名拼错）、畸形输出
+（非数字、空串、负数、大于 100、NaN / Inf、带单位、小数、前后空格）。
+已登记进 `scripts/run-all-tests.sh`。
+
+## v1.11.1 — 自动更新：承诺与代码不一致，以及「每一步都要看得见」
+
+这一版只动自动更新这条链路：`DeepSleep/Core/UpdateManager.swift`、
+新加的 `DeepSleep/Core/UpdateFlow.swift`、`DeepSleep/Views/UpdateView.swift`，
+以及回归脚本 `scripts/test-update-flow.swift`。
+
+### 根因：自动检查在下载之前就 return 了
+
+`checkForUpdates(automaticallyInstall:)` 里有这么一句：
+
+```swift
+guard automaticallyInstall || !asksBeforeInstalling else { return }
+await downloadAndPrepare(release)
+```
+
+问题出在两个默认值上：
+
+- `automaticallyInstall` 默认是 `false`；
+- 「安装前先询问」这个开关默认是 `true`。
+
+自动检查走的是 `autoCheckIfDue()` → `checkForUpdates()`，参数取默认值 `false`。
+于是 `false || !true` = `false`，**每次自动检查都在下载之前 return 了** ——
+一个字节都没下过。界面上那行字写着「发现新版本时会自动下载并校验」，
+这句话描述的是代码里**不存在**的行为。
+
+手动点「立即检查」是同一个毛病：默认参数同样是 `false`，所以走 `.available`
+就停了。用户看到「发现新版本」，包没下，也没法装。
+
+那句 guard 的本意是「不自动触发时别自己装」，但它同时把**下载**也一并挡掉了
+—— 挡错了位置。要挡的只是「装」，不是「下」。
+
+### 第二个缺陷：装不上的时候没人知道
+
+更新器脚本用 `mv -f "$TARGET" "$OLD"` 把应用挪走再放新的。如果应用装在
+`/Applications` 且归 root 所有，这一步会失败。脚本里有回滚分支，
+所以应用本体不会坏 —— 但**失败原因没有回传给应用**：用户只看到应用闪一下
+又起来了，不知道是权限问题，还是以为「更新完了但版本号没变」。
+
+### 这次的改法
+
+1. **链路接通**：`检查 → 发现新版本 → 自动下载 → 校验 →（按开关）安装`。
+   提前 return 的那句 guard 没有了。装不装由「装之前先问我一句」决定：
+   开着就停在「已就绪」等用户点，关着就校验通过直接装并重启。
+   `automaticallyInstall` 参数保留，语义改成「这一次调用是不是自动触发的」
+   （自动检查 = true，手动点 = false）—— 它只影响日志措辞与重试行为，
+   **不决定要不要直接装**：用户在界面上的显式选择优先于调用方的默认值。
+
+2. **判定抽成纯逻辑**：新增 `DeepSleep/Core/UpdateFlow.swift`。
+   「下一步该做什么」「要不要提权」「结果文件怎么解析」「脚本长什么样」
+   全在这里，不碰网络、不碰磁盘、不碰进程，所以能被 `scripts/test-update-flow.swift`
+   在没有网络的情况下直接回归。`UpdateManager` 只负责执行。
+
+3. **结果要回传**：更新器脚本把这一轮的结果写进
+   `~/Library/Application Support/DeepSleep/update-result.txt`
+   （`status=` / `version=` / `message=` 三行）。应用退出前读不到没关系 ——
+   启动时如果发现「上一轮真的动过手」的标记，就去读那个文件，
+   然后把「上次更新：成功 / 失败」显示在更新页上。
+   **用户只有重启之后才知道这次更新成没成**，所以这个显示是必须的。
+   读不出结果时显示「不知道」，不猜 —— 猜错的代价是让用户以为更新成功了。
+
+4. **权限要说清楚**：替换目标目录当前用户不可写时（典型是 /Applications），
+   走 `osascript -e 'do shell script "…" with administrator privileges'`
+   要一次性管理员授权，界面提前写明「需要一次管理员授权」。
+   授权被拒就把原因说清楚，应用继续跑，文件一个没动。
+
+### 为什么提权落在 App 侧而不是特权助手
+
+`DeepSleepHelper` 已经有 `HelperSelfUpdate`（助手替换自己）这个成熟先例，
+给助手加一条 `installAppUpdate` 命令当然更优雅。但这一版没走那条路，
+两个原因：
+
+- 助手不一定装了 —— 用户可能没启用「完全控制」。osascript 这条路没有任何
+  前置条件，装不装助手都能用；
+- 助手那条命令要改 `DeepSleepHelper/main.swift`，而这个文件同时有别人在改，
+  撞车了不好合并。
+
+代价是每次更新都要输一次密码（助手那条路不用）。这个代价换的是
+「不依赖任何前置条件」，划算。
+
+### 教训
+
+**开关的文字必须和代码路径对齐。** 「会自动下载并校验」这句话写下去的时候，
+就该有人去代码里确认这句话成立。写界面文案的时候顺手看一眼那条路径，
+比事后回头查便宜得多。
+
+**自动化链路里的每一步都要能被用户看见。** 「自动」不等于「无声」。
+下载要有进度，校验要有状态，装不上要有原因，装完要有结果 ——
+一条链路上只要有一段是黑箱，用户就永远不知道该不该信它。
+这次的「上次更新结果」就是补最后那一段：应用是在退出之后才被替换的，
+不把结果留下来，用户重启后面对的就是一片沉默。
+
+**别让「自动」的语义写在文档里而不是代码里。** 之前那句 guard 的注释
+（「准备好后不等用户确认直接安装」）和它实际挡掉的东西对不上 ——
+它挡的是下载。注释和代码不一致的时候，代码通常才是那个真的。
+
+### 没验证的
+
+- **没有在真实的 `/Applications` 上端到端试装过。** 替换流程是在 `/tmp` 下的
+  假目录里跑的（`scripts/test-update-flow.swift` 里那一段）：成功路径、
+  目标目录不可写时的回滚路径都验证过，但真机上 `/Applications` 的
+  权限、`mv` 的实际行为、root 写出的结果文件属主，都没在真实环境里试过。
+- **管理员授权对话框没有在真机上点过。** `osascript` 那条路的语法与
+  「后台执行避免死等」的写法是照着 `DeepSleep/Privileged/HelperInstaller.swift`
+  里现成的做法推的，没有实测过一次真实的授权往返。
+- **真实网络下的下载与校验没有跑过。** 校验顺序（摘要 / bundle id / 版本号 /
+  codesign）一行没改，但这一版没有连网跑过一次完整的检查→下载→校验。
+
+## v1.11.1 — 网络唤醒扫得到设备却发不了包：读邻居表被本地网络隐私挡住了
+
+### 根因
+
+现象是：扫描能列出设备，但每台设备只有 IP、没有 MAC，魔术包发不出去。
+一开始怀疑是「ARP 表里没有这台设备」，但真机排查下来不是 —— 是
+**`arp -a` 在 Deep Sleep 这个进程里根本读不到邻居表**。
+
+本机实测（macOS 27.2 / Mac14,7 / 192.168.1.x 网段），同一台机器、同一条命令：
+
+| 场景 | `arp -a` 行数 | `netstat -rn -f inet` 行数 / 动态邻居条目数 |
+| --- | --- | --- |
+| 终端 shell 里直接跑 | 366 | 381 / 329 |
+| `/usr/bin/python3` 跑 | 366 | — |
+| `/usr/bin/osascript`（do shell script）跑 | 366 | — |
+| 第三方编译出的裸二进制跑 | **0** | **14 / 0** |
+| 同上，经 `/bin/bash -c`、`/usr/bin/python3 -c` 中转 | **0** | — |
+| 同上，用 `posix_spawn` 直接起（不经 Foundation Process） | **0** | — |
+| 同上，子进程 stdout 重定向到文件（不经管道） | **0** | — |
+| 同上，在 launchd 上下文里跑（`launchctl submit`） | **0** | — |
+
+读得到读不到，取决于进程所处的**本地网络隐私上下文** ——
+也就是「谁是这个进程的归属应用」。Apple 平台程序（bash / python3 /
+osascript，经系统服务执行）读得到；归属某个 App 的裸二进制读不到。
+注意返回的是 **0 行、退出码 0、不报错** —— 命令「成功」了，只是没内容。
+
+排除掉的原因（都实测过）：
+
+- 不是环境变量差异（`env -i` 也一样空）；
+- 不是 Foundation `Process` 的问题（`posix_spawn` 直接调也一样空）；
+- 不是管道 / 重定向 / stdio 的问题（写文件也空）；
+- 不是子进程启动方式（bash 中转也一样空）；
+- 不是本机网络不通：同一个二进制里 `ping 192.168.1.1` **成功**；
+- 不是 `arp` 二进制被换掉（shell 里 `type arp` → `/usr/sbin/arp`，同一个文件）。
+
+顺带查清了两条死路，别再往里走：
+
+- **`route -n get <ip>` 拿 `lladdr:`** —— macOS 26 上它**根本不输出 `lladdr:` 那一行**，
+  在终端 shell 里跑也不输出。所以任何基于它的解析都是死路。仓库里原来有一版
+  基于它的实现（`parseRouteLLAddr` / `fillMissingMACs`），这次删掉了：
+  它只会让界面多等一轮（最多 64 次进程启动、10 秒预算）还拿不到结果。
+  （内核其实知道这些设备的链路层地址 —— 同一个二进制里 `route -n get` 的
+  `flags:` 带着 `WASCLONED`；路由套接字返回的 `sockaddr_dl` 里 MAC 是
+  `02:00:00:00:00:00` 占位符。缺的不是数据，是「让这个进程看见」。）
+- **路由套接字（PF_ROUTE / RTM_GET）** —— 能通，但拿回来的 MAC 是占位符。
+
+### 修法
+
+**主路**：App 进程自己读 `arp -a` + `arp -l -a`（原样保留）。
+
+**兜底**：主路拿到的表**缺少在线设备的 MAC** 时，请 root 的特权助手再取一次。
+助手是 root 的 LaunchDaemon，不在 App 的本地网络隐私上下文里，能读到。
+
+- 协议新增一条命令 `readNeighborTable`（`Shared/HelperProtocol.swift`），
+  **纯只读**：只跑 `/usr/sbin/arp -a`、`/usr/sbin/arp -l -a`、
+  `/usr/sbin/netstat -rn -f inet` 这三条读命令，不写文件、不改系统状态。
+- 助手**只取原文、不解析**。解析全部在应用侧
+  （`DeepSleep/Core/WakeOnLANService.swift` 的 `parseClassicARP` /
+  `parseNeighborTable` / `parseNetstatNeighbors`），三个函数都是纯函数，
+  能被普通权限的单测直接覆盖 —— 不需要 root，也不需要网络。
+- 助手回传三段原文（payload `arp` / `neighbor` / `routes`）。协议帧上限是
+  4MB（`Shared/UnixSocket.swift`），本机实测三段加起来约 80KB，
+  **不需要分块**；助手侧留了 256KB / 段的上限，防止某个来源异常把帧撑爆。
+- 旧版助手不认识这条命令，会回 `unknown command`。应用侧按
+  `ThermalMonitor` 对温度命令的同款写法降级：记一笔、以后不再白跑一趟，
+  本地读到多少算多少，界面上说清楚。
+- 合并规则：**本地已有的 MAC 不被助手覆盖**（本地表是这一轮刚读的，更贴近当下），
+  只补空缺；助手表里多出来的 IP 也一并收进来。
+- 界面需要的两条信息由 `WoScanSummary` 暴露（新增字段都有默认值，
+  现有调用点零改动即可继续编译）：
+  `helperFallbackAttempted`（**有没有试过**助手）与
+  `helperFallbackRecoveredCount`（助手**补到了几条**）。
+  这样界面能区分「还没试过助手」和「试过了、助手也没帮上忙」。
+  `NetworkScanner` 上也有对应的 `lastHelperFallbackAttempted` /
+  `lastHelperFallbackRecoveredCount`。
+
+解析上要挡住的坑（都是 macOS 26 的真实格式）：
+
+- 经典 `arp -a`：`? (192.168.1.1) at ec:e7:c2:9f:49:a1 on en0 ifscope [ethernet]`；
+  带主机名的 `router.lan (192.168.1.2) at a4:83:e7:11:22:33 on en0 ifscope [ethernet]`；
+  解析失败的 `? (192.168.1.9) at (incomplete) on en0 ifscope [ethernet]` —— 必须跳过。
+- 新版邻居表 `arp -l -a`：表头 `Neighbor  Linklayer Address  Expire(O) ...`
+  加一行 `192.168.1.1  3c:22:fb:aa:bb:cc  1180  1180  en0  1`。
+- `netstat -rn -f inet`：第 2 列是 MAC 的邻居行
+  `192.168.1.1        ec:e7:c2:9f:49:a1  UHLWIir               en0   1180`；
+  第 2 列是 `link#21` 的行（`192.168.1.2        link#21            UHLWIg   bridge100   !`）
+  必须跳过；第 1 列带斜杠的 `192.168.1.1/32` 和网段行 `192.168.1` 都不是 IP，
+  不能被当成设备地址写进表里。
+- MAC 大小写混写要归一化成一致格式（用 `WakeOnLAN.normalizedMAC`）。
+
+### 回归
+
+新增 `scripts/test-wol-neighbor-table.swift`（纯解析，不需要 root、不需要网络），
+覆盖上面列的全部真实样本格式，重点是 `(incomplete)` 必须跳过、`link#21`
+不是 MAC、`192.168.1.1/32` 不是 IP、大小写混写归一化、空输入 / 只有表头 /
+畸形行都不崩，外加助手兜底的三种结果（没缺 MAC 时不打扰助手、缺了但助手
+帮不上忙、缺了且助手补上了）与两表合并规则。
+
+另外把三个解析函数拿本机**真实**的 `arp -a`（366 行）、`arp -l -a`（367 行）、
+`netstat -rn -f inet`（381 行）跑过一遍：解析出 11 / 11 / 9 条，
+合并后 11 个唯一 IP，`192.168.1.1` 的 MAC 是 `EC:E7:C2:9F:49:A1`，
+含斜杠的 IP 一条都没有。
+
+### 没验证的
+
+- **助手那条路没有端到端验证过。** 本机没装特权助手（也不该为了这次改动
+  装一个），所以「root 助手读到的邻居表能不能真的补上 MAC」只在**代码层面**
+  是清楚的（命令是纯只读的、回传的是原文、解析与主路同一套函数），
+  没有在真机上跑过一次完整的「App 读不到 → 助手读到 → MAC 补齐」。
+  单测里能覆盖的只有「助手不可用时优雅降级」这一半。
+- **「root 助手不在本地网络隐私上下文里」这个前提没有实测。** 那是根据
+  「Apple 平台程序读得到、裸二进制读不到」这条证据推出来的：助手是
+  launchd 拉起的 root 守护进程，归属不是某个 App，按这条推理应该读得到。
+  但这条推理本身没在本机的助手进程里验证过。
+- **`arp -l -a` 在没有该子命令的系统上的行为没测**（本机有）。
+- 界面上怎么显示「哪一路拿到了 MAC」由界面那侧改，这次只在
+  `WakeOnLANService.swift` 里把信息暴露出来，界面本身没动。

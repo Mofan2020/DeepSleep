@@ -59,6 +59,26 @@ public enum HelperCommand: String, Codable, CaseIterable, Sendable {
     /// v3 协议才支持；旧版助手（v<=2）会回 `unknown command` 失败。
     case getCPUTemperature
 
+    /// 读本机邻居表（ARP / 邻居表 / 路由表里的邻居条目）的**原始文本**。
+    ///
+    /// 为什么需要这条命令：macOS 的「本地网络隐私」按**归属应用**决定谁能读
+    /// 邻居缓存。Deep Sleep.app 自己起的 `arp -a` 会返回 0 行、退出码 0、
+    /// 也不报错 —— 扫到的设备就只剩 IP，没有 MAC，发不了魔术包。
+    /// 助手是 root 的 LaunchDaemon，不在 App 的那个上下文里，能读到。
+    ///
+    /// 助手只负责「以 root 身份把原文取回来」，**不做任何解析**：解析放在
+    /// 应用侧（`DeepSleep/Core/WakeOnLANService.swift`），这样解析函数能被
+    /// 普通权限的单测直接覆盖，不需要 root 也不需要网络。
+    ///
+    /// 返回 payload：
+    ///   `arp`      = `/usr/sbin/arp -a` 的输出
+    ///   `neighbor` = `/usr/sbin/arp -l -a` 的输出
+    ///   `routes`   = `/usr/sbin/netstat -rn -f inet` 的输出
+    ///
+    /// 无参数。**纯只读**：只读内核的邻居缓存，不写文件、不改任何系统状态。
+    /// 旧版助手不认识这条命令，会回 `unknown command` —— 应用侧必须能降级。
+    case readNeighborTable
+
     // MARK: - 风扇控制（v1.9 起）
 
     /// 读风扇实时状态：数量、每个风扇的当前转速 / 最低 / 最高 / 是否手动模式。

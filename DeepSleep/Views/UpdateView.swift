@@ -75,21 +75,29 @@ struct UpdateView: View {
                     get: { updates.automaticallyChecks },
                     set: { updates.automaticallyChecks = $0 }
                 )) {
-                    Text("自动检查更新").font(.body.weight(.medium))
+                    Text("定期自动检查更新").font(.body.weight(.medium))
                 }
                 .toggleStyle(.switch)
+
+                Text(updates.automaticallyChecks
+                     ? "每天检查一次。发现新版本会自动把安装包下载下来并校验，"
+                       + "不需要你点任何按钮。"
+                     : "关掉之后只有你在下面点「立即检查」才会去看有没有新版本。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 Toggle(isOn: Binding(
                     get: { updates.asksBeforeInstalling },
                     set: { updates.asksBeforeInstalling = $0 }
                 )) {
-                    Text("安装前先询问").font(.body.weight(.medium))
+                    Text("装之前先问我一句").font(.body.weight(.medium))
                 }
                 .toggleStyle(.switch)
 
                 Text(updates.asksBeforeInstalling
-                     ? "发现新版本时会自动下载并校验，但不会自行重启，等你确认后再安装。"
-                     : "发现新版本时会自动下载、校验并直接重启完成安装。")
+                     ? "新版本下载并校验完之后会停在这里，等你点「立即更新并重启」再换。"
+                     : "新版本下载并校验完之后直接换掉并重启，中途不问你。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -98,7 +106,7 @@ struct UpdateView: View {
                     get: { updates.skipPrereleaseUpdates },
                     set: { updates.skipPrereleaseUpdates = $0 }
                 )) {
-                    Text("跳过预发布版本（仅装正式版）").font(.body.weight(.medium))
+                    Text("只装正式版（跳过预发布）").font(.body.weight(.medium))
                 }
                 .toggleStyle(.switch)
 
@@ -118,6 +126,21 @@ struct UpdateView: View {
                         .foregroundStyle(.secondary)
                 }
 
+                // 需要管理员权限时把话说在前面 —— 别让用户点了按钮才知道要输密码。
+                if updates.installNeedsAdministrator {
+                    Label {
+                        Text("应用装在当前用户写不进去的目录里"
+                             + "（通常是 /Applications），更新时需要一次管理员授权。")
+                            .font(.caption)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } icon: {
+                        Image(systemName: "lock.trianglebadge.exclamationmark")
+                    }
+                    .foregroundStyle(DS.Tone.caution)
+                }
+
+                lastResultRow
+
                 HStack(spacing: DS.Space.sm) {
                     // 检查是次要操作：不做主按钮样式。
                     Button {
@@ -127,9 +150,9 @@ struct UpdateView: View {
                     }
                     .disabled(updates.phase.isBusy)
 
-                    if case .ready = updates.phase {
+                    if updates.phase.readyVersion != nil {
                         Button {
-                            updates.installAndRelaunch()
+                            Task { await updates.installAndRelaunch() }
                         } label: {
                             Label("立即更新并重启", systemImage: "arrow.triangle.2.circlepath")
                         }
@@ -144,13 +167,46 @@ struct UpdateView: View {
         }
     }
 
+    /// 上一次更新的结果。
+    ///
+    /// 应用是在退出之后才被替换的，所以「成没成」只有下次启动才知道 ——
+    /// 这一块就是给用户看那个结果的。
+    private var lastResultRow: some View {
+        HStack(alignment: .top, spacing: DS.Space.sm) {
+            StatusPill(
+                text: "上次更新：\(updates.lastUpdateOutcome.statusText)",
+                isActive: updates.lastUpdateOutcome.statusText != "未装过",
+                color: lastResultColor
+            )
+            Text(updates.lastUpdateOutcome.summary)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(DS.Space.sm)
+        .insetPanel()
+    }
+
+    private var lastResultColor: Color {
+        switch updates.lastUpdateOutcome {
+        case .never:        return DS.Tone.idle
+        case .success:      return DS.Tone.good
+        case .failure:      return DS.Tone.critical
+        }
+    }
+
     /// 最新可用版本。还没查过就是「—」，不拿当前版本冒充。
     private var latestVersion: String {
         switch updates.phase {
         case .upToDate(let current):   return current
         case .available(let version):  return version
         case .downloading(let version, _): return version
+        case .verifying(let version):  return version
         case .ready(let version):      return version
+        case .installing(let version): return version
+        case .awaitingAuthorization(let version): return version
+        case .installFailed(let version, _): return version
         default:                       return "—"
         }
     }
@@ -160,10 +216,14 @@ struct UpdateView: View {
         case .upToDate:                return "已是最新"
         case .available:               return "可更新"
         case .downloading:             return "下载中"
+        case .verifying:               return "校验中"
         case .ready:                  return "已就绪"
+        case .installing:              return "安装中"
+        case .awaitingAuthorization:   return "等待授权"
+        case .installFailed:           return "安装失败"
         case .checking:                return "正在检查"
-        case .failed:                 return "检查失败"
-        default:                      return "尚未检查"
+        case .failed:                  return "失败"
+        default:                       return "尚未检查"
         }
     }
 
@@ -171,8 +231,9 @@ struct UpdateView: View {
         switch updates.phase {
         case .upToDate:  return DS.Tone.good
         case .available, .ready: return DS.Tone.caution
-        case .failed:    return DS.Tone.critical
-        case .checking, .downloading: return DS.Tone.info
+        case .installFailed, .failed: return DS.Tone.critical
+        case .checking, .downloading, .verifying, .installing, .awaitingAuthorization:
+            return DS.Tone.info
         default:         return DS.Tone.idle
         }
     }
@@ -181,8 +242,10 @@ struct UpdateView: View {
         switch updates.phase {
         case .upToDate:   return DS.Tone.good
         case .ready:      return DS.Tone.caution
-        case .failed:     return DS.Tone.critical
+        case .installFailed, .failed: return DS.Tone.critical
         case .available:  return DS.Tone.info
+        case .checking, .downloading, .verifying, .installing, .awaitingAuthorization:
+            return DS.Tone.info
         default:          return DS.Tone.idle
         }
     }
@@ -367,6 +430,8 @@ struct UpdateView: View {
             symbol: "checklist"
         ) {
             VStack(alignment: .leading, spacing: DS.Space.sm) {
+                bullet("发现新版本后会自动把安装包下载下来并校验；"
+                       + "校验通过之后装不装，由「装之前先问我一句」那个开关决定。")
                 bullet("应用更新只在 Release 版本号**严格更高**时进行；"
                        + "版本号解析不了一律当作「没有更新」，绝不当作「有更新」。")
                 bullet("下载的 zip 必须能解开，里面的 .app 的 bundle id 必须是 "
@@ -374,6 +439,10 @@ struct UpdateView: View {
                        + "并通过 codesign 结构校验。")
                 bullet("Release 若附带 DeepSleep.zip.sha256 会比对摘要；"
                        + "不一致就放弃安装。")
+                bullet("应用装在系统应用目录里（/Applications）时，替换它需要一次管理员授权；"
+                       + "装在自己的目录里则不需要。")
+                bullet("替换完成后会把结果写下来，下次启动时显示 —— "
+                       + "你只有重启之后才知道这一轮到底成没成。")
                 bullet("助手自我更新的校验：来源必须是应用包内的固定路径，"
                        + "那个包的 bundle id 必须是 Deep Sleep，"
                        + "内容摘要要与调用方给的一致，且不能与当前这份完全相同。")
