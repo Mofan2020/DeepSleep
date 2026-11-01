@@ -3024,3 +3024,123 @@ $ launchctl print-disabled system | grep deepsleep
   「同意 / 继续」的，措辞按原样保留，没有跟着这一轮一起改。
 - 工具箱里偏开发者向的页面（lsof、shell 配置、hosts）保留了命令示例，
   那些页面本身就是给要看命令的人用的。
+
+## v1.11.2 — 钥匙串每次更新都要重新授权：ad-hoc 签名的 requirement 跟着 cdhash 变
+
+### 现象
+
+用户反馈：**AI 保活每次更新之后，都要重新输入一次钥匙串密码，才能读到 API Key 发请求。**
+弹框文案是「Deep Sleep 想要访问钥匙串中的密钥」，输入一次密码之后就不再问 ——
+直到下一次更新。
+
+### 根因：ad-hoc 签名的 designated requirement 是 cdhash
+
+钥匙串判断「来读的是不是同一个应用」，靠的不是 bundle id，而是那个应用的
+**designated requirement**（指定要求）。requirement 是一段签名约束，
+签名变了它可能变也可能不变。
+
+Deep Sleep 没有 Developer ID 证书，用的是 ad-hoc 签名（`project.yml` 里
+`CODE_SIGN_IDENTITY: "-"`）。ad-hoc 签名的 designated requirement 默认是：
+
+```
+designated => cdhash H"ac3f9cee6c6739fce0036b603fb0504912153f16"
+```
+
+**cdhash 是可执行文件的哈希。** 也就是说「这个 App 是哪个 App」这件事，
+每次重新构建答案都不一样。于是：
+
+1. 用户在 v1.11.1 下授权过一次，钥匙串记住了「当时那个签名的 app」；
+2. v1.11.2 重新构建 → cdhash 变了 → requirement 变了；
+3. 钥匙串对着新 requirement 一比对，对不上 → 拒绝 → 弹框要密码；
+4. 用户输密码 → 系统把新签名加进信任列表 → 这一版能用了；
+5. 下次更新，cdhash 又变 → 回到第 3 步。
+
+**不是钥匙串 API 用错了，是「同一个应用」这件事的判定依据不成立。**
+
+### 实测（本机，macOS 26）
+
+写了个探针复现整条链路，结论如下：
+
+| 实验 | 结果 |
+| --- | --- |
+| 默认 ad-hoc 签名，两个内容不同的二进制 | requirement 不同（都是 cdhash） |
+| 默认 ad-hoc 签名的同一个 app 重新签名 | requirement 变了 |
+| 条目 ACL 用 `SecAccessCreate` 显式绑定创建者，另一个签名的 app 读 | **进程挂起，等钥匙串弹框要密码**（复现用户现象） |
+| 只取 item ref（`kSecReturnRef`，不取数据） | **成功，不触发授权** |
+| 用 `SecKeychainItemSetAccess` 改写 ACL | **触发授权，需要密码** |
+| 加 `--requirements '=designated => identifier "..."'` 后重新签名 | **requirement 不变**，与二进制内容无关 |
+
+两件重要的事：
+
+- **能拿到 item ref，但改不了 ACL。** 「自动把旧条目的 ACL 迁移成新身份」这条路
+  走不通 —— 改 ACL 本身就要授权。所以第一次授权省不掉。
+- **Data Protection keychain 走不通。** DP keychain 是 macOS 10.15+ 的现代
+  keychain，条目不弹交互框，本来是最合适的方案，但实测在 ad-hoc 签名下
+  直接失败：加 `kSecUseDataProtectionKeychain` 报
+  `-34018 A required entitlement is not present`；带 `keychain-access-groups`
+  entitlement 重新签名之后 launchd 直接拒绝启动（`Launchd job spawn failed`,
+  code 163）—— 那条 entitlement 需要真实的 team id，ad-hoc 拿不到。
+
+### 修法
+
+**把 designated requirement 固定成 bundle id。**
+
+`scripts/build-release.sh` 在打包前多一步：
+
+```sh
+codesign --force --sign - --preserve-metadata=entitlements \
+    --requirements "=designated => identifier \"$APP_IDENTIFIER\"" "$APP"
+```
+
+requirement 从 cdhash 变成 `identifier "com.skyc8266.deepsleep"` ——
+只认 bundle id，不认二进制内容。**签名内容怎么变都不影响身份判定**，
+更新之后钥匙串认得出是同一个应用，不再需要重新授权。
+
+签完当场校验两件事，不校验就发布出去的话，哪天参数写错了，
+发布出去的是个「下次更新又会弹框」的包，而且没人会发现：
+
+- `codesign --verify --strict` 仍然通过（CI 里还有一条 `--deep --strict`）；
+- requirement 确实换成了 `identifier`（不是 cdhash）。
+
+### 顺带做的：别再反复弹框
+
+即使修好了 requirement，用户从旧版升级过来时**仍会有最后一次授权** ——
+旧条目的 trusted list 里记的是旧签名的 cdhash，第一次读新版必然失配。
+这一次省不掉（见上面「改 ACL 要授权」）。
+
+所以同时做了两件事，把这次授权的代价降到最低：
+
+1. **记住授权失败，不再重复弹。** 新增 `KeepAliveKeychainAccess`：
+   一旦某个 account 确认被钥匙串拒绝，就把它记下来；后续调度**读之前**
+   就短路掉，一个字都不问钥匙串。
+   这条是关键 —— 保活任务是定时触发的，不短路的话用户每隔一段时间
+   就要输一次密码，比「每次更新输一次」还糟。
+2. **说清楚要做什么。** 保活列表页顶部出现提示条，写明「有 N 条任务的
+   API Key 需要重新输入一次」，任务行上标「需重新授权」；编辑器里把
+   「留空表示不修改原 Key」换成「必须重新输入一次」。
+   失败日志也不再是笼统的「读取 API Key 失败」，而是写明钥匙串拒绝了访问、
+   该去哪里重新输入。
+
+### 回归
+
+- `scripts/test-code-sign-identity.swift`（9 项断言）：**差分**验证 ——
+  不加 `--requirements` 时两个不同二进制得到不同 requirement（cdhash），
+  加上之后得到同一个 requirement（identifier）；同一个 app 重新签名后
+  requirement 不变；固定后 `codesign --verify --deep --strict` 仍然通过。
+  这条性质必须被锁住：哪天有人改了打包脚本，requirement 悄悄变回 cdhash，
+  用户会重新遇到这个问题，而代码里没有任何东西会报错。
+- `scripts/test-keepalive-keychain-access.swift`（19 项断言）：标记 / 清除 /
+  查询、空 account 被忽略（不然一个空串会把所有任务都算成需要重新授权）、
+  读之前的短路语义、并发读写。
+
+### 没验证的
+
+- **没在真机上跑过完整的「更新 → 读 → 弹框 → 输入密码 → 再更新」循环。**
+  本机复现了「不同签名的 app 读被 ACL 拦下并挂起等密码」，也验证了固定
+  requirement 后 requirement 与二进制内容无关，但没有在真机上确认
+  「输完这次密码，之后更新不再弹」。
+- 第一次授权仍会发生（原因见上），这一点在发布说明里写明了。
+- 如果以后拿到了 Developer ID 证书，改成正式签名即可 —— 正式签名的
+  requirement 天然稳定，还能顺带用上 DP keychain（条目不弹交互框）。
+  打包脚本里那一步届时可以简化，但**不要删**，除非确认正式签名的
+  requirement 同样稳定。

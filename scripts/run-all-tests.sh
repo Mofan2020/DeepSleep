@@ -137,11 +137,13 @@ if [ -f scripts/check-keepalive-isolation.py ]; then
     fi
 fi
 build_and_run "keepalive-url"        /tmp/t_kaurl    DeepSleep/AIKeepAlive/KeepAliveModels.swift scripts/test-keepalive-url.swift
+build_and_run "keepalive-keychain-access" /tmp/t_kakc DeepSleep/AIKeepAlive/KeepAliveKeychainAccess.swift scripts/test-keepalive-keychain-access.swift
+build_and_run "code-sign-identity"  /tmp/t_sigid   scripts/test-code-sign-identity.swift
 build_and_run "lsof-service"         /tmp/t_lsof    DeepSleep/Core/LsofService.swift scripts/test-lsof-service.swift
 build_and_run "toolbox-layout"       /tmp/t_tblay    DeepSleep/Views/ToolboxLayout.swift scripts/test-toolbox-layout.swift
-build_and_run "toolbox-gate"         /tmp/t_tbgate   DeepSleep/Views/ToolboxLayout.swift DeepSleep/AIKeepAlive/KeepAliveModels.swift DeepSleep/AIKeepAlive/KeepAliveError.swift DeepSleep/AIKeepAlive/KeepAliveStore.swift DeepSleep/AIKeepAlive/KeepAliveKeychain.swift scripts/test-toolbox-gate.swift
-build_and_run "keepalive-schedule"   /tmp/t_kasch    scripts/test-support/KeepAliveTestStubs.swift DeepSleep/AIKeepAlive/KeepAliveModels.swift DeepSleep/AIKeepAlive/KeepAliveError.swift DeepSleep/AIKeepAlive/KeepAliveStore.swift DeepSleep/AIKeepAlive/KeepAliveClient.swift DeepSleep/AIKeepAlive/KeepAliveEngine.swift scripts/test-keepalive-schedule.swift
-build_and_run "keepalive-backoff"    /tmp/t_kabk     scripts/test-support/KeepAliveTestStubs.swift DeepSleep/AIKeepAlive/KeepAliveModels.swift DeepSleep/AIKeepAlive/KeepAliveError.swift DeepSleep/AIKeepAlive/KeepAliveStore.swift DeepSleep/AIKeepAlive/KeepAliveClient.swift DeepSleep/AIKeepAlive/KeepAliveEngine.swift scripts/test-keepalive-backoff-timing.swift
+build_and_run "toolbox-gate"         /tmp/t_tbgate   DeepSleep/Views/ToolboxLayout.swift DeepSleep/AIKeepAlive/KeepAliveModels.swift DeepSleep/AIKeepAlive/KeepAliveError.swift DeepSleep/AIKeepAlive/KeepAliveStore.swift DeepSleep/AIKeepAlive/KeepAliveKeychain.swift DeepSleep/AIKeepAlive/KeepAliveKeychainAccess.swift scripts/test-toolbox-gate.swift
+build_and_run "keepalive-schedule"   /tmp/t_kasch    scripts/test-support/KeepAliveTestStubs.swift DeepSleep/AIKeepAlive/KeepAliveModels.swift DeepSleep/AIKeepAlive/KeepAliveError.swift DeepSleep/AIKeepAlive/KeepAliveStore.swift DeepSleep/AIKeepAlive/KeepAliveKeychainAccess.swift DeepSleep/AIKeepAlive/KeepAliveClient.swift DeepSleep/AIKeepAlive/KeepAliveEngine.swift scripts/test-keepalive-schedule.swift
+build_and_run "keepalive-backoff"    /tmp/t_kabk     scripts/test-support/KeepAliveTestStubs.swift DeepSleep/AIKeepAlive/KeepAliveModels.swift DeepSleep/AIKeepAlive/KeepAliveError.swift DeepSleep/AIKeepAlive/KeepAliveStore.swift DeepSleep/AIKeepAlive/KeepAliveKeychainAccess.swift DeepSleep/AIKeepAlive/KeepAliveClient.swift DeepSleep/AIKeepAlive/KeepAliveEngine.swift scripts/test-keepalive-backoff-timing.swift
 build_and_run "shell-config"         /tmp/t_shellcfg DeepSleep/Core/ShellConfigService.swift scripts/test-shell-config.swift
 build_and_run_raw "image-upscaler"  /tmp/t_upscale -sdk $(xcrun --show-sdk-path --sdk macosx) -target arm64-apple-macos26.0 DeepSleep/Core/ImageUpscaler.swift scripts/test-image-upscaler.swift
 
@@ -152,6 +154,8 @@ build_and_run "system-metrics"      /tmp/t_sysmetrics Shared/SystemMetrics.swift
 build_and_run "npu-gpu-metrics"     /tmp/t_npngpu Shared/NgAcceleratorMetrics.swift scripts/test-npu-gpu-metrics.swift
 # 设备诊断的判定层（纯逻辑，构造「事实」驱动，不碰真机状态）。
 build_and_run "diagnostic-rules"    /tmp/t_diag    Shared/DiagnosticModel.swift DeepSleep/Core/DiagnosticsExtras.swift scripts/test-diagnostic-rules.swift
+# 第二批设备诊断检查项（系统隐藏配置 + 已安装软件 / 开发环境）的判定层。
+build_and_run "diagnostic-rules2"   /tmp/t_diag2   Shared/DiagnosticModel.swift DeepSleep/Core/DiagnosticsExtras.swift DeepSleep/Core/DiagnosticsExtras2.swift scripts/test-diagnostic-rules2.swift
 # WOL 的魔术包构造与 MAC 解析：发错了在界面上看不出来，只能在这里挡。
 # 依赖里带上了助手协议 / socket / 客户端：WOLService 现在会请特权助手
 # 读邻居表（兜底），编译期需要这几个文件。

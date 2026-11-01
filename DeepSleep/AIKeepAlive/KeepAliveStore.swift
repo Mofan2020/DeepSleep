@@ -174,13 +174,26 @@ extension KeepAliveStore {
     ///
     /// `KeepAliveKeychain.load` 是同步调用，在主线程上会卡一下 ——
     /// 钥匙串操作要走一次 IPC，几十到几百毫秒都可能。扔到后台队列。
+    ///
+    /// **已知的授权失败会被短路。** 钥匙串拒绝访问时（应用更新后的典型症状），
+    /// 再去读一次只会再弹一次授权框 —— 定时任务每隔一会儿就打扰用户一次，
+    /// 比「更新后输一次」更糟。所以命中已标记的 account 就直接抛错，
+    /// 一个字都不问钥匙串。
     static func readAPIKey(account: String) async throws -> String? {
-        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<String?, Error>) in
+        if KeepAliveKeychainAccess.shared.shouldSkipRead(account) {
+            throw KeepAliveKeychainError.authorizationDenied(account)
+        }
+        return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<String?, Error>) in
             DispatchQueue.global(qos: .userInitiated).async {
                 do {
                     let value = try KeepAliveKeychain.load(account: account)
                     cont.resume(returning: value)
                 } catch {
+                    // 授权失败要记下来 —— 记了才能不再反复弹框。
+                    if let e = error as? KeepAliveKeychainError,
+                       case .authorizationDenied = e {
+                        KeepAliveKeychainAccess.shared.markDenied(account)
+                    }
                     cont.resume(throwing: error)
                 }
             }
@@ -188,11 +201,15 @@ extension KeepAliveStore {
     }
 
     /// 异步写 Keychain。
+    ///
+    /// 写成功意味着用户重新提供了凭据 —— 授权状态恢复正常，解除标记，
+    /// 后续调度就能正常读到了。
     static func writeAPIKey(_ key: String, account: String) async throws {
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             DispatchQueue.global(qos: .userInitiated).async {
                 do {
                     try KeepAliveKeychain.save(key: key, account: account)
+                    KeepAliveKeychainAccess.shared.clear(account)
                     cont.resume()
                 } catch {
                     cont.resume(throwing: error)

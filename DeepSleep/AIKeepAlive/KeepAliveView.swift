@@ -45,6 +45,12 @@ struct KeepAliveView: View {
     /// 改成 `.sheet(item:)`：目标对象与 sheet 一起创建，值不会错。
     @State private var editorTarget: KeepAliveEditorTarget?
 
+    /// 需要重新输入 API Key 的任务 id。
+    ///
+    /// 这不是 `@Published` 的状态（钥匙串访问状态在另一个模块里），
+    /// 所以靠下面的定时刷新同步 —— 状态本身很少变，20 秒一次足够。
+    @State private var reauthorizationTaskIDs: Set<UUID> = []
+
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.lg) {
             SectionCard(
@@ -62,6 +68,10 @@ struct KeepAliveView: View {
                                color: engine.tasks.isEmpty ? DS.Tone.idle : DS.Tone.info)
                     Spacer(minLength: DS.Space.sm)
                 }
+            }
+
+            if !reauthorizationTaskIDs.isEmpty {
+                reauthorizationNotice
             }
 
             SectionCard(
@@ -90,6 +100,7 @@ struct KeepAliveView: View {
                         ForEach(engine.tasks) { task in
                             KeepAliveTaskRow(
                                 task: task,
+                                needsReauthorization: reauthorizationTaskIDs.contains(task.id),
                                 onToggle: { engine.setEnabled(task.id, $0) },
                                 onEdit: {
                                     editorTarget = KeepAliveEditorTarget(task: task)
@@ -120,6 +131,13 @@ struct KeepAliveView: View {
             }
         }
         .pageLayout()
+        .task {
+            // 钥匙串的授权状态不在 @Published 里，这里定期同步一次。
+            while !Task.isCancelled {
+                refreshReauthorizationState()
+                try? await Task.sleep(for: .seconds(20))
+            }
+        }
         .sheet(item: $editorTarget) { target in
             KeepAliveTaskEditor(task: target.task) { saved in
                 engine.upsert(saved)
@@ -128,6 +146,44 @@ struct KeepAliveView: View {
                 editorTarget = nil
             }
         }
+    }
+
+    // MARK: - 钥匙串重新授权
+
+    /// 从钥匙串的授权状态里算出哪些任务需要用户重新输入 API Key。
+    private func refreshReauthorizationState() {
+        let denied = Set(KeepAliveKeychainAccess.shared.deniedAccounts())
+        guard !denied.isEmpty else {
+            if !reauthorizationTaskIDs.isEmpty { reauthorizationTaskIDs = [] }
+            return
+        }
+        let ids = Set(engine.tasks.filter { denied.contains($0.apiKeyRef) }.map(\.id))
+        if ids != reauthorizationTaskIDs { reauthorizationTaskIDs = ids }
+    }
+
+    /// 需要重新授权时的提示条。
+    ///
+    /// 关键是把「只需要做一次」和「在此之前不会再弹框」说清楚：
+    /// 用户最担心的是反复被打扰，所以这两句必须写出来。
+    private var reauthorizationNotice: some View {
+        HStack(alignment: .top, spacing: DS.Space.sm) {
+            Image(systemName: "key.fill")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(DS.Tone.caution)
+            VStack(alignment: .leading, spacing: DS.Space.xxs) {
+                Text("有 \(reauthorizationTaskIDs.count) 条任务的 API Key 需要重新输入一次。")
+                    .foregroundStyle(.primary)
+                Text("应用更新之后，系统钥匙串会认不出这是同一个应用，于是拒绝读取。"
+                     + "点对应任务的「编辑」，把 API Key 重新填一次就好 —— 只需要这一次，"
+                     + "之后更新不会再问。在这之前这些任务不会发请求，也不会再弹授权框。")
+                    .foregroundStyle(.secondary)
+            }
+            .font(.caption)
+            .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(DS.Space.md)
+        .insetPanel()
     }
 
     // MARK: - 引擎状态
@@ -168,6 +224,8 @@ struct KeepAliveView: View {
 struct KeepAliveTaskRow: View {
 
     let task: KeepAliveTask
+    /// 这条任务的 API Key 需要重新输入（钥匙串拒绝了访问）。
+    var needsReauthorization: Bool = false
     let onToggle: (Bool) -> Void
     let onEdit: () -> Void
     let onTrigger: () -> Void
@@ -212,6 +270,9 @@ struct KeepAliveTaskRow: View {
                     Tag(text: task.format.title, color: .teal)
                     if !task.isEnabled {
                         Tag(text: "已停用", color: DS.Tone.idle)
+                    }
+                    if needsReauthorization {
+                        Tag(text: "需重新授权", color: DS.Tone.caution)
                     }
                 }
 
@@ -313,6 +374,11 @@ struct KeepAliveTaskEditor: View {
     private var isEdit: Bool { task != nil }
 
     /// 新建时用 id 生成 Keychain account 名；编辑时沿用原来的。
+    /// 这条任务的 API Key 需要重新输入（钥匙串拒绝了访问）。
+    private var needsReauthorization: Bool {
+        KeepAliveKeychainAccess.shared.needsReauthorization(apiKeyRef)
+    }
+
     private var apiKeyRef: String {
         if let task { return task.apiKeyRef }
         return KeepAliveStore.keychainAccount(for: draftID)
@@ -419,8 +485,16 @@ struct KeepAliveTaskEditor: View {
                     }
                 }
                 if isEdit {
-                    Text("留空表示不修改原 Key。Key 存在系统钥匙串里。")
-                        .caption2()
+                    if needsReauthorization {
+                        // 钥匙串拒绝了访问 —— 这次不能「留空表示不修改」，
+                        // 必须重新填一次，所以要把话说死。
+                        Text("钥匙串拒绝了访问这条 Key（应用更新后常见）。请把 API Key 重新输入一次再保存 —— 只需要这一次。")
+                            .caption2()
+                            .foregroundStyle(DS.Tone.caution)
+                    } else {
+                        Text("留空表示不修改原 Key。Key 存在系统钥匙串里。")
+                            .caption2()
+                    }
                 }
             }
 

@@ -270,10 +270,12 @@ enum DeviceDiagnostics {
     static func collectReport(privileged: DiagnosticsPrivilegedSource = LiveDiagnosticsPrivilegedSource.shared) async -> DiagnosticReport {
         // 扩展检查项与主采集并发跑 —— 两边互不依赖，整体耗时取决于最慢的那一条命令。
         async let extras = collectExtraFacts()
+        async let extras2 = collectExtraFacts2()
 
         let facts = await collectFacts(privileged: privileged)
         var report = DiagnosticEvaluator.evaluate(facts)
         report.sections.append(contentsOf: DgExtra.sections(from: await extras))
+        report.sections.append(contentsOf: Dg2Extra.sections(from: await extras2))
         // 总结句按最终分组重算 —— 扩展项里也可能有需要注意的地方。
         report.summary = DiagnosticReport.summaryText(for: report.sections)
         return report
@@ -1021,6 +1023,480 @@ enum DeviceDiagnostics {
         facts.thirdPartyLaunchItems = readThirdPartyLaunchItems()
 
         return facts
+    }
+
+    // MARK: - 第二批扩展检查项（系统隐藏配置 + 已安装软件）
+
+    /// 采集第二批扩展检查项的事实。
+    ///
+    /// 规矩与 collectExtraFacts 一致：全部只读、绝不请求提权、不改任何系统状态；
+    /// 命令跑不动就记「读不到 + 原因」，不当成故障。
+    ///
+    /// 需要读文件系统的部分（应用清单、受保护目录、shell 配置、工具路径）
+    /// 单独在一个后台队列上做，不占住命令行的并发额度。
+    private static func collectExtraFacts2() async -> Dg2ExtraFacts {
+        var facts = Dg2ExtraFacts()
+
+        async let kernel = runShell("/usr/sbin/sysctl",
+                                    ["kern.maxproc", "kern.maxfiles", "kern.maxfilesperproc",
+                                     "kern.ipc.maxsockbuf",
+                                     "net.inet.tcp.sendspace", "net.inet.tcp.recvspace",
+                                     "net.inet.tcp.autosndbufmax", "net.inet.tcp.autorcvbufmax",
+                                     "hw.physicalcpu", "hw.logicalcpu"],
+                                    timeout: 5)
+        async let swap = runShell("/usr/sbin/sysctl", ["-n", "vm.swapusage"], timeout: 4)
+        async let launchLimits = runShell("/bin/launchctl", ["limit"], timeout: 4)
+        async let launchList = runShell("/bin/launchctl", ["list"], timeout: 8)
+        async let snapshots = runShell("/usr/sbin/diskutil", ["apfs", "listSnapshots", "/"], timeout: 8)
+        async let tmDestination = runShell("/usr/bin/tmutil", ["destinationinfo"], timeout: 6)
+        async let tmBackups = runShell("/usr/bin/tmutil", ["listbackups"], timeout: 8)
+        async let spotlight = runShell("/usr/bin/mdutil", ["-s", "-a"], timeout: 6)
+        async let dns = runShell("/usr/sbin/scutil", ["--dns"], timeout: 6)
+        async let network = runShell("/usr/sbin/system_profiler", ["SPNetworkDataType"], timeout: 8)
+        async let services = runShell("/usr/sbin/networksetup", ["-listallnetworkservices"], timeout: 6)
+        async let vpn = runShell("/usr/sbin/scutil", ["--nc", "list"], timeout: 6)
+        async let extensions = runShell("/usr/bin/systemextensionsctl", ["list"], timeout: 6)
+        async let xprotect = runShell("/usr/bin/defaults",
+                                      ["read", "/Library/Apple/System/Library/CoreServices/XProtect.bundle/Contents/Info"],
+                                      timeout: 6)
+        async let profiles = runShell("/usr/bin/profiles", ["show", "-type", "configuration"], timeout: 10)
+        async let processes = runShell("/bin/ps", ["-Ao", "comm="], timeout: 6)
+        async let inputSources = runShell("/usr/bin/defaults",
+                                          ["read", "com.apple.HIToolbox", "AppleEnabledInputSources"],
+                                          timeout: 6)
+        async let audio = runShell("/usr/sbin/system_profiler", ["SPAudioDataType"], timeout: 8)
+        async let printers = runShell("/usr/sbin/system_profiler", ["SPPrintersDataType"], timeout: 8)
+        async let thunderbolt = runShell("/usr/sbin/system_profiler", ["SPThunderboltDataType"], timeout: 8)
+        async let usb = runShell("/usr/sbin/system_profiler", ["SPUSBDataType"], timeout: 8)
+        async let fonts = runShell("/usr/sbin/system_profiler", ["SPFontsDataType"], timeout: 15)
+        async let battery = runShell("/usr/sbin/ioreg", ["-r", "-c", "AppleSmartBattery"], timeout: 6)
+        async let brewFormula = runTool("brew", ["list", "--formula"], timeout: 12)
+        async let brewCask = runTool("brew", ["list", "--cask"], timeout: 12)
+        async let npm = runTool("npm", ["ls", "-g", "--depth=0"], timeout: 20)
+        async let conda = runTool("conda", ["env", "list"], timeout: 12)
+        async let dockerVersion = runTool("docker", ["--version"], timeout: 8)
+        async let podmanVersion = runTool("podman", ["--version"], timeout: 8)
+        async let colimaVersion = runTool("colima", ["--version"], timeout: 8)
+        async let loginItems = runShell("/usr/bin/osascript",
+                                        ["-e", "tell application \"System Events\" to get the name of every login item"],
+                                        timeout: 10)
+        async let backgroundItems = runShell("/usr/bin/sfltool", ["dumpbtm"], timeout: 10)
+        async let fileFacts = collectExtraFacts2Files()
+
+        // 内核参数（只看 stdout：sysctl 读不到的键会把提示写进 stderr）
+        let kernelResult = await kernel
+        facts.kernelLimits = dg2Fact(kernelResult, name: "sysctl 内核参数", includeStderr: false) { text in
+            let values = Dg2Extra.parseKeyValues(text)
+            return values.values.isEmpty ? nil : values
+        }
+        facts.tcpBuffers = dg2Fact(kernelResult, name: "sysctl TCP 参数", includeStderr: false) { text in
+            let values = Dg2Extra.parseKeyValues(text)
+            let keys = ["net.inet.tcp.sendspace", "net.inet.tcp.recvspace",
+                        "net.inet.tcp.autosndbufmax", "net.inet.tcp.autorcvbufmax"]
+            guard keys.contains(where: { values.string($0) != nil }) else { return nil }
+            return values
+        }
+        facts.cpuTopology = dg2Fact(kernelResult, name: "sysctl CPU 参数", includeStderr: false) { text in
+            Dg2Extra.parseCPUTopology(text)
+        }
+
+        facts.swapCapacity = dg2Fact(await swap, name: "sysctl vm.swapusage", includeStderr: false) {
+            Dg2Extra.parseSwapCapacity($0)
+        }
+        facts.launchLimits = dg2Fact(await launchLimits, name: "launchctl limit") {
+            let limits = Dg2Extra.parseLaunchLimits($0)
+            return (limits.maxFilesSoft == nil && limits.maxProcSoft == nil) ? nil : limits
+        }
+
+        // launchctl list：第三方自启项 + 没跑起来的那些
+        let launchResult = await launchList
+        if let failure = launchResult.launchFailure {
+            facts.launchFailures = .unavailable(reason: failure)
+        } else if launchResult.timedOut {
+            facts.launchFailures = .unavailable(reason: "launchctl list 超时")
+        } else {
+            let parsed = Dg2Extra.parseLaunchList(launchResult.stdout)
+            facts.launchFailures = .value(parsed.failures)
+            facts.launchThirdPartyCount = .value(parsed.thirdPartyCount)
+        }
+
+        facts.snapshots = dg2Fact(await snapshots, name: "diskutil apfs listSnapshots") {
+            let parsed = Dg2Extra.parseSnapshots($0)
+            return parsed.count == 0 ? nil : parsed
+        }
+
+        let tmDestinationResult = await tmDestination
+        let tmBackupsResult = await tmBackups
+        if let failure = tmDestinationResult.launchFailure {
+            facts.timeMachine = .unavailable(reason: failure)
+        } else {
+            facts.timeMachine = .value(Dg2Extra.parseTimeMachine(destination: tmDestinationResult.stdout,
+                                                               backups: tmBackupsResult.stdout))
+        }
+
+        facts.spotlight = dg2Fact(await spotlight, name: "mdutil -s -a") {
+            let states = Dg2Extra.parseSpotlight($0)
+            return states.isEmpty ? nil : states
+        }
+        facts.dns = dg2Fact(await dns, name: "scutil --dns") {
+            Dg2Extra.parseDNS($0)
+        }
+
+        // 网络服务：接口代理来自 SPNetworkDataType，服务清单来自 networksetup。
+        let networkResult = await network
+        let servicesResult = await services
+        if let failure = networkResult.launchFailure {
+            facts.networkServices = .unavailable(reason: failure)
+        } else if networkResult.timedOut {
+            facts.networkServices = .unavailable(reason: "system_profiler SPNetworkDataType 超时")
+        } else {
+            var parsed = Dg2Extra.parseNetworkInterfaces(networkResult.stdout)
+            let list = Dg2Extra.parseNetworkServiceList(servicesResult.stdout)
+            parsed.services = list.services
+            parsed.disabledServices = list.disabled
+            facts.networkServices = .value(parsed)
+        }
+
+        facts.vpn = dg2Fact(await vpn, name: "scutil --nc list") {
+            Dg2Extra.parseVPNList($0)
+        }
+        facts.networkExtensions = dg2Fact(await extensions, name: "systemextensionsctl list") {
+            let list = Dg2Extra.parseNetworkExtensions($0)
+            return list.isEmpty ? nil : list
+        }
+        facts.xprotectVersion = dg2Fact(await xprotect, name: "defaults read XProtect Info") {
+            Dg2Extra.parseXProtectVersion($0)
+        }
+        facts.profiles = dg2Fact(await profiles, name: "profiles show -type configuration") {
+            let list = Dg2Extra.parseProfiles($0)
+            return list.isEmpty ? nil : list
+        }
+
+        // 文件系统那部分
+        let files = await fileFacts
+
+        // 安全客户端：进程名 + 已安装应用名一起找。
+        let processResult = await processes
+        facts.securityAgents = .value(Dg2Extra.parseSecurityAgents(processText: processResult.stdout,
+                                                                   appNames: files.apps.entries.map(\.name)))
+
+        facts.protectedDirs = .value(files.protectedDirs)
+        facts.shellConfig = .value(files.shellConfig)
+        facts.devPaths = .value(files.devPaths)
+        facts.apps = .value(files.apps)
+
+        facts.inputSources = dg2Fact(await inputSources, name: "defaults read AppleEnabledInputSources") {
+            Dg2Extra.parseInputSources($0)
+        }
+        facts.audio = dg2Fact(await audio, name: "system_profiler SPAudioDataType") {
+            Dg2Extra.parseAudio($0)
+        }
+        facts.printers = dg2Fact(await printers, name: "system_profiler SPPrintersDataType") {
+            let list = Dg2Extra.parsePrinters($0)
+            return list.isEmpty ? nil : list
+        }
+
+        // 雷雳接口 + SPUSBDataType 是否有输出
+        let thunderboltResult = await thunderbolt
+        let usbResult = await usb
+        if let failure = thunderboltResult.launchFailure {
+            facts.usb = .unavailable(reason: failure)
+        } else if thunderboltResult.timedOut {
+            facts.usb = .unavailable(reason: "system_profiler SPThunderboltDataType 超时")
+        } else {
+            var usb = Dg2Extra.parseThunderbolt(thunderboltResult.stdout)
+            usb.usbListEmpty = usbResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            facts.usb = .value(usb)
+        }
+
+        facts.fonts = dg2Fact(await fonts, name: "system_profiler SPFontsDataType") {
+            let parsed = Dg2Extra.parseFonts($0)
+            return parsed.total == 0 ? nil : parsed
+        }
+        facts.battery = dg2Fact(await battery, name: "ioreg AppleSmartBattery") {
+            Dg2Extra.parseBattery($0)
+        }
+
+        // 包管理器与容器运行时
+        let brewFormulaResult = await brewFormula
+        let brewCaskResult = await brewCask
+        if let failure = brewFormulaResult.launchFailure {
+            facts.brew = .unavailable(reason: failure)
+        } else {
+            facts.brew = .value(Dg2Extra.parseBrew(formulas: brewFormulaResult.stdout,
+                                                    casks: brewCaskResult.stdout))
+        }
+        facts.npm = dg2Fact(await npm, name: "npm ls -g") {
+            Dg2Extra.parseNpm($0)
+        }
+        facts.pythonEnvs = dg2Fact(await conda, name: "conda env list") {
+            Dg2Extra.parseCondaEnvs($0)
+        }
+
+        // 容器运行时：装了哪些应用 + 命令行版本
+        var runtimes: [Dg2ContainerRuntime] = files.containerApps.map { Dg2ContainerRuntime(name: $0, version: nil) }
+        func appendRuntime(_ result: ShellResult, name: String) {
+            guard result.launchFailure == nil, !result.timedOut else { return }
+            let version = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !version.isEmpty else { return }
+            if let index = runtimes.firstIndex(where: { $0.name == name }) {
+                runtimes[index] = Dg2ContainerRuntime(name: name, version: version)
+            } else {
+                runtimes.append(Dg2ContainerRuntime(name: name, version: version))
+            }
+        }
+        appendRuntime(await dockerVersion, name: "Docker")
+        appendRuntime(await podmanVersion, name: "Podman")
+        appendRuntime(await colimaVersion, name: "Colima")
+        facts.containers = .value(runtimes)
+
+        facts.receipts = dg2Fact(await runShell("/usr/sbin/pkgutil", ["--pkgs"], timeout: 8),
+                                 name: "pkgutil --pkgs") {
+            let parsed = Dg2Extra.parseReceipts($0)
+            return parsed.total == 0 ? nil : parsed
+        }
+        facts.kexts = dg2Fact(await runShell("/usr/bin/kmutil", ["showloaded"], timeout: 8),
+                              name: "kmutil showloaded") {
+            let list = Dg2Extra.parseKexts($0)
+            return list.isEmpty ? nil : list
+        }
+
+        // 登录项与后台项
+        let loginResult = await loginItems
+        if let failure = loginResult.launchFailure {
+            facts.loginItems = .unavailable(reason: failure)
+        } else if loginResult.timedOut {
+            facts.loginItems = .unavailable(reason: "osascript 读取登录项超时")
+        } else {
+            // osascript 读 System Events 需要「自动化」权限，被拒时它会报错。
+            let text = (loginResult.stdout + loginResult.stderr).trimmingCharacters(in: .whitespacesAndNewlines)
+            if text.contains("not allowed assistive access") || text.contains("Not authorized")
+                || text.contains("不允许") {
+                facts.loginItems = .unavailable(reason: "系统没给自动化权限，读不到登录项")
+            } else {
+                facts.loginItems = .value(Dg2Extra.parseLoginItems(loginResult.stdout))
+            }
+        }
+        facts.backgroundItems = dg2Fact(await backgroundItems, name: "sfltool dumpbtm") {
+            let parsed = Dg2Extra.parseBackgroundItems($0)
+            return parsed.names.isEmpty ? nil : parsed
+        }
+
+        return facts
+    }
+
+    /// 第二批检查项里需要读文件系统的部分。
+    private struct Dg2FileFacts {
+        var apps: Dg2Apps = Dg2Apps(entries: [])
+        var protectedDirs: [Dg2ProtectedDir] = []
+        var shellConfig: Dg2ShellConfig = Dg2ShellConfig(pathEntryCount: 0,
+                                                        duplicatePathEntries: [],
+                                                        insecureSettings: [],
+                                                        file: nil)
+        var devPaths: [Dg2ToolPath] = []
+        var containerApps: [String] = []
+    }
+
+    /// 文件系统那部分在后台队列上做。
+    private static func collectExtraFacts2Files() async -> Dg2FileFacts {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Dg2FileFacts, Never>) in
+            DispatchQueue.global(qos: .utility).async {
+                continuation.resume(returning: readExtraFacts2Files())
+            }
+        }
+    }
+
+    private static func readExtraFacts2Files() -> Dg2FileFacts {
+        var facts = Dg2FileFacts()
+        facts.apps = readInstalledApps()
+        facts.protectedDirs = readProtectedDirectories()
+        facts.shellConfig = readShellConfig()
+        facts.devPaths = readToolPaths()
+        facts.containerApps = readContainerApps()
+        return facts
+    }
+
+    /// 已安装的应用（/Applications 与 ~/Applications）。
+    ///
+    /// 顺手判断「疑似损坏」：缺 Info.plist，或主程序是 0 字节。
+    private static func readInstalledApps() -> Dg2Apps {
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser.path
+        var entries: [Dg2AppEntry] = []
+        for directory in ["/Applications", "\(home)/Applications"] {
+            guard let names = try? fm.contentsOfDirectory(atPath: directory) else { continue }
+            for name in names.sorted() where name.hasSuffix(".app") {
+                let path = "\(directory)/\(name)"
+                let infoPath = "\(path)/Contents/Info.plist"
+                guard fm.fileExists(atPath: infoPath) else {
+                    entries.append(Dg2AppEntry(name: name, path: path, bundleID: nil,
+                                               brokenReason: "缺少 Contents/Info.plist"))
+                    continue
+                }
+                var bundleID: String?
+                var brokenReason: String?
+                if let data = fm.contents(atPath: infoPath),
+                   let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
+                   let dict = plist as? [String: Any] {
+                    bundleID = dict["CFBundleIdentifier"] as? String
+                    if let executable = dict["CFBundleExecutable"] as? String {
+                        let binary = "\(path)/Contents/MacOS/\(executable)"
+                        if fm.fileExists(atPath: binary),
+                           let attributes = try? fm.attributesOfItem(atPath: binary),
+                           let size = (attributes[.size] as? NSNumber)?.intValue,
+                           size == 0 {
+                            brokenReason = "主程序是 0 字节"
+                        }
+                    }
+                }
+                entries.append(Dg2AppEntry(name: name, path: path, bundleID: bundleID,
+                                           brokenReason: brokenReason))
+            }
+        }
+        return Dg2Apps(entries: entries)
+    }
+
+    /// 受保护目录的访问概览。
+    ///
+    /// 只做「能不能列目录」的判断，不读里面的内容 —— 也不去碰受限的 TCC.db 本体。
+    private static func readProtectedDirectories() -> [Dg2ProtectedDir] {
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser.path
+        let targets: [(String, String)] = [
+            ("照片", "\(home)/Library/Photos"),
+            ("通讯录", "\(home)/Library/Contacts"),
+            ("日历", "\(home)/Library/Calendars"),
+            ("邮件", "\(home)/Library/Mail"),
+            ("信息", "\(home)/Library/Messages"),
+            ("提醒事项", "\(home)/Library/Reminders"),
+            ("Safari", "\(home)/Library/Safari"),
+            ("钥匙串", "\(home)/Library/Keychains"),
+            ("移动文稿", "\(home)/Library/Mobile Documents"),
+            ("TCC 授权数据库", "\(home)/Library/Application Support/com.apple.TCC/TCC.db")
+        ]
+        var result: [Dg2ProtectedDir] = []
+        for (name, path) in targets {
+            var isDirectory: ObjCBool = false
+            guard fm.fileExists(atPath: path, isDirectory: &isDirectory) else { continue }
+            if isDirectory.boolValue {
+                if let items = try? fm.contentsOfDirectory(atPath: path) {
+                    result.append(Dg2ProtectedDir(name: name, path: path, accessible: true,
+                                                  itemCount: items.count, note: nil))
+                } else {
+                    result.append(Dg2ProtectedDir(name: name, path: path, accessible: false,
+                                                  itemCount: 0,
+                                                  note: "系统不允许读取（多半是没给完全磁盘访问权限）"))
+                }
+            } else {
+                let readable = fm.isReadableFile(atPath: path)
+                result.append(Dg2ProtectedDir(name: name, path: path, accessible: readable,
+                                              itemCount: 0,
+                                              note: readable ? nil : "系统不允许读取"))
+            }
+        }
+        return result
+    }
+
+    /// shell 配置文件（.zshrc / .bash_profile 之类）拼成一段文本。
+    ///
+    /// 每个文件前面加一行「# --- 路径 ---」标记，解析层据此知道问题出在哪个文件。
+    private static func readShellConfig() -> Dg2ShellConfig {
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser.path
+        let files = ["\(home)/.zshrc", "\(home)/.zshenv", "\(home)/.zprofile",
+                     "\(home)/.bash_profile", "\(home)/.bashrc", "\(home)/.profile"]
+        var combined = ""
+        for file in files {
+            guard let text = try? String(contentsOf: URL(fileURLWithPath: file), encoding: .utf8) else { continue }
+            combined += "# --- \(file) ---\n"
+            combined += text
+            combined += "\n"
+        }
+        return Dg2Extra.parseShellConfig(combined)
+    }
+
+    /// 常见开发工具在磁盘上的所有副本。
+    ///
+    /// 不靠 PATH —— App 启动时的 PATH 很短，靠 PATH 找会漏掉用户自己装的那些。
+    static func toolPaths(named name: String) -> [String] {
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser.path
+        var directories = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin",
+                           "/opt/homebrew/sbin", "/usr/local/sbin",
+                           "/opt/anaconda3/bin", "/usr/local/anaconda3/bin",
+                           "\(home)/anaconda3/bin", "\(home)/miniconda3/bin",
+                           "\(home)/.local/bin"]
+        if let path = ProcessInfo.processInfo.environment["PATH"] {
+            directories.append(contentsOf: path.split(separator: ":").map(String.init))
+        }
+        var result: [String] = []
+        for directory in directories {
+            let candidate = "\(directory)/\(name)"
+            var isDirectory: ObjCBool = false
+            guard fm.fileExists(atPath: candidate, isDirectory: &isDirectory),
+                  !isDirectory.boolValue else { continue }
+            if result.contains(candidate) { continue }
+            result.append(candidate)
+        }
+        return result
+    }
+
+    /// 开发工具路径概览。
+    private static func readToolPaths() -> [Dg2ToolPath] {
+        let tools = ["python3", "node", "npm", "git", "ruby"]
+        var result: [Dg2ToolPath] = []
+        for tool in tools {
+            let paths = toolPaths(named: tool)
+            guard !paths.isEmpty else { continue }
+            result.append(Dg2ToolPath(tool: tool, paths: paths))
+        }
+        return result
+    }
+
+    /// 装了哪些容器运行时的图形应用。
+    private static func readContainerApps() -> [String] {
+        let fm = FileManager.default
+        let candidates: [(String, String)] = [
+            ("/Applications/Docker.app", "Docker Desktop"),
+            ("/Applications/OrbStack.app", "OrbStack"),
+            ("/Applications/Podman Desktop.app", "Podman Desktop"),
+            ("/Applications/Rancher Desktop.app", "Rancher Desktop")
+        ]
+        return candidates.filter { fm.fileExists(atPath: $0.0) }.map(\.1)
+    }
+
+    /// 命令输出 → 事实。解析不出内容就是「读不到 + 原因」，不是故障。
+    private static func dg2Fact<T>(_ result: ShellResult,
+                                   name: String,
+                                   includeStderr: Bool = true,
+                                   parse: (String) -> T?) -> DiagnosticFact<T> {
+        if let failure = result.launchFailure {
+            return .unavailable(reason: failure)
+        }
+        if result.timedOut {
+            return .unavailable(reason: "\(name) 超时")
+        }
+        let text = includeStderr && !result.stderr.isEmpty
+            ? result.stdout + "\n" + result.stderr
+            : result.stdout
+        guard let value = parse(text) else {
+            return .unavailable(reason: "\(name) 没有返回可解析的内容")
+        }
+        return .value(value)
+    }
+
+    /// 跑一个「不一定存在」的命令。
+    ///
+    /// 包管理器、容器运行时这些不是系统自带的，不能像 sysctl 那样写死路径 ——
+    /// 先在常见安装位置里找，找到才跑；找不到就记「本机没有安装」。
+    private static func runTool(_ tool: String,
+                                _ arguments: [String],
+                                timeout: TimeInterval = commandTimeout) async -> ShellResult {
+        guard let path = toolPaths(named: tool).first else {
+            return ShellResult(status: -1, stdout: "", stderr: "", timedOut: false,
+                               launchFailure: "本机没有安装 \(tool)")
+        }
+        return await runShell(path, arguments, timeout: timeout)
     }
 
     /// 命令输出 → 事实。解析不出来就是「读不到 + 原因」，不是故障。

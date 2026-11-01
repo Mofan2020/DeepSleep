@@ -18,7 +18,7 @@
 - **应用名**：Deep Sleep
 - **最低系统**：macOS 26.0
 - **语言 / 框架**：Swift 5、SwiftUI + AppKit、IOKit、LocalAuthentication
-- **当前版本**：1.11.1
+- **当前版本**：1.11.2
 
 ## 安装
 

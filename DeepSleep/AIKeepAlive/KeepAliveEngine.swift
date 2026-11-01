@@ -218,6 +218,29 @@ final class KeepAliveEngine: ObservableObject {
             do {
                 let loaded = try await KeepAliveStore.readAPIKey(account: account)
                 apiKey = loaded ?? ""
+            } catch let error as KeepAliveKeychainError {
+                // 钥匙串拒绝访问 —— 这是「应用更新后读不到 API Key」的典型症状。
+                // 话要说清楚要用户做什么，否则用户只会看到「发送失败」。
+                let summary: String
+                switch error {
+                case .authorizationDenied:
+                    summary = "钥匙串拒绝了访问：应用更新后系统认不出这是同一个应用。"
+                        + "请到 AI 保活页面把这条任务的 API Key 重新输入一次"
+                        + "（只需一次，之后更新不会再问）。"
+                case .interactionNotAllowed:
+                    summary = "钥匙串需要用户确认才能读取 API Key。"
+                        + "请到 AI 保活页面把这条任务的 API Key 重新输入一次。"
+                case .dataCorrupted:
+                    summary = "钥匙串里这条任务的 API Key 已损坏：\(error.localizedDescription)"
+                        + "请重新输入一次 API Key。"
+                case .unhandled:
+                    summary = "读取 API Key 失败：\(error.localizedDescription)"
+                }
+                self.finish(taskID: taskID, success: false, summary: summary)
+                SleepController.shared.appendLog(
+                    "保活任务「\(taskName)」读取 API Key 失败：\(summary)", isError: true
+                )
+                return
             } catch {
                 self.finish(
                     taskID: taskID,

@@ -27,6 +27,7 @@
 		2E04E5FA5A3F0EE1C6D77B07 /* MonitoringCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = E75BB13FF2F018F746DC727B /* MonitoringCoordinator.swift */; };
 		30B151DC27ACB9ECBD8AFEA4 /* DiskUsage.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2908A142A34184EE666FF94 /* DiskUsage.swift */; };
 		313486F9C714E8AC1436BE78 /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = 178D52B0BEF95859AB8B6D88 /* Components.swift */; };
+		343011F9BDF4FC1E86FF9C34 /* KeepAliveKeychainAccess.swift in Sources */ = {isa = PBXBuildFile; fileRef = 007E841B65199B99BD017BA9 /* KeepAliveKeychainAccess.swift */; };
 		355B12850D9D59EF6A64EDD2 /* TerminationReport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4977ACA618E906FAE14B97C0 /* TerminationReport.swift */; };
 		3657D5DF6AC5D265032C1E81 /* FanDisclaimer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BA10B3137070A97BD3D9B30 /* FanDisclaimer.swift */; };
 		365CEDF5A71D7986CD1E975B /* ImageUpscaler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4431D12CF19A38F75CBFE8F4 /* ImageUpscaler.swift */; };
@@ -80,6 +81,7 @@
 		821BC1B933F63E1D2E0BBB95 /* HangDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADF8BD245306888F8A3A0AB6 /* HangDetector.swift */; };
 		8497605C3EFAAF988C2007FB /* SystemMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = E13408104C16C642713945FC /* SystemMonitor.swift */; };
 		84F5D460858BA98B403006FD /* KeepAliveView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8EA071AFAF53B9AAEAEC928 /* KeepAliveView.swift */; };
+		869F6F7B192F55C92CDFAB47 /* DiagnosticsExtras2.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35A018C69173C6A2F653E499 /* DiagnosticsExtras2.swift */; };
 		86F56C2B39366C7DF6A219EB /* NicePageSize.swift in Sources */ = {isa = PBXBuildFile; fileRef = 397AFF18E2E49FCA4EF4C9B6 /* NicePageSize.swift */; };
 		87026E48AE69B0854C9D2E4C /* DiagnosticModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FE2DC1696782B1AD5D14235 /* DiagnosticModel.swift */; };
 		89098C875F9DF3595B4F80F5 /* ProcessStats.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9280BE0F52069F606CA7D220 /* ProcessStats.swift */; };
@@ -170,6 +172,7 @@
 
 /* Begin PBXFileReference section */
 		005259E71AECD16B7A5CE1A1 /* NiceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NiceView.swift; sourceTree = "<group>"; };
+		007E841B65199B99BD017BA9 /* KeepAliveKeychainAccess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeepAliveKeychainAccess.swift; sourceTree = "<group>"; };
 		0343C5752D94A72187E5078B /* DeepSleepApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepSleepApp.swift; sourceTree = "<group>"; };
 		03B58135C030FD6D97DD7D84 /* UpdateManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateManager.swift; sourceTree = "<group>"; };
 		07D54DD1D4D5168D7EA9FF30 /* AlertRulesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertRulesView.swift; sourceTree = "<group>"; };
@@ -192,6 +195,7 @@
 		3130E8550A6C4DAEC39000B0 /* HangDetectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HangDetectionView.swift; sourceTree = "<group>"; };
 		328414D1585DE241759D16C5 /* ToolboxView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolboxView.swift; sourceTree = "<group>"; };
 		3417D1F55CFBCFEE933EBB6B /* LsofView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LsofView.swift; sourceTree = "<group>"; };
+		35A018C69173C6A2F653E499 /* DiagnosticsExtras2.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsExtras2.swift; sourceTree = "<group>"; };
 		37EFA717B50E8CBF1D6993F8 /* DeviceDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceDiagnostics.swift; sourceTree = "<group>"; };
 		397AFF18E2E49FCA4EF4C9B6 /* NicePageSize.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NicePageSize.swift; sourceTree = "<group>"; };
 		3A800BD799143A7C30442FF0 /* HangDetectionConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HangDetectionConfig.swift; sourceTree = "<group>"; };
@@ -356,6 +360,7 @@
 				432740AF96D744E5DAB258F4 /* AutoStartManager.swift */,
 				37EFA717B50E8CBF1D6993F8 /* DeviceDiagnostics.swift */,
 				B512BF901C7EBC8852FA3219 /* DiagnosticsExtras.swift */,
+				35A018C69173C6A2F653E499 /* DiagnosticsExtras2.swift */,
 				6012695D8816727E333287FF /* FanController.swift */,
 				DAE18F7C52D61C3E6970A309 /* FanDisclaimer.swift */,
 				8D28D1837B362CAF3FC59D63 /* FanMode.swift */,
@@ -467,6 +472,7 @@
 				96C806AFB3348F78552890DE /* KeepAliveError.swift */,
 				3E81D0012D0B46AA593CB7E5 /* KeepAliveHTTP.swift */,
 				5C1DA8B6AFFE67CFA6EAD1A2 /* KeepAliveKeychain.swift */,
+				007E841B65199B99BD017BA9 /* KeepAliveKeychainAccess.swift */,
 				410BF27C14819844BBBF1AD9 /* KeepAliveModels.swift */,
 				8F1CCE72967AB0DD99C9E36F /* KeepAliveStore.swift */,
 				A8EA071AFAF53B9AAEAEC928 /* KeepAliveView.swift */,
@@ -686,6 +692,7 @@
 				C0A6034F59D6236C649E5465 /* DeviceDiagnostics.swift in Sources */,
 				87026E48AE69B0854C9D2E4C /* DiagnosticModel.swift in Sources */,
 				03F5C074CDC97DAC945F7EB6 /* DiagnosticsExtras.swift in Sources */,
+				869F6F7B192F55C92CDFAB47 /* DiagnosticsExtras2.swift in Sources */,
 				1B50B96638C755B7E8655E91 /* DiagnosticsView.swift in Sources */,
 				B375FF39CCDF2A267D7E2192 /* DiskUsage.swift in Sources */,
 				777A351396E1CB2C231820FD /* EmailChannel.swift in Sources */,
@@ -718,6 +725,7 @@
 				CF5AACF31452068C8B44EBC6 /* KeepAliveError.swift in Sources */,
 				D9D2D9D844BE3193F3F15B18 /* KeepAliveHTTP.swift in Sources */,
 				B241E8443F1AAB49F8BDDEBE /* KeepAliveKeychain.swift in Sources */,
+				343011F9BDF4FC1E86FF9C34 /* KeepAliveKeychainAccess.swift in Sources */,
 				9B520028425E910C9468C1F2 /* KeepAliveModels.swift in Sources */,
 				FB6B830682F795680CE6DFFD /* KeepAliveStore.swift in Sources */,
 				84F5D460858BA98B403006FD /* KeepAliveView.swift in Sources */,
@@ -1005,7 +1013,7 @@
 				INFOPLIST_FILE = DeepSleep/Resources/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
-				MARKETING_VERSION = 1.11.1;
+				MARKETING_VERSION = 1.11.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.skyc8266.deepsleep;
 				PRODUCT_NAME = "Deep Sleep";
 				SDKROOT = macosx;
@@ -1022,7 +1030,7 @@
 				INFOPLIST_FILE = DeepSleep/Resources/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
-				MARKETING_VERSION = 1.11.1;
+				MARKETING_VERSION = 1.11.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.skyc8266.deepsleep;
 				PRODUCT_NAME = "Deep Sleep";
 				SDKROOT = macosx;

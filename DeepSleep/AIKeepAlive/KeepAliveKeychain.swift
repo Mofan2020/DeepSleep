@@ -16,23 +16,6 @@
 import Foundation
 import Security
 
-/// 保活凭据的 Keychain 错误。
-enum KeepAliveKeychainError: LocalizedError {
-    case unhandled(OSStatus, String)  // (status, account)
-    case dataCorrupted(String)
-
-    var errorDescription: String? {
-        switch self {
-        case .unhandled(let status, let account):
-            let cfMsg = SecCopyErrorMessageString(status, nil)
-            let msg = (cfMsg as String?) ?? "OSStatus \(status)"
-            return "Keychain 操作失败 [\(account)]：\(msg)"
-        case .dataCorrupted(let account):
-            return "Keychain 中的 [\(account)] 数据损坏"
-        }
-    }
-}
-
 /// 保活的 Keychain 包装。
 enum KeepAliveKeychain {
 
@@ -84,7 +67,7 @@ enum KeepAliveKeychain {
         case errSecItemNotFound:
             return nil
         default:
-            throw KeepAliveKeychainError.unhandled(status, account)
+            throw KeepAliveKeychainError.classify(status, account: account)
         }
     }
 
