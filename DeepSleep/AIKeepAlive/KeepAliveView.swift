@@ -12,12 +12,31 @@
 
 import SwiftUI
 
+/// 编辑器目标：告诉 sheet 这次是新建还是编辑哪一条。
+///
+/// 每次点击都造一个新实例，`id` 随之变化 —— sheet 内容跟着重建，
+/// 不会残留上一条任务填过的表单。
+struct KeepAliveEditorTarget: Identifiable {
+
+    let id = UUID()
+
+    /// 要编辑的任务。`nil` 表示新建。
+    let task: KeepAliveTask?
+}
+
 struct KeepAliveView: View {
 
     @ObservedObject private var engine = KeepAliveEngine.shared
 
-    @State private var showEditor = false
-    @State private var editingTask: KeepAliveTask?
+    /// 编辑器当前要处理的任务。`nil` 表示编辑器不显示。
+    ///
+    /// 之前这里是 `showEditor` + `editingTask` 两个状态配 `.sheet(isPresented:)`：
+    /// 首次点「编辑」时，sheet 的内容闭包是在 `editingTask` 仍为 nil 的那一轮
+    /// 渲染里求值的，而 `KeepAliveTaskEditor` 的 `task` 是构造时定型的 `let`
+    /// —— 于是打开的是新建页；关掉再点一次时 `editingTask` 已经有值，
+    /// 才表现得「第二次才正常」。
+    /// 改成 `.sheet(item:)`：目标对象与 sheet 一起创建，值不会错。
+    @State private var editorTarget: KeepAliveEditorTarget?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -53,8 +72,7 @@ struct KeepAliveView: View {
                                 task: task,
                                 onToggle: { engine.setEnabled(task.id, $0) },
                                 onEdit: {
-                                    editingTask = task
-                                    showEditor = true
+                                    editorTarget = KeepAliveEditorTarget(task: task)
                                 },
                                 onTrigger: { engine.triggerNow(id: task.id) },
                                 onRestoreTemplate: { engine.restoreDefaultTemplate(id: task.id) },
@@ -70,8 +88,7 @@ struct KeepAliveView: View {
 
                     HStack(spacing: 10) {
                         Button {
-                            editingTask = nil
-                            showEditor = true
+                            editorTarget = KeepAliveEditorTarget(task: nil)
                         } label: {
                             Label("新建任务", systemImage: "plus")
                         }
@@ -96,14 +113,12 @@ struct KeepAliveView: View {
             }
         }
         .pageLayout()
-        .sheet(isPresented: $showEditor) {
-            KeepAliveTaskEditor(task: editingTask) { saved in
+        .sheet(item: $editorTarget) { target in
+            KeepAliveTaskEditor(task: target.task) { saved in
                 engine.upsert(saved)
-                editingTask = nil
-                showEditor = false
+                editorTarget = nil
             } onCancel: {
-                editingTask = nil
-                showEditor = false
+                editorTarget = nil
             }
         }
     }
