@@ -143,7 +143,23 @@ struct ThermalView: View {
     }
 
     private func metricTile(title: String, celsius: Double?, symbol: String) -> some View {
-        let band = celsius.map { band(for: $0) }
+        // 这里**不能**写 `celsius.map { band(for: $0) }`。
+        //
+        // `band(for:)` 原本有 Double? 与 Double 两个重载，闭包的返回类型推不出来，
+        // 编译器就会在 `Optional.map` 的两个候选之间挑错：SwiftUI 给
+        // `Optional` 加了一个 `map`（`where Wrapped: Gesture`），Xcode 26 会
+        // 挑中它并报「referencing instance method 'map' on 'Optional' requires
+        // that 'Double' conform to 'Gesture'」。Xcode 27 修好了这个重载解析，
+        // 所以本机编译得过、CI 上编不过。
+        //
+        // 现在两处都堵上了：`band(for:)` 只留 Double? 一个重载，这里也用
+        // 显式 if let —— 哪个编译器都不会有歧义。
+        var band: Band?
+        if let celsius {
+            band = self.band(for: celsius)
+        } else {
+            band = nil
+        }
         return MetricTile(
             title: title,
             value: celsius.map { String(format: "%.1f", $0) } ?? "—",
@@ -297,7 +313,7 @@ struct ThermalView: View {
     }
 
     private func sensorRow(_ reading: GroupedTemperatureReading) -> some View {
-        let band = band(for: reading.celsius)
+        let band = band(for: Optional(reading.celsius))
         return HStack(spacing: DS.Space.sm) {
             ThresholdDot(celsius: reading.celsius,
                          warnThreshold: warnThreshold,
@@ -489,10 +505,6 @@ struct ThermalView: View {
         if celsius >= hotThreshold { return Band(text: "过高", tint: DS.Tone.caution) }
         if celsius >= warnThreshold { return Band(text: "偏高", tint: Color.yellow) }
         return Band(text: "正常", tint: nil)
-    }
-
-    private func band(for celsius: Double) -> Band {
-        band(for: Optional(celsius))
     }
 }
 
