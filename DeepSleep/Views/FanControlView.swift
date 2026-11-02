@@ -54,7 +54,6 @@ struct FanControlView: View {
                 ruleCard
             }
             emergencyCard
-            notesCard
             Spacer(minLength: 0)
         }
         .pageLayout()
@@ -125,21 +124,12 @@ struct FanControlView: View {
             symbol: "exclamationmark.shield",
             accent: DS.Tone.caution
         ) {
-            VStack(alignment: .leading, spacing: DS.Space.md) {
-                VStack(alignment: .leading, spacing: DS.Space.sm) {
-                    BulletLine("不同 Mac 的风扇键名、转速区间与模式键可能不同，写错会导致风扇不转或异常加速。")
-                    BulletLine("风扇长时间停在过低转速可能使机器过热；停在过高转速会增加噪音与磨损。")
-                    BulletLine("任何传感器达到 90°C 时，本应用强制所有风扇拉到最大转速，这一条无法关闭。")
-                    BulletLine("手动模式有 15 秒租约：应用退出或崩溃后风扇自动交回系统控制。")
-                }
-
-                Button {
-                    showDisclaimer = true
-                } label: {
-                    Label("阅读全文并同意", systemImage: "checkmark.seal")
-                }
-                .buttonStyle(.borderedProminent)
+            Button {
+                showDisclaimer = true
+            } label: {
+                Label("阅读全文并同意", systemImage: "checkmark.seal")
             }
+            .buttonStyle(.borderedProminent)
         }
     }
 
@@ -148,9 +138,7 @@ struct FanControlView: View {
     private var masterCard: some View {
         SectionCard(
             title: "风扇控制",
-            subtitle: controller.isEnabled
-                ? "手动模式下由助手按租约维持转速，应用失联后自动交回系统。"
-                : "关闭时风扇完全由系统管理。",
+            subtitle: controller.isEnabled ? "手动模式：风扇转速由本应用接管。" : "关闭时风扇完全由系统管理。",
             symbol: "fan",
             accent: DS.Tone.info
         ) {
@@ -258,7 +246,7 @@ struct FanControlView: View {
                 case .fixed(let rpm):
                     fixedEditor(fan: fan, rpm: rpm)
                 case .rule(let target, let low, let high):
-                    Text(String(format: "规则：风扇 %d，%.0f–%.0f°C 线性映射到最低/最高转速。",
+                    Text(String(format: "规则：风扇 %d，%.0f–%.0f°C",
                                 target, low, high))
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -308,11 +296,6 @@ struct FanControlView: View {
             }
             .font(.caption2)
             .foregroundStyle(.tertiary)
-
-            Text("下限取机械最低转速的 \(Int(FanControl.minRpmSafetyRatio * 100))%，低于该值部分机型会拒绝执行。")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-                .fixedSize(horizontal: false, vertical: true)
 
             if helperUnavailableReason != nil {
                 Label(helperUnavailableHint, systemImage: "exclamationmark.circle")
@@ -385,22 +368,17 @@ struct FanControlView: View {
 
                     Spacer()
                 }
-
-                Text("最高温度上限是 89°C：到 90°C 会由安全兜底接管，再高的区间不会生效。")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
 
-    /// 规则卡的副标题：助手未就绪时带一句短提示，否则说明区间语义。
+    /// 规则卡的副标题：助手未就绪时带一句短提示，否则不显示。
     /// 完整原因在总开关卡里说过一次，这里不重复。
-    private var ruleSubtitle: String {
+    private var ruleSubtitle: String? {
         if helperUnavailableReason != nil {
             return helperUnavailableHint
         }
-        return "低于最低温度用最低转速，高于最高温度用最高转速，中间随温度线性变化。"
+        return nil
     }
 
     private var ruleWarning: String? {
@@ -418,7 +396,7 @@ struct FanControlView: View {
     private var emergencyCard: some View {
         SectionCard(
             title: "安全兜底 · \(Int(FanControl.emergencyTemperatureCelsius))°C",
-            subtitle: nil,
+            subtitle: "温度到这个数时风扇强制最大转速，任何设置都不能压低它。",
             symbol: "shield.lefthalf.filled",
             accent: DS.Tone.caution
         ) {
@@ -468,12 +446,6 @@ struct FanControlView: View {
                         }
                     }
                 }
-
-                Text("触发时所有可写风扇立刻拉到最大转速，并拒绝任何降速请求（含交回系统）。"
-                     + "温度回落后再等 \(Int(FanControl.emergencyCooldownSeconds)) 秒解除。")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -528,19 +500,6 @@ struct FanControlView: View {
                         .foregroundStyle(.tertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-            }
-        }
-    }
-
-    private var notesCard: some View {
-        SectionCard(
-            title: "说明",
-            symbol: "info.circle"
-        ) {
-            VStack(alignment: .leading, spacing: DS.Space.sm) {
-                BulletLine("应用退出时主动释放风扇控制权，不等租约超时。")
-                BulletLine("助手未就绪或版本过旧时，本页保持只读并如实说明，不会假装写入成功。")
-                BulletLine("读不到风扇键时如实报告，不显示虚构的转速。")
             }
         }
     }

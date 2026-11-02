@@ -300,7 +300,7 @@ struct MonitoringView: View {
     private var trendCard: some View {
         SectionCard(
             title: "最近 60 秒",
-            subtitle: "每秒一个采样点，越靠右越新。曲线只画趋势，不参与告警。",
+            subtitle: "曲线只画趋势，不参与告警。",
             symbol: "chart.xyaxis.line",
             accent: DS.Tone.info
         ) {
@@ -366,7 +366,7 @@ struct MonitoringView: View {
     private var coreUsageCard: some View {
         SectionCard(
             title: "每核心 CPU",
-            subtitle: "每秒一次 tick 差分；颜色随占用率变化。",
+            subtitle: "颜色随占用率变化。",
             symbol: "cpu",
             accent: DS.Tone.info
         ) {
@@ -416,7 +416,7 @@ struct MonitoringView: View {
     private var memoryCard: some View {
         SectionCard(
             title: "内存明细",
-            subtitle: "口径和活动监视器一致：已用 = 应用 + 联动 + 压缩。",
+            subtitle: "已用 = 应用 + 联动 + 压缩。",
             symbol: "memorychip",
             accent: .purple
         ) {
@@ -604,8 +604,7 @@ struct MonitoringView: View {
     private var processCard: some View {
         SectionCard(
             title: "进程排行",
-            subtitle: "数据来自特权助手的进程快照，面板不另起扫描。"
-                + "点表头可按名称 / PID / RSS / CPU 排序。",
+            subtitle: "点表头可按名称 / PID / RSS / CPU 排序。",
             symbol: "list.number",
             accent: DS.Tone.good
         ) {
@@ -701,7 +700,7 @@ struct MonitoringView: View {
     private var monitoringControlCard: some View {
         SectionCard(
             title: "系统监控",
-            subtitle: "总开关。关闭后下面所有阈值都不生效，也不会触发任何告警。",
+            subtitle: "关闭后下面所有阈值都不生效。",
             symbol: "gauge.with.dots.needle.bottom.50percent",
             accent: DS.Tone.info
         ) {

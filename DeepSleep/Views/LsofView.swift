@@ -337,29 +337,27 @@ struct LsofView: View {
         case .listening:
             return "没有查到监听端口。"
         case .port:
-            return "这个端口没有查到占用。非特权下能看到全部监听端口，所以「查不到」基本等于「确实没人占」。"
+            return "这个端口确实没人占。"
         case .pid:
-            return "这个 PID 没查到打开的文件。非特权只能看到自己的进程 —— 如果这是别人的进程，root 才能看到。"
+            return "这个 PID 没查到打开的文件。非特权只能看到自己的进程。"
         case .path:
-            return "这个路径没查到被打开的文件。非特权只能看到自己的进程打开的文件。"
+            return "这个路径没查到被打开的文件。非特权只能看到自己的进程。"
         }
     }
 
-    // MARK: - 权限说明
+    // MARK: - 权限
 
     private var permissionCard: some View {
         SectionCard(
-            title: "权限边界",
-            subtitle: "这一页没有提权，看到的就是系统愿意让你看的。",
+            title: "权限",
+            subtitle: nil,
             symbol: "info.circle"
         ) {
-            VStack(alignment: .leading, spacing: DS.Space.sm) {
-                BulletLine("监听端口：非特权就能看到全部 TCP 监听套接字，不管是谁开的。")
-                BulletLine("进程与文件：非特权只能看到自己的进程。别的用户（尤其 root）进程打开的文件读不出来。")
-                BulletLine("想看别人的进程文件，需要完全控制（root）权限 —— 本页不做提权。")
-                BulletLine("「查不到」有两种含义：真的没人占，或者占的人不是你能看的。")
-                BulletLine("全量扫描有 2 万多行，页面只渲染前 \(LsofView.maxRendered) 条，其余按总数报。")
-            }
+            Label("本页不提权：进程与文件只看得到当前用户自己的，监听端口不受限制。",
+                  systemImage: "lock.shield")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

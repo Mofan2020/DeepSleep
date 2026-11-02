@@ -24,6 +24,9 @@ struct LogView: View {
     /// 关键词搜索。空字符串表示不过滤。
     @State private var searchText: String = ""
 
+    /// 待确认的清空操作。`nil` 表示没有清空在等确认。
+    @State private var pendingClear: TlDeleteRequest?
+
     private static let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss"
@@ -47,6 +50,7 @@ struct LogView: View {
             retentionCard
             logCard
         }
+        .deleteConfirmation($pendingClear)
     }
 
     // MARK: - 保留策略
@@ -140,7 +144,12 @@ struct LogView: View {
             symbol: "text.alignleft",
             accessory: AnyView(
                 Button {
-                    controller.clearLog()
+                    pendingClear = TlDeleteRequest(
+                        title: "清空日志？",
+                        message: "\(controller.log.count) 条运行日志会被删掉，删掉之后没法恢复。",
+                        confirmTitle: "清空",
+                        perform: { controller.clearLog() }
+                    )
                 } label: {
                     Label("清空", systemImage: "trash")
                 }

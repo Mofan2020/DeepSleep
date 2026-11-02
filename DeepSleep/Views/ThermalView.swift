@@ -67,7 +67,6 @@ struct ThermalView: View {
             safetyCard
             sensorCard
             bandCard
-            notesCard
             Spacer(minLength: 0)
         }
         .pageLayout()
@@ -91,7 +90,7 @@ struct ThermalView: View {
     private var summaryCard: some View {
         SectionCard(
             title: "温度概览",
-            subtitle: "读数来自 IOHID 私有温度事件通道，与 90°C 兜底判定同源。",
+            subtitle: nil,
             symbol: "thermometer.medium",
             accent: summaryTint
         ) {
@@ -180,14 +179,6 @@ struct ThermalView: View {
             accent: DS.Tone.caution
         ) {
             VStack(alignment: .leading, spacing: DS.Space.md) {
-                Text("任一传感器达到 \(Int(emergencyThreshold))°C 时，"
-                     + "所有风扇立即拉到各自最大转速，并压过你设置的任何模式与规则。"
-                     + "温度回落后仍需冷却 \(Int(FanControl.emergencyCooldownSeconds)) 秒才恢复原模式，"
-                     + "避免在阈值附近抖动导致风扇反复启停。")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
                 // 状态与倒计时放在同一个 TimelineView 里：冷却期一结束，
                 // 状态词要当场从「注意」翻回「正常」，不能等下一次温度
                 // 采样（10 秒后）才翻。
@@ -253,7 +244,7 @@ struct ThermalView: View {
     private var sensorCard: some View {
         SectionCard(
             title: "传感器",
-            subtitle: "同名通道已合并，显示其中的最高值。",
+            subtitle: "同名通道显示最高值。",
             symbol: "list.bullet.rectangle",
             accent: DS.Tone.info
         ) {
@@ -295,6 +286,13 @@ struct ThermalView: View {
                 Text("\(readings.count)")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
+                // 「校准参考」组的读数是校准基准，长期恒定 —— 看着比最高温还高，
+                // 用户会以为机器真过热。写清楚它不算进最高温也不触发 90°C 兜底。
+                if group == .reference {
+                    Text("校准基准，数值固定，不算进最高温，也不触发 90°C 兜底")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
     }
@@ -350,7 +348,7 @@ struct ThermalView: View {
     private var bandCard: some View {
         SectionCard(
             title: "温度分档",
-            subtitle: "只影响本页的颜色和状态词，不参与任何判定。紧急阈值固定，改不了。",
+            subtitle: nil,
             symbol: "slider.horizontal.below.rectangle",
             accent: DS.Tone.caution
         ) {
@@ -381,11 +379,6 @@ struct ThermalView: View {
                         Tag(text: "固定值", color: DS.Tone.idle)
                     }
                 }
-
-                Text("\(Int(emergencyThreshold))°C 来自安全兜底，不在此处调整。")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -401,23 +394,6 @@ struct ThermalView: View {
                     .monospacedDigit()
             }
             slider()
-        }
-    }
-
-    // MARK: - 说明
-
-    private var notesCard: some View {
-        SectionCard(
-            title: "说明",
-            symbol: "info.circle"
-        ) {
-            VStack(alignment: .leading, spacing: DS.Space.sm) {
-                BulletLine("温度由特权助手读取，助手未就绪时这一页读不到数。")
-                BulletLine("负读数与零读数代表该通道不是温度传感器，已在采集层过滤。")
-                BulletLine("「校准参考」组的读数长期恒定，是 PMU 的校准基准，不参与最高温与 \(Int(emergencyThreshold))°C 兜底判定。")
-                BulletLine("\(Int(emergencyThreshold))°C 兜底由应用与特权助手两侧独立判定，应用退出后助手仍会保命。")
-                BulletLine("本页显示传感器原始读数，不做平滑，因此会有小幅跳动。")
-            }
         }
     }
 

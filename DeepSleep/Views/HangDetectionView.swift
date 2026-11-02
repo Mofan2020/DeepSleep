@@ -71,8 +71,7 @@ struct HangDetectionView: View {
     private var switchCard: some View {
         SectionCard(
             title: "未响应应用检测",
-            subtitle: "后台定时询问系统里的应用是否还应答，卡死的应用会从菜单栏下方弹出提示，"
-                + "可以忽略、强制退出或重启。",
+            subtitle: "卡死的应用会从菜单栏下方弹出提示，可以忽略、强制退出或重启。",
             symbol: "exclamationmark.arrow.triangle.2.circlepath",
             accent: DS.Tone.caution
         ) {
@@ -130,8 +129,7 @@ struct HangDetectionView: View {
     private var resultsCard: some View {
         SectionCard(
             title: "检测结果",
-            subtitle: "判据与活动监视器、强制退出窗口同源：直接问系统这个应用还应答不，"
-                + "不经过被测应用，所以不会因为辅助功能响应慢就误报。",
+            subtitle: "与活动监视器、强制退出窗口同源。",
             symbol: "list.bullet.rectangle",
             accent: unresponsive.isEmpty ? DS.Tone.good : DS.Tone.caution,
             accessory: AnyView(

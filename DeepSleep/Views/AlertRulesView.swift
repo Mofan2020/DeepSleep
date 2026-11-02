@@ -31,16 +31,19 @@ struct AlertRulesView: View {
     @State private var firings: [AlertTrigger] = []
     @State private var observerToken: UUID?
 
+    /// 待确认的删除。`nil` 表示没有删除在等确认。
+    @State private var pendingDelete: TlDeleteRequest?
+
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.lg) {
             rulesCard
             if !firings.isEmpty {
                 recentCard
             }
-            notesCard
             Spacer(minLength: 0)
         }
         .pageLayout()
+        .deleteConfirmation($pendingDelete)
         .onAppear {
             // 用观察者而不是 `engine.onTrigger` —— 那个闭包归监控协调器管，
             // 负责派发系统通知与邮件。界面这里只需要记一条历史。
@@ -80,9 +83,7 @@ struct AlertRulesView: View {
     private var rulesCard: some View {
         SectionCard(
             title: "告警规则",
-            subtitle: engine.rules.isEmpty
-                ? "条件连续满足设定时长才触发，掉回条件内即重新计时。"
-                : "共 \(engine.rules.count) 条 · 条件连续满足设定时长才触发，掉回条件内即重新计时。",
+            subtitle: engine.rules.isEmpty ? nil : "共 \(engine.rules.count) 条 · 与「系统监控」页的阈值互不影响，两边都生效",
             symbol: "bell.badge",
             accent: DS.Tone.info,
             accessory: AnyView(
@@ -97,9 +98,7 @@ struct AlertRulesView: View {
             if engine.rules.isEmpty {
                 EmptyStateView(
                     title: "还没有规则",
-                    message: "常见用法：CPU 温度高于 85°C 持续 30 秒 → 通知；"
-                           + "单进程内存高于 8GB 持续 60 秒 → 通知 + 邮件；"
-                           + "磁盘使用率高于 90% 持续 300 秒 → 通知。",
+                    message: "例如：CPU 温度高于 85°C 持续 30 秒就通知。",
                     systemImage: "bell.badge",
                     actionTitle: "新建规则",
                     action: { isCreating = true }
@@ -168,7 +167,11 @@ struct AlertRulesView: View {
             .help("编辑")
 
             Button {
-                engine.remove(id: rule.id)
+                pendingDelete = TlDeleteRequest(
+                    title: "删除告警规则？",
+                    message: "「\(rule.name)」会被删掉，之后这条条件不再触发告警。",
+                    perform: { engine.remove(id: rule.id) }
+                )
             } label: {
                 Image(systemName: "trash")
                     .frame(width: 24, height: 24)
@@ -219,22 +222,6 @@ struct AlertRulesView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-            }
-        }
-    }
-
-    private var notesCard: some View {
-        SectionCard(
-            title: "说明",
-            symbol: "info.circle"
-        ) {
-            VStack(alignment: .leading, spacing: DS.Space.sm) {
-                BulletLine("规则只做告警，不会结束进程 —— 温度与内存类阈值下杀进程容易误伤。")
-                BulletLine("选择邮件动作前需先配置好发信账号，否则邮件那一份发不出去。")
-                BulletLine("同一规则在条件持续满足期间只触发一次，回到条件内才重新武装。")
-                BulletLine("这些规则与「系统监控」页的固定阈值相互独立，两者都生效。")
-                BulletLine("温度阈值可以设到 90°C 以上。90°C 兜底只管风扇转速，不管告警 —— "
-                          + "温度到了就该报，兜底把风扇拉满是另一回事。")
             }
         }
     }
@@ -307,6 +294,14 @@ struct AlertRuleEditorSheet: View {
                     }
                 }
 
+                // 温度阈值不受 90°C 兜底限制 —— 兜底管的是风扇转速，不是告警。
+                // 这句得留着：用户会以为超过 90°C 就设不上去。
+                if draft.metric == .cpuTemperature {
+                    Text("温度阈值可以超过 90°C。")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+
                 LabeledContent("持续") {
                     HStack(spacing: DS.Space.sm) {
                         TextField("", value: $draft.durationSeconds, format: .number)
@@ -329,6 +324,12 @@ struct AlertRuleEditorSheet: View {
                     }
                     .labelsHidden()
                     .frame(width: 160)
+                }
+
+                if draft.action.wantsEmail {
+                    Text("邮件动作需要先配置好发信账号")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
             }
 

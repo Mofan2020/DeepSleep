@@ -25,6 +25,9 @@ struct QuickQuitView: View {
     @State private var selection: Set<QuickQuitTarget.ID> = []
     @State private var query: String = ""
 
+    /// 待确认的删除。`nil` 表示没有删除在等确认。
+    @State private var pendingDelete: TlDeleteRequest?
+
     /// 搜索过滤后的名单。
     private var filteredTargets: [QuickQuitTarget] {
         let trimmed = query.trimmingCharacters(in: .whitespaces)
@@ -54,6 +57,7 @@ struct QuickQuitView: View {
                 onClose: { showPicker = false }
             )
         }
+        .deleteConfirmation($pendingDelete)
     }
 
     // MARK: - 主操作
@@ -240,8 +244,15 @@ struct QuickQuitView: View {
 
                         if !engine.targets.isEmpty {
                             Button(role: .destructive) {
-                                engine.removeAll()
-                                selection.removeAll()
+                                pendingDelete = TlDeleteRequest(
+                                    title: "清空名单？",
+                                    message: "名单里的 \(engine.targets.count) 个应用都会被移出，之后「立即退出全部」不再结束它们。",
+                                    confirmTitle: "清空名单",
+                                    perform: {
+                                        engine.removeAll()
+                                        selection.removeAll()
+                                    }
+                                )
                             } label: {
                                 Label("清空名单", systemImage: "trash")
                             }

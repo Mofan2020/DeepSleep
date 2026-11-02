@@ -82,7 +82,11 @@ enum DS {
     /// 换尺寸时只改一处，页面里不会出现第二个魔法数字。
     enum Metric {
         /// 环形仪表的直径。仪表盘顶部那个圈。
-        static let gaugeDiameter: CGFloat = 72
+        ///
+        /// 从 72 调到 84：仪表盘改成「一屏装得下」之后，顶部状态卡
+        /// 跟下方内容之间的视觉权重差变小了，72 的圈看起来偏小、
+        /// 不像这一页的主状态。84 跟旁边 title2 的标题大小配得上。
+        static let gaugeDiameter: CGFloat = 84
     }
 
     // MARK: 动效

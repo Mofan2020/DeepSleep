@@ -29,6 +29,21 @@
 //  swiftc -parse-as-library scripts/test-keychain-auth-behavior.swift \
 //         -o /tmp/kc-auth-test && /tmp/kc-auth-test
 //
+//  ⚠️ **这个测试会弹钥匙串授权框，要你输密码。**
+//
+//  它必须弹框才能测出「挂起」—— 而「挂起」正是这个测试要观察的现象。
+//  所以它**不能进常规回归**：跑一次就弹一次框，密码长的话每弹一次都是折磨。
+//  它已经从 `scripts/run-all-tests.sh` 里移出去了。
+//
+//  什么时候才跑：
+//    - 改了钥匙串相关代码之后；
+//    - 有人又想验证「固定 requirement 能不能解决」的时候；
+//    - 跑之前先跟用户说一声会弹框。
+//
+//  跑完记得确认没留下临时条目：
+//    security dump-keychain | grep kcauth
+//  （正常应该 0 条；不为 0 就用 `security delete-generic-password -s <service> -a acct1` 清）
+//
 
 import Foundation
 
@@ -45,6 +60,15 @@ struct KeychainAuthBehaviorTests {
                 print("  [失败] \(name)" + (actual.isEmpty ? "" : " —— 实际: \(actual)"))
                 failures += 1
             }
+        }
+
+        // 没有显式同意就不跑 —— 这个测试的代价是弹框要密码，
+        // 不能因为「跑回归顺手」就替用户决定了。
+        if ProcessInfo.processInfo.environment["DS_KEYCHAIN_AUTH_TEST"] != "1" {
+            print("  [跳过] 这个测试会弹钥匙串授权框（要输密码），默认不跑。")
+            print("         确认要跑的话：DS_KEYCHAIN_AUTH_TEST=1 " + (CommandLine.arguments.first ?? "test"))
+            print("\n测试结论: 已跳过")
+            exit(0)
         }
 
         guard FileManager.default.isExecutableFile(atPath: "/usr/bin/codesign"),
@@ -307,9 +331,30 @@ struct KeychainAuthBehaviorTests {
               selfRead.finished && selfRead.output.contains("read=0"),
               selfRead.finished ? selfRead.output : "挂起了")
 
-        // 收尾：删掉临时条目，不在用户钥匙串里留垃圾
-        _ = runProbe(appA, mode: "delete", account: "acct1",
-                     service: service, timeout: 8)
+        // ------------------------------------------------ 收尾：删掉临时条目
+        //
+        // 删除也要钥匙串授权（条目 ACL 里记的是「上一个版本的那个 app」，
+        // 现在这个 app 身份又变了）—— 所以这一句**自己也会弹框要密码**。
+        //
+        // 实测：用户点了「拒绝」之后，SecItemDelete 返回 -128（errSecUserCanceled），
+        // 条目就留在钥匙串里了。所以这里必须：
+        //   1. 删完**回读确认**真的没了；
+        //   2. 没删掉就把 service 名字打出来，让人能手动清。
+        let cleanup = runProbe(appA, mode: "delete", account: "acct1",
+                               service: service, timeout: 8)
+        let stillThere = runProbe(appA, mode: "read", account: "acct1",
+                                  service: service, timeout: 5)
+        let cleanedUp = stillThere.finished && !stillThere.output.contains("read=0")
+        if !cleanedUp {
+            print("  [警告] 临时条目没删干净（删除可能被拒绝了），请手动清理：")
+            print("         security delete-generic-password -s " + service + " -a acct1")
+            if !cleanup.finished {
+                print("         （删除本身也挂起了 —— 删除同样要授权，"
+                      + "用户点了拒绝就会这样）")
+            }
+        } else {
+            print("  [通过] 临时条目已清理")
+        }
 
         // ------------------------------------------------ 汇总
         print(failures == 0 ? "\n测试结论: 全部通过" : "\n测试结论: \(failures) 项失败")

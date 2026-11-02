@@ -7,7 +7,8 @@
 //  界面约定：
 //    - 版本信息用 MetricTile + StatusPill：数字一眼可见，状态另有文字。
 //    - 「立即检查」是次要操作；真正要点的「立即更新并重启」才用主按钮。
-//    - 校验细节（edDSA 签名、摘要比对等）收进说明文字，不抢主线的注意力。
+//    - 校验细节不写在页面上：更新走的是「下载 → 校验 → 替换」这条固定流程，
+//      用户要知道的只是「装之前先问我一句」那个开关与结果。
 //
 
 import SwiftUI
@@ -36,7 +37,6 @@ struct UpdateView: View {
         VStack(alignment: .leading, spacing: DS.Space.lg) {
             applicationCard
             helperCard
-            mechanismCard
         }
     }
 
@@ -45,8 +45,7 @@ struct UpdateView: View {
     private var applicationCard: some View {
         SectionCard(
             title: "应用更新",
-            subtitle: "从 GitHub Release 拉取 DeepSleep.zip，校验通过后由一个"
-                + "临时目录里的更新器替换本应用并重新启动。",
+            subtitle: "校验通过后替换本应用并重新启动。",
             symbol: "arrow.down.circle",
             accent: .accentColor
         ) {
@@ -255,9 +254,7 @@ struct UpdateView: View {
     private var helperCard: some View {
         SectionCard(
             title: "特权助手版本",
-            subtitle: "助手二进制装在系统目录里，可能与应用内置的那一份不同。"
-                + "判据是两份文件的内容摘要 —— 助手代码没变就不会重装。"
-                + "助手已经是 root，可以自己替换自己，所以这种更新不需要再输密码。",
+            subtitle: "助手代码没变就不会重装。这种更新不需要再输密码。",
             symbol: "lock.shield",
             accent: helper.state.needsAttention ? DS.Tone.caution : DS.Tone.good
         ) {
@@ -421,50 +418,5 @@ struct UpdateView: View {
             + "通常出现在刚升级过应用、或应用与助手的版本错开的时候。"
     }
 
-    // MARK: - 机制说明
-
-    private var mechanismCard: some View {
-        SectionCard(
-            title: "这些更新都校验了什么",
-            subtitle: nil,
-            symbol: "checklist"
-        ) {
-            VStack(alignment: .leading, spacing: DS.Space.sm) {
-                bullet("发现新版本后会自动把安装包下载下来并校验；"
-                       + "校验通过之后装不装，由「装之前先问我一句」那个开关决定。")
-                bullet("应用更新只在 Release 版本号**严格更高**时进行；"
-                       + "版本号解析不了一律当作「没有更新」，绝不当作「有更新」。")
-                bullet("下载的 zip 必须能解开，里面的 .app 的 bundle id 必须是 "
-                       + "com.skyc8266.deepsleep，版本号要与 Release 声称的一致，"
-                       + "并通过 codesign 结构校验。")
-                bullet("Release 若附带 DeepSleep.zip.sha256 会比对摘要；"
-                       + "不一致就放弃安装。")
-                bullet("应用装在系统应用目录里（/Applications）时，替换它需要一次管理员授权；"
-                       + "装在自己的目录里则不需要。")
-                bullet("替换完成后会把结果写下来，下次启动时显示 —— "
-                       + "你只有重启之后才知道这一轮到底成没成。")
-                bullet("助手自我更新的校验：来源必须是应用包内的固定路径，"
-                       + "那个包的 bundle id 必须是 Deep Sleep，"
-                       + "内容摘要要与调用方给的一致，且不能与当前这份完全相同。")
-                bullet("助手是否需要更新，看的是两份二进制的**内容摘要是否相同**，"
-                       + "而不是版本号 —— 不需要任何人维护额外的数字，"
-                       + "而且摘要天然收敛：替换成功后两边必然一致，不会反复重装。")
-                bullet("替换自己由临时目录里的脚本完成：它先等本进程退出，"
-                       + "失败会把旧版本放回去，不会留下半残状态。")
-            }
-        }
     }
 
-    private func bullet(_ text: String) -> some View {
-        HStack(alignment: .top, spacing: DS.Space.sm) {
-            Image(systemName: "circle.fill")
-                .font(.system(size: 4))
-                .foregroundStyle(.secondary)
-                .padding(.top, DS.Space.xs)
-            Text(.init(text))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-}

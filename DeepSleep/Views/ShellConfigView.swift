@@ -62,21 +62,6 @@ struct ShellConfigView: View {
                     }
                 }
             }
-
-            SectionCard(
-                title: "加载顺序与注意事项",
-                subtitle: nil,
-                symbol: "info.circle"
-            ) {
-                VStack(alignment: .leading, spacing: DS.Space.sm) {
-                    BulletLine("zsh：.zshenv → .zprofile → .zshrc → .zlogin。改完新开终端窗口才生效。")
-                    BulletLine("bash：.bash_profile → .bashrc。本机 .bash_profile 里通常自己 source 了 .bashrc。")
-                    BulletLine(".profile 是 POSIX sh 的老写法，语法检查按 bash 走。")
-                    BulletLine("保存时会在同目录留一份 <文件名>.deepsleep.bak，点「恢复备份」可以写回去。")
-                    BulletLine("写入是原子的：先写临时文件再 rename，写到一半断电不会留下半截的 .zshrc。")
-                    BulletLine("不想开新窗口的话，在当前窗口执行 source ~/.zshrc 立刻生效。")
-                }
-            }
         }
         .pageLayout()
         .task {
@@ -241,6 +226,11 @@ struct ShellConfigView: View {
                  ? "保存会写入家目录下的 \(file.name)，并在同目录留一份 \(file.name).deepsleep.bak。"
                  : "保存会新建家目录下的 \(file.name)，并在同目录留一份 \(file.name).deepsleep.bak。")
                 .caption2()
+
+            // 「改完怎么生效」是用户下一步要做什么，放回编辑器里，
+            // 不单开一张「生效方式」卡。
+            BulletLine("改完新开终端窗口生效。")
+            BulletLine("不想开新窗口，在当前窗口执行 `source ~/<文件名>` 立刻生效。")
         }
     }
 

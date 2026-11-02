@@ -42,6 +42,9 @@ struct QuarantineView: View {
 
     @State private var showFileImporter = false
 
+    /// 待确认的清除操作。`nil` 表示没有清除在等确认。
+    @State private var pendingClear: TlDeleteRequest?
+
     /// 快速修复：当前被修复的 .app 路径与结果。
     @State private var repairingPath: String?
     @State private var repairOutcomes: [QuarantineService.RepairOutcome] = []
@@ -98,6 +101,9 @@ struct QuarantineView: View {
                             .truncationMode(.middle)
                             .textSelection(.enabled)
                     }
+
+                    Text("清除后文件下次双击不再提示「未知开发者」。")
+                        .caption2()
 
                     if let lastError {
                         Text(lastError)
@@ -163,7 +169,15 @@ struct QuarantineView: View {
                                 .disabled(selection.isEmpty || isClearing)
 
                                 Button {
-                                    Task { await clearAll() }
+                                    pendingClear = TlDeleteRequest(
+                                        title: "清除全部？",
+                                        message: "会扫描 \(rootPath.isEmpty ? "当前目录" : rootPath) 下的所有文件并逐个去掉 quarantine 属性。"
+                                            + "这一步没法撤销。",
+                                        confirmTitle: "清除全部",
+                                        perform: {
+                                            Task { await clearAll() }
+                                        }
+                                    )
                                 } label: {
                                     if isClearing {
                                         ProgressView().controlSize(.small)
@@ -201,25 +215,13 @@ struct QuarantineView: View {
                     }
                 }
             }
-
-            SectionCard(
-                title: "什么是 Quarantine 属性",
-                subtitle: nil,
-                symbol: "info.circle"
-            ) {
-                VStack(alignment: .leading, spacing: DS.Space.sm) {
-                    BulletLine("macOS 给从浏览器 / 解压工具下载下来的文件加 `com.apple.quarantine` 扩展属性，双击时 Gatekeeper 会弹「未知开发者」提示。")
-                    BulletLine("去掉这个属性后，文件下次双击会走「非隔离」分支（不再提示）；不会绕过签名校验与 notarization。")
-                    BulletLine("常见场景：自己写的脚本、解压好的工具包、用 codesign --sign - 自签名的 .app。")
-                    BulletLine("软链 / 硬链不会被本工具处理 —— 你看到的 `target` 才是真正的隔离对象。")
-                }
-            }
         }
         .task {
             if rootPath.isEmpty {
                 rootPath = defaultRoot()
             }
         }
+        .deleteConfirmation($pendingClear)
         .fileImporter(
             isPresented: $showFileImporter,
             allowedContentTypes: [.folder],

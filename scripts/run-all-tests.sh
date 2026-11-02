@@ -139,7 +139,11 @@ fi
 build_and_run "keepalive-url"        /tmp/t_kaurl    DeepSleep/AIKeepAlive/KeepAliveModels.swift scripts/test-keepalive-url.swift
 build_and_run "keepalive-keychain-access" /tmp/t_kakc DeepSleep/AIKeepAlive/KeepAliveKeychainAccess.swift scripts/test-keepalive-keychain-access.swift
 build_and_run "code-sign-identity"  /tmp/t_sigid   scripts/test-code-sign-identity.swift
-build_and_run "keychain-auth-behavior" /tmp/t_kcauth scripts/test-keychain-auth-behavior.swift
+# keychain-auth-behavior **故意不放进回归**：它要弹钥匙串授权框、要人输密码，
+# 跑一次弹一次，密码长的话每弹一次都是折磨。默认跳过，要跑得显式设
+# DS_KEYCHAIN_AUTH_TEST=1，而且跑之前要跟用户打招呼。
+# 说明见 scripts/test-keychain-auth-behavior.swift 顶部。
+# build_and_run "keychain-auth-behavior" /tmp/t_kcauth scripts/test-keychain-auth-behavior.swift
 build_and_run "lsof-service"         /tmp/t_lsof    DeepSleep/Core/LsofService.swift scripts/test-lsof-service.swift
 build_and_run "toolbox-layout"       /tmp/t_tblay    DeepSleep/Views/ToolboxLayout.swift scripts/test-toolbox-layout.swift
 build_and_run "toolbox-gate"         /tmp/t_tbgate   DeepSleep/Views/ToolboxLayout.swift DeepSleep/AIKeepAlive/KeepAliveModels.swift DeepSleep/AIKeepAlive/KeepAliveError.swift DeepSleep/AIKeepAlive/KeepAliveStore.swift DeepSleep/AIKeepAlive/KeepAliveKeychain.swift DeepSleep/AIKeepAlive/KeepAliveKeychainAccess.swift scripts/test-toolbox-gate.swift
@@ -167,6 +171,8 @@ build_and_run "wol-neighbor-table"  /tmp/t_wolneighbor Shared/HelperProtocol.swi
 build_and_run "hang-config"         /tmp/t_hangcfg DeepSleep/Core/HangDetectionConfig.swift scripts/test-hang-config.swift
 # 仪表盘的结构护栏：环形仪表 + 卡片网格 + 令牌合规，改坏了不能发版。
 build_and_run "dashboard-layout"    /tmp/t_dashlayout scripts/test-dashboard-layout.swift
+# 界面清理的护栏：说明卡不许回来 + 删除类操作必须带二次确认。
+build_and_run "ui-cleanup"          /tmp/t_uicleanup  scripts/test-ui-cleanup.swift
 # 未响应判据本身：符号可用性 + 正常应用不许被误报。
 # 这条要 AppKit，所以带 sdk 与 target。
 build_and_run_raw "hang-verdict"    /tmp/t_hangverdict -parse-as-library -sdk $(xcrun --show-sdk-path --sdk macosx) -target arm64-apple-macos26.0 DeepSleep/Core/HangDetector.swift DeepSleep/Core/HangDetectionConfig.swift scripts/test-hang-verdict.swift

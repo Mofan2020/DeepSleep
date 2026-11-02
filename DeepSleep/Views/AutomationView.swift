@@ -26,6 +26,9 @@ struct AutomationView: View {
     @State private var showScheduledEditor = false
     @State private var editingScheduled: ScheduledCommand.Entry?
 
+    /// 待确认的删除。`nil` 表示没有删除在等确认。
+    @State private var pendingDelete: TlDeleteRequest?
+
     private var engine: AutomationEngine { controller.automation }
     private var runningApps: [(bundleIdentifier: String, name: String)] {
         AppRestartWatcher.runningApplications()
@@ -33,8 +36,8 @@ struct AutomationView: View {
 
     private var restartWatcherSubtitle: String {
         let count = AppRestartWatcher.shared.allTargets.count
-        if count == 0 { return "没有目标应用。退出 Deep Sleep 后该监听会失效。" }
-        return "已配置 \(count) 个目标应用；只要 Deep Sleep 在跑，被监听的应用退出后会自动按命令重启。"
+        if count == 0 { return "没有目标应用。Deep Sleep 退出后该监听失效。" }
+        return "已配置 \(count) 个目标应用。"
     }
 
     private var weeklyRestartSubtitle: String {
@@ -43,7 +46,7 @@ struct AutomationView: View {
             let time = String(format: "%02d:%02d", weeklyRestartConfig.hour, weeklyRestartConfig.minute)
             return "已启用：每周\(day) \(time) 自动重启 Mac。"
         }
-        return "未启用。重启需要 root 权限，需要先启用完全控制才能写入 sudoers 配置。"
+        return "未启用。需要完全控制才能开启。"
     }
 
     private var scheduledCommandSubtitle: String {
@@ -52,7 +55,7 @@ struct AutomationView: View {
             return "还没有定时命令。点「新建定时命令」配置一个。"
         }
         let enabled = ScheduledCommand.shared.allEntries.filter(\.isEnabled).count
-        return "共 \(count) 条，启用 \(enabled) 条。命令以当前用户身份运行，Deep Sleep 退出后失效。"
+        return "共 \(count) 条，启用 \(enabled) 条。"
     }
 
     /// 每周重启的时刻 —— 用原生 DatePicker 显示，底层仍是 hour / minute 两个整数。
@@ -83,6 +86,7 @@ struct AutomationView: View {
             restartWatcherCard
             siriCard
         }
+        .deleteConfirmation($pendingDelete)
         .sheet(isPresented: $showEditor) {
             RuleEditorView(rule: editingRule) { rule in
                 if editingRule == nil {
@@ -116,7 +120,7 @@ struct AutomationView: View {
     private var engineCard: some View {
         SectionCard(
             title: "自动化引擎",
-            subtitle: "每 5 秒检查一次规则，条件成立就自动保持，条件失效自动释放。",
+            subtitle: "条件成立时自动保持，失效时自动释放。",
             symbol: "wand.and.stars",
             accessory: AnyView(
                 StatusPill(
@@ -148,7 +152,7 @@ struct AutomationView: View {
     private var rulesCard: some View {
         SectionCard(
             title: "规则",
-            subtitle: engine.rules.isEmpty ? nil : "每条规则一个条件 + 一个动作；条件成立时自动申请保持状态。",
+            subtitle: engine.rules.isEmpty ? nil : "条件成立时自动申请保持状态。",
             symbol: "list.bullet.rectangle",
             accessory: AnyView(
                 Button {
@@ -181,7 +185,13 @@ struct AutomationView: View {
                                     editingRule = rule
                                     showEditor = true
                                 },
-                                onDelete: { engine.remove(rule) }
+                                onDelete: {
+                                    pendingDelete = TlDeleteRequest(
+                                        title: "删除规则？",
+                                        message: "「\(rule.name)」会被删掉。规则正在生效时，删除它会立刻释放对应的保持状态。",
+                                        perform: { engine.remove(rule) }
+                                    )
+                                }
                             )
                             if rule.id != engine.rules.last?.id {
                                 Divider()
@@ -216,7 +226,7 @@ struct AutomationView: View {
     private var ruleAssertionsCard: some View {
         SectionCard(
             title: "规则生效的保持项",
-            subtitle: "这些状态由规则维持，关掉规则才会释放。在总览页手动关会被拒绝。",
+            subtitle: "规则条件成立时自动维持保持状态。总览页的「释放全部」会连这些一起放掉。",
             symbol: "lock.circle"
         ) {
             if controller.ruleAssertions.isEmpty {
@@ -299,7 +309,11 @@ struct AutomationView: View {
                                 e.isEnabled = isEnabled
                                 ScheduledCommand.shared.upsert(e)
                             } onDelete: {
-                                ScheduledCommand.shared.remove(id: entry.id)
+                                pendingDelete = TlDeleteRequest(
+                                    title: "删除定时命令？",
+                                    message: "「\(entry.name)」会被删掉，系统里对应的定时任务也会一起取消。",
+                                    perform: { ScheduledCommand.shared.remove(id: entry.id) }
+                                )
                             }
                             if entry.id != ScheduledCommand.shared.allEntries.last?.id {
                                 Divider()
@@ -409,7 +423,11 @@ struct AutomationView: View {
                                 t.isEnabled = isEnabled
                                 AppRestartWatcher.shared.upsert(t)
                             } onDelete: {
-                                AppRestartWatcher.shared.remove(id: target.id)
+                                pendingDelete = TlDeleteRequest(
+                                    title: "删除监听目标？",
+                                    message: "「\(target.displayName)」不再被监听，它退出后 Deep Sleep 不会再按命令重启它。",
+                                    perform: { AppRestartWatcher.shared.remove(id: target.id) }
+                                )
                             }
                             if target.id != AppRestartWatcher.shared.allTargets.last?.id {
                                 Divider()
@@ -453,7 +471,7 @@ struct AutomationView: View {
     private var siriCard: some View {
         SectionCard(
             title: "Siri 与快捷指令",
-            subtitle: "下面这些句子可以直接对 Siri 说；「快捷指令」App 的 Deep Sleep 分区里有同样的动作，可以编进更长的流程。",
+            subtitle: "可以直接对 Siri 说。",
             symbol: "mic"
         ) {
             VStack(alignment: .leading, spacing: DS.Space.md) {
@@ -531,6 +549,8 @@ struct RuleRow: View {
                 onEdit()
             } label: {
                 Image(systemName: "pencil")
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
             .help("编辑这条规则")
@@ -539,6 +559,8 @@ struct RuleRow: View {
                 onDelete()
             } label: {
                 Image(systemName: "trash")
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
             .help("删除这条规则")
@@ -615,6 +637,8 @@ struct PlScheduledCommandRow: View {
 
             Button(role: .destructive, action: onDelete) {
                 Image(systemName: "trash")
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
             .help("删除这条定时命令")
@@ -669,6 +693,8 @@ struct PlRestartTargetRow: View {
 
             Button(role: .destructive, action: onDelete) {
                 Image(systemName: "trash")
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
             .help("删除这个监听目标")

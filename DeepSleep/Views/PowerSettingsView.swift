@@ -48,15 +48,15 @@ struct PowerSettingsView: View {
         Item(key: "sleep", title: "系统睡眠", detail: "无操作多久后进入睡眠，0 表示从不", kind: .minutes),
         Item(key: "displaysleep", title: "显示器睡眠", detail: "无操作多久后关闭显示器，0 表示从不", kind: .minutes),
         Item(key: "disksleep", title: "硬盘睡眠", detail: "无操作多久后让硬盘休眠，0 表示从不", kind: .minutes),
-        Item(key: "hibernatemode", title: "休眠模式", detail: "0 仅内存，3 内存和磁盘，25 仅磁盘",
+        Item(key: "hibernatemode", title: "休眠模式", detail: "休眠时把哪些内容写回磁盘",
              kind: .mode([("0", "仅内存"), ("3", "内存和磁盘"), ("25", "仅磁盘")])),
-        Item(key: "powernap", title: "Power Nap", detail: "睡眠中仍执行后台任务，1 开启，0 关闭", kind: .flag),
-        Item(key: "womp", title: "网络唤醒", detail: "允许通过网络唤醒，1 开启，0 关闭", kind: .flag),
-        Item(key: "ttyskeepawake", title: "远程登录保持唤醒", detail: "有活动会话时阻止睡眠，1 开启，0 关闭", kind: .flag),
-        Item(key: "lowpowermode", title: "低电量模式", detail: "1 开启，0 关闭", kind: .flag),
-        Item(key: "autorestart", title: "断电后自动重启", detail: "1 开启，0 关闭", kind: .flag),
-        Item(key: "lidwake", title: "开盖唤醒", detail: "打开盖子时唤醒，1 开启，0 关闭", kind: .flag),
-        Item(key: "networkoversleep", title: "网络保持服务", detail: "1 开启，0 关闭", kind: .flag)
+        Item(key: "powernap", title: "Power Nap", detail: "睡眠中仍执行后台任务", kind: .flag),
+        Item(key: "womp", title: "网络唤醒", detail: "允许通过网络唤醒这台 Mac", kind: .flag),
+        Item(key: "ttyskeepawake", title: "远程登录保持唤醒", detail: "有活动会话时阻止睡眠", kind: .flag),
+        Item(key: "lowpowermode", title: "低电量模式", detail: "省电优先于性能", kind: .flag),
+        Item(key: "autorestart", title: "断电后自动重启", detail: "来电恢复供电后自动开机", kind: .flag),
+        Item(key: "lidwake", title: "开盖唤醒", detail: "打开盖子时唤醒", kind: .flag),
+        Item(key: "networkoversleep", title: "网络保持服务", detail: "睡眠时保持网络连接", kind: .flag)
     ]
 
     /// 分钟类与模式类的草稿值。写成功前不动系统里的真值。
@@ -69,7 +69,6 @@ struct PowerSettingsView: View {
         VStack(alignment: .leading, spacing: DS.Space.lg) {
             settingsCard
             advancedCard
-            dependencyCard
         }
     }
 
@@ -96,6 +95,11 @@ struct PowerSettingsView: View {
                 ForEach(items.filter { isMinutes($0) }) { item in
                     minuteRow(item)
                 }
+
+                // 这两条说的是「睡眠设为 0」和「只想临时保持清醒」——
+                // 放在时间类后面，用户改「系统睡眠」时正好会看到。
+                BulletLine("系统睡眠设为 0 后不会自动休眠，重启后依然有效。")
+                BulletLine("只想临时保持清醒，用总览页的「阻止睡眠的请求」，退出应用即自动恢复。")
 
                 Divider()
 
@@ -228,7 +232,7 @@ struct PowerSettingsView: View {
                     VStack(alignment: .leading, spacing: DS.Space.xxs) {
                         Text("阻止外部磁盘空闲休眠")
                             .font(.body)
-                        Text("外置硬盘不会因长时间无操作而转入低功耗态，避免传输中断与唤醒延迟。")
+                        Text("外置硬盘不进入低功耗态，避免传输中断。")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -236,28 +240,10 @@ struct PowerSettingsView: View {
                 }
                 .toggleStyle(.switch)
 
-                Text("这一项不需要完全控制权限。它阻止的是磁盘进入低功耗态，"
-                     + "不能阻止系统在电池耗尽时关机，也不同于「硬盘睡眠 = 0」"
-                     + "（后者会全局禁用内置盘的休眠计时）。")
+                Text("这一项不需要完全控制权限。")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-
-    // MARK: - 依赖关系提示
-
-    private var dependencyCard: some View {
-        SectionCard(
-            title: "依赖关系提示",
-            subtitle: nil,
-            symbol: "info.circle"
-        ) {
-            VStack(alignment: .leading, spacing: DS.Space.sm) {
-                BulletLine("系统睡眠为 0 时不会自动休眠，这是比 assertion 更持久的设置，重启后依然生效。")
-                BulletLine("「完全禁止系统睡眠」在系统里体现为 SleepDisabled 这一项。")
-                BulletLine("若只是想临时保持清醒，用总览页的 assertion 更合适，退出应用即自动恢复。")
             }
         }
     }

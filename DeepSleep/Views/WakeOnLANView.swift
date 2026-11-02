@@ -4,14 +4,7 @@
 //
 //  「网络唤醒」页面：扫局域网里的设备，给勾选的设备发 WOL 魔术包。
 //
-//  这个页面有几件事必须写在明面上，不能让用户误以为「点了就醒」：
-//    - 发出去只代表 102 字节的包交给了内核，不代表目标设备会醒；
-//    - 目标设备得自己开着「唤醒以供网络访问」，网卡也得支持；
-//    - macOS 上从本机发广播包可能被防火墙拦掉，这时包根本没出网卡；
-//    - 扫描全靠 ARP 表 + ping，设备如果挡了 ICMP 又没和本机通信过，扫不到。
-//    所以按钮写「发送魔术包」，不写「唤醒成功」。
-//
-//  与其他工具页一致：SectionCard 分块、页面根视图 .pageLayout()、
+//  界面约定：SectionCard 分块、页面根视图 .pageLayout()、
 //  错误用内联文字，不弹窗打断。
 //
 //  2026-11 界面换新：
@@ -58,7 +51,6 @@ struct WakeOnLANView: View {
         VStack(alignment: .leading, spacing: DS.Space.lg) {
             controlCard
             deviceCard
-            noteCard
         }
         .pageLayout()
     }
@@ -68,12 +60,12 @@ struct WakeOnLANView: View {
     private var controlCard: some View {
         SectionCard(
             title: "网络唤醒（WOL）",
-            subtitle: "扫描当前局域网里的设备，给选中的设备发送 WOL 魔术包。",
+            subtitle: "扫描局域网里的设备，给选中的设备发唤醒包。",
             symbol: "power.circle",
             accent: .accentColor
         ) {
             VStack(alignment: .leading, spacing: DS.Space.md) {
-                Text("目标机得自己在系统或网卡设置里开着「唤醒以供网络访问」，网卡也要支持 WOL。这里发出去只代表包走了，能不能醒取决于那台机器的设置和硬件。")
+                Text("目标机需在系统或网卡设置里开启「唤醒以供网络访问」，网卡也要支持唤醒。")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -143,6 +135,20 @@ struct WakeOnLANView: View {
                         }
                     }
                 }
+
+                Text("有些设备只认端口 7，没反应时可以改端口再试。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                // 显示「已发送」只代表包交给了系统。macOS 防火墙可能把它拦在
+                // 本机（包根本没出网卡），这时目标机不会醒 —— 不写清楚的话，
+                // 用户会以为是设备的问题，反复重发。
+                Text("显示「已发送」只代表包交给了系统。macOS 防火墙可能把它拦在本机，"
+                     + "这时机器不会醒。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 Divider()
 
@@ -375,9 +381,9 @@ struct WakeOnLANView: View {
 
     private var emptyMessage: String {
         if scanned {
-            return "这个网段没扫到设备。可能设备都关着、挡了 ICMP，或者这台 App 没被允许访问本地网络、读不到局域网里的设备记录。也可以在下面手填 MAC 直接发。"
+            return "这个网段没扫到设备。可以手填 MAC 发送，或到「系统设置 → 隐私与安全性 → 本地网络」允许 Deep Sleep 后重扫。"
         }
-        return "点上面的「扫描」开始。扫描会读一次 ARP 表、并发 ping 本网段、再读一次 ARP 表。"
+        return "点上面的「扫描」开始查找局域网里的设备。"
     }
 
     private var headerRow: some View {
@@ -468,25 +474,6 @@ struct WakeOnLANView: View {
         }
         .font(.system(.caption, design: .monospaced))
         .padding(.vertical, DS.Space.xs)
-    }
-
-    // MARK: - 底部说明
-
-    private var noteCard: some View {
-        SectionCard(
-            title: "这个工具不会做什么",
-            subtitle: "有几条限制是真的绕不过去，写在这儿免得白试。",
-            symbol: "info.circle"
-        ) {
-            VStack(alignment: .leading, spacing: DS.Space.sm) {
-                BulletLine("发送成功只说明魔术包交给了系统，不代表目标设备会醒。唤醒能不能成，取决于目标机自己有没有开「唤醒以供网络访问」、网卡支不支持 WOL。")
-                BulletLine("macOS 上从本机发广播包可能被系统防火墙拦掉，这时包根本没出网卡，但界面上仍会显示已发送。")
-                BulletLine("设备列表来自 ARP 表和 ping。设备如果挡了 ICMP、又没和这台 Mac 通过信，扫不到它。")
-                BulletLine("扫到设备却拿不到 MAC 地址，多半是系统没允许 Deep Sleep 访问本地网络。到「系统设置 → 隐私与安全性 → 本地网络」里允许后重新扫描。")
-                BulletLine("只能唤醒当前网段里的设备。跨网段要路由器转发定向广播，这个工具不做。")
-                BulletLine("默认广播地址是 255.255.255.255，端口 9；有些设备只认端口 7，换一下再试。")
-            }
-        }
     }
 
     // MARK: - 动作

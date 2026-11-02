@@ -2,24 +2,25 @@
 //  DashboardView.swift
 //  Deep Sleep
 //
-//  总览页：一屏之内说清三件事 —— 现在是什么状态、下一步做什么、刚发生了什么。
+//  总览页。一屏之内看完：现在什么状态、生效了几项、下一次动作是什么、
+//  刚才发生了什么。
 //
 //  设计约束（改动前先读）：
 //  - 状态**只在这里说一次**。侧边栏底部只留一行摘要，不重复这里的内容。
-//  - 主操作（立即睡眠 / 释放 / 倒计时）不放进卡片，直接摊在页面上，
-//    放在卡片里会让人以为它需要先展开点什么。
 //  - 状态永远「颜色 + 文字」双编码，不能只靠颜色。
+//  - **不放机制说明。** 这一页只回答「现在怎么样 / 我该点什么」，
+//    原理、边界、建议一律不写 —— 用户不会读，写了只是噪音。
+//  - 间距与圆角只用 `DS` 令牌，不写字面量。
 //
-//  2026-11 v1.11.1 仪表盘重做（只改怎么显示，不改显示什么数据）：
-//  - 顶部从「圆圈图标 + 文字」改成**环形仪表**：圆环的填充比例是
-//    「当前生效的保持项 / 全部保持项」，中心放状态词。下面一行用文字
-//    把状态再说一遍 —— 环形表只能靠颜色传达，文字才是可靠的那一份。
-//  - 「保持清醒」四项从「一列开关行」改成**两列卡片网格**：
-//    每张卡片自己带标题、说明、状态标签和开关，一眼能扫到哪几项开着。
-//    开关行保留在卡片里（不是拿掉），只是从整行改成卡片右下角。
-//  - 电源 / 自动化 / 完全控制三项并成一条**横向状态条**，
-//    不再各自占一个 MetricTile —— 它们是「背景状态」，
-//    不该跟主状态抢视觉重量。
+//  2026-11 v1.11.3 仪表盘第二次重做：
+//  - 主操作（立即睡眠 / 释放全部）并进顶部状态卡，不再单开一块 ——
+//    原来那块自己占一屏高度，用户滚一屏才看到「保持清醒」。
+//  - 倒计时睡眠从「一行三个控件」改成**一个菜单**：点开选时长直接开始。
+//    倒计时进行中才出现「取消」。
+//  - 「释放全部」只在真的有保持项时出现，平时不占位置。
+//  - 保持清醒四张卡去掉说明文字，压成一行；「需完全控制」保留成小标签，
+//    因为用户点了开关没反应会困惑。
+//  - 环境状态与最近事件**并排**放在底部，省一屏纵向空间。
 //
 
 import SwiftUI
@@ -27,95 +28,27 @@ import SwiftUI
 struct DashboardView: View {
 
     @EnvironmentObject private var controller: SleepController
-    @State private var countdownMinutes: Int = 30
 
     var body: some View {
-        StatusHeroCard()
-            .environmentObject(controller)
+        VStack(alignment: .leading, spacing: DS.Space.lg) {
+            StatusHeroCard()
+                .environmentObject(controller)
 
-        quickActions
+            assertionGrid
 
-        assertionGrid
-
-        statusStrip
-
-        recentEvents
-    }
-
-    // MARK: - 主操作
-
-    /// 主操作条。不套卡片 —— 这是这一页最该被点到的东西。
-    private var quickActions: some View {
-        VStack(alignment: .leading, spacing: DS.Space.md) {
-            HStack(spacing: DS.Space.md) {
-                Button {
-                    Task { await controller.sleepNow() }
-                } label: {
-                    Label("立即睡眠", systemImage: "power")
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(controller.countdownDeadline != nil)
-
-                Button {
-                    Task { await controller.releaseAllAssertions() }
-                } label: {
-                    Label("释放全部保持", systemImage: "arrow.uturn.backward")
-                }
-                .disabled(controller.activeAssertions.isEmpty)
-
-                Spacer(minLength: DS.Space.md)
-
-                if let deadline = controller.countdownDeadline {
-                    CountdownLabel(deadline: deadline)
-                }
-            }
-
-            Divider()
-
-            HStack(spacing: DS.Space.md) {
-                Text("倒计时睡眠")
-                    .font(.subheadline.weight(.medium))
-                Text("设定时长后开始计时，到点自动进入睡眠。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                Spacer(minLength: DS.Space.md)
-
-                Picker("", selection: $countdownMinutes) {
-                    ForEach([5, 10, 15, 30, 45, 60, 90, 120], id: \.self) { value in
-                        Text("\(value) 分钟").tag(value)
-                    }
-                }
-                .labelsHidden()
-                .frame(width: 120)
-                .disabled(controller.countdownDeadline != nil)
-
-                Button("开始倒计时") {
-                    controller.startCountdown(minutes: countdownMinutes)
-                }
-                .disabled(controller.countdownDeadline != nil)
-
-                Button("取消") {
-                    controller.cancelCountdown()
-                }
-                .disabled(controller.countdownDeadline == nil)
-            }
+            bottomRow
         }
-        .padding(DS.Space.lg)
-        .insetPanel()
     }
 
-    // MARK: - 保持清醒（四项卡片）
+    // MARK: - 保持清醒（四项）
 
-    /// 四项保持能力的卡片网格。
+    /// 四项保持能力的两列网格。
     ///
-    /// 为什么改成网格而不是一列开关行：一列四个长行要滚动才能看全，
-    /// 而「哪几项开着」恰恰是需要一眼看出的信息。两列网格把四张卡
-    /// 排成 2×2，一屏之内全部可见。
+    /// 为什么用网格不用一列开关行：一列四个长行要滚动才看全，
+    /// 而「哪几项开着」恰恰是要一眼看出的信息。
     private var assertionGrid: some View {
         SectionCard(
             title: "保持清醒",
-            subtitle: "打开后 Mac 不会因为空闲睡过去，关掉立刻释放。",
             symbol: "moon.zzz.fill"
         ) {
             LazyVGrid(
@@ -133,54 +66,88 @@ struct DashboardView: View {
         }
     }
 
-    // MARK: - 背景状态条
+    // MARK: - 底部两栏
 
-    /// 电源 / 自动化 / 完全控制三项。
+    /// 环境状态与最近事件并排。
     ///
-    /// 为什么并成一条而不是三个 MetricTile：这三项是「背景状态」——
-    /// 它们影响决策但不决定状态。之前各占一个大块，视觉重量和主状态
-    /// 一样重，看起来像三个并列的主要结论。
-    private var statusStrip: some View {
-        SectionCard(
-            title: "环境状态",
-            subtitle: "背景情况，不决定当前是睡还是醒。",
-            symbol: "info.circle"
-        ) {
-            HStack(alignment: .top, spacing: DS.Space.lg) {
-                stripItem(
-                    title: "电源",
-                    value: controller.batteryIsOnAC ? "已接入" : "电池",
-                    detail: controller.batteryIsOnAC ? "外接供电" : "使用电池供电",
-                    tint: controller.batteryIsOnAC ? DS.Tone.good : DS.Tone.caution,
-                    symbol: controller.batteryIsOnAC ? "powerplug.fill" : "battery.50"
-                )
+    /// 原来这两块各占一整行，纵向要滚三屏才到头。���排之后整页一屏装得下。
+    private var bottomRow: some View {
+        HStack(alignment: .top, spacing: DS.Space.lg) {
+            SectionCard(
+                title: "环境",
+                symbol: "info.circle"
+            ) {
+                HStack(alignment: .top, spacing: DS.Space.lg) {
+                    envItem(
+                        title: "电源",
+                        value: controller.batteryIsOnAC ? "已接入" : "电池",
+                        detail: controller.batteryIsOnAC ? "外接供电" : "使用电池",
+                        tint: controller.batteryIsOnAC ? DS.Tone.good : DS.Tone.caution,
+                        symbol: controller.batteryIsOnAC ? "powerplug.fill" : "battery.50"
+                    )
 
-                Divider().frame(height: DS.Space.xxl)
+                    Divider().frame(height: DS.Space.xxl)
 
-                stripItem(
-                    title: "自动化",
-                    value: "\(controller.automation.satisfiedRuleIDs.count) 条生效",
-                    detail: controller.automation.isRunning ? "引擎运行中" : "引擎未运行",
-                    tint: controller.automation.isRunning ? DS.Tone.info : DS.Tone.idle,
-                    symbol: "gearshape.2"
-                )
+                    envItem(
+                        title: "自动化",
+                        value: "\(controller.automation.satisfiedRuleIDs.count) 条生效",
+                        detail: controller.automation.isRunning ? "运行中" : "未运行",
+                        tint: controller.automation.isRunning ? DS.Tone.info : DS.Tone.idle,
+                        symbol: "gearshape.2"
+                    )
 
-                Divider().frame(height: DS.Space.xxl)
+                    Divider().frame(height: DS.Space.xxl)
 
-                stripItem(
-                    title: "完全控制",
-                    value: controller.helperState.isReady ? "已启用" : "未启用",
-                    detail: controller.helperState.title,
-                    tint: controller.helperState.isReady ? DS.Tone.good : DS.Tone.caution,
-                    symbol: controller.helperState.isReady ? "lock.shield.fill" : "lock.shield"
-                )
+                    envItem(
+                        title: "完全控制",
+                        value: controller.helperState.isReady ? "已启用" : "未启用",
+                        detail: controller.helperState.title,
+                        tint: controller.helperState.isReady ? DS.Tone.good : DS.Tone.caution,
+                        symbol: controller.helperState.isReady ? "lock.shield.fill" : "lock.shield"
+                    )
+                }
             }
+            .frame(maxWidth: .infinity)
+
+            SectionCard(
+                title: "最近事件",
+                symbol: "clock.arrow.circlepath"
+            ) {
+                if controller.log.isEmpty {
+                    Text("暂无记录")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, DS.Space.sm)
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(Array(controller.log.suffix(3).reversed())) { entry in
+                            HStack(alignment: .top, spacing: DS.Space.sm) {
+                                Circle()
+                                    .fill(entry.isError ? DS.Tone.critical : Color.secondary.opacity(0.5))
+                                    .frame(width: 6, height: 6)
+                                    .padding(.top, 5)
+                                Text(entry.text)
+                                    .font(.callout)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                                Spacer(minLength: DS.Space.sm)
+                                Text(entry.date, style: .time)
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .padding(.vertical, DS.Space.xs)
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity)
         }
     }
 
-    /// 状态条里的一项。颜色 + 文字双编码：颜色在图标上，文字在内容里。
-    private func stripItem(title: String, value: String, detail: String,
-                           tint: Color, symbol: String) -> some View {
+    /// 环境状态里的一项。颜色 + 文字双编码：颜色在图标上，文字在内容里。
+    private func envItem(title: String, value: String, detail: String,
+                         tint: Color, symbol: String) -> some View {
         VStack(alignment: .leading, spacing: DS.Space.xxs) {
             HStack(spacing: DS.Space.xs) {
                 Image(systemName: symbol)
@@ -191,7 +158,7 @@ struct DashboardView: View {
                     .foregroundStyle(.secondary)
             }
             Text(value)
-                .metricNumber(17)
+                .metricNumber(16)
                 .foregroundStyle(tint)
             Text(detail)
                 .font(.caption2)
@@ -201,62 +168,24 @@ struct DashboardView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
-
-    // MARK: - 最近事件
-
-    private var recentEvents: some View {
-        SectionCard(
-            title: "最近事件",
-            subtitle: "最近几条运行记录，完整日志在「运行日志」页。",
-            symbol: "clock.arrow.circlepath"
-        ) {
-            if controller.log.isEmpty {
-                EmptyStateView(
-                    title: "还没有记录",
-                    message: "开关一次保持清醒或改一次设置，这里就会有记录。",
-                    systemImage: "text.alignleft"
-                )
-                .frame(minHeight: 120)
-            } else {
-                VStack(spacing: 0) {
-                    ForEach(Array(controller.log.suffix(5).reversed())) { entry in
-                        HStack(alignment: .top, spacing: DS.Space.sm) {
-                            Circle()
-                                .fill(entry.isError ? DS.Tone.critical : Color.secondary.opacity(0.5))
-                                .frame(width: 6, height: 6)
-                                .padding(.top, 5)
-                            Text(entry.text)
-                                .font(.callout)
-                                .fixedSize(horizontal: false, vertical: true)
-                            Spacer(minLength: DS.Space.sm)
-                            Text(entry.date, style: .time)
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                        }
-                        .padding(.vertical, DS.Space.xs)
-                    }
-                }
-            }
-        }
-    }
 }
 
 // MARK: - 顶部状态卡
 
-/// 顶部状态卡：当前是否在阻止睡眠。
+/// 顶部状态卡：当前状态、生效数量、下一次动作、主操作。
 ///
-/// 结构：左边一个环形仪表，右边是状态文字和下一次动作。
 /// 环形仪表用原生 `Gauge` 的 `accessoryCircularCapacity` 样式 ——
-/// 它画的圆环和中心文字都是系统自己的，跟系统其它地方的表盘一致。
+/// 圆环和中心文字都是系统自己画的，跟系统其它地方的表盘一致。
 struct StatusHeroCard: View {
 
     @EnvironmentObject private var controller: SleepController
+    @State private var countdownMinutes: Int = 30
 
     private var isHolding: Bool { !controller.activeAssertions.isEmpty }
 
     /// 生效的保持项数量 / 全部保持项数量。
     ///
-    /// 这是**真实比例**，不是装饰：分子是当前实际持有的 assertion 数，
+    /// 这是**真实比例**，不是装饰：分子是当前实际持有的项数，
     /// 分母是应用支持的全部保持项。读不到分母时按 0 处理，
     /// 环是空的 —— 不拿估计值凑一个好看的圆。
     private var activeRatio: Double {
@@ -266,22 +195,22 @@ struct StatusHeroCard: View {
     }
 
     private var statusTitle: String {
-        if controller.sleepDisabled { return "系统睡眠已完全禁用" }
+        if controller.sleepDisabled { return "系统睡眠已禁用" }
         return isHolding ? "正在保持清醒" : "允许正常睡眠"
     }
 
     private var statusDetail: String {
         if controller.sleepDisabled {
-            return "合上盖子也不会睡眠。关闭「完全禁止系统睡眠」即可恢复。"
+            return "合上盖子也不会睡眠。"
         }
         if isHolding {
             let names = controller.activeAssertions
                 .sorted { $0.rawValue < $1.rawValue }
                 .map(\.title)
                 .joined(separator: "、")
-            return "已生效 \(controller.activeAssertions.count) 项：\(names)"
+            return "生效 \(controller.activeAssertions.count) 项：\(names)"
         }
-        return "没有任何 assertion 在阻止睡眠，系统会按电源设置正常休眠。"
+        return "没有程序在阻止睡眠。"
     }
 
     private var tint: Color {
@@ -300,6 +229,9 @@ struct StatusHeroCard: View {
         return "正常睡眠"
     }
 
+    /// 可选的倒计时时长。菜单里直接开始，不再单摆一行控件。
+    private let countdownOptions = [5, 10, 15, 30, 45, 60, 90, 120]
+
     var body: some View {
         HStack(alignment: .center, spacing: DS.Space.xl) {
             Gauge(value: activeRatio) {
@@ -308,10 +240,10 @@ struct StatusHeroCard: View {
                 VStack(spacing: DS.Space.xxs) {
                     Image(systemName: controller.sleepDisabled ? "exclamationmark.octagon.fill"
                           : (isHolding ? "cup.and.saucer.fill" : "moon.fill"))
-                        .font(.system(size: 17))
+                        .font(.system(size: 15))
                         .foregroundStyle(tint)
                     Text("\(controller.activeAssertions.count)/\(AssertionKind.allCases.count)")
-                        .metricNumber(15)
+                        .metricNumber(14)
                         .foregroundStyle(tint)
                 }
             }
@@ -326,6 +258,7 @@ struct StatusHeroCard: View {
                 Text(statusDetail)
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
                     .fixedSize(horizontal: false, vertical: true)
 
                 // 环形表的状态词：颜色之外的第二重编码。
@@ -335,42 +268,92 @@ struct StatusHeroCard: View {
 
             Spacer(minLength: DS.Space.md)
 
-            nextAction
+            rightColumn
         }
         .padding(DS.Space.xl)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassSurface(cornerRadius: DS.Radius.hero)
     }
 
-    /// 右栏：下一次系统动作。这是用户最常问的问题之一。
+    /// 右栏：下一次动作 + 主操作 + 倒计时入口。
+    ///
+    /// 为什么主操作放进状态卡而不是单开一块：主操作是这一页最该被点到的
+    /// 东西，用户不该先滚过一屏说明才能看到它。
     @ViewBuilder
-    private var nextAction: some View {
-        VStack(alignment: .trailing, spacing: DS.Space.sm) {
-            Text("下一次动作")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+    private var rightColumn: some View {
+        VStack(alignment: .trailing, spacing: DS.Space.md) {
+            // 下一次动作
+            VStack(alignment: .trailing, spacing: DS.Space.xxs) {
+                Text("下一次动作")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
-            if let deadline = controller.countdownDeadline {
-                VStack(alignment: .trailing, spacing: DS.Space.xxs) {
-                    Text("倒计时睡眠")
+                if let deadline = controller.countdownDeadline {
+                    VStack(alignment: .trailing, spacing: DS.Space.xxs) {
+                        Text("倒计时睡眠")
+                            .font(.callout.weight(.medium))
+                        CountdownLabel(deadline: deadline)
+                    }
+                } else if let wake = controller.scheduledWake {
+                    VStack(alignment: .trailing, spacing: DS.Space.xxs) {
+                        Text("定时唤醒")
+                            .font(.callout.weight(.medium))
+                        Text(wake, format: .dateTime.month().day().hour().minute())
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    Text("没有安排")
                         .font(.callout.weight(.medium))
-                    CountdownLabel(deadline: deadline)
-                }
-            } else if let wake = controller.scheduledWake {
-                VStack(alignment: .trailing, spacing: DS.Space.xxs) {
-                    Text("定时唤醒")
-                        .font(.callout.weight(.medium))
-                    Text(wake, format: .dateTime.month().day().hour().minute())
-                        .font(.callout)
                         .foregroundStyle(.secondary)
                 }
+            }
+
+            // 主操作
+            HStack(spacing: DS.Space.sm) {
+                Button {
+                    Task { await controller.sleepNow() }
+                } label: {
+                    Label("立即睡眠", systemImage: "power")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(controller.countdownDeadline != nil)
+
+                // 没有保持项时这一项没意义，也不占位置。
+                if !controller.activeAssertions.isEmpty {
+                    Button {
+                        Task { await controller.releaseAllAssertions() }
+                    } label: {
+                        Label("释放全部", systemImage: "arrow.uturn.backward")
+                    }
+                    // 会连自动化规则维持的那些一起放掉 —— 这一点用户
+                    // 不点下去是看不出来的，所以挂在提示里。
+                    .help("释放全部保持项，包括由自动化规则维持的那些。")
+                }
+            }
+
+            // 倒计时：平时是一个菜单（选了就开始），进行中才出现取消。
+            if controller.countdownDeadline == nil {
+                Menu {
+                    ForEach(countdownOptions, id: \.self) { value in
+                        Button("\(value) 分钟后睡眠") {
+                            controller.startCountdown(minutes: value)
+                        }
+                    }
+                } label: {
+                    Label("倒计时睡眠", systemImage: "timer")
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
             } else {
-                Text("没有安排")
-                    .font(.callout.weight(.medium))
-                    .foregroundStyle(.secondary)
+                Button("取消倒计时") {
+                    controller.cancelCountdown()
+                }
+                .buttonStyle(.borderless)
+                .fixedSize()
             }
         }
-        .frame(minWidth: 120, alignment: .trailing)
+        .frame(minWidth: 160, alignment: .trailing)
     }
 }
 
@@ -379,7 +362,7 @@ struct StatusHeroCard: View {
 /// 一项保持能力的卡片。
 ///
 /// 与 `AssertionRow` 的区别：`AssertionRow` 是「一行的开关」，
-/// 适合塞在长列表里；这张卡片自带标题、说明、状态标签和开关，
+/// 适合塞在长列表里；这张卡片压成一行、自带状态标签和开关，
 /// 适合 2×2 网格 —— 不用滚就能看全四项现在各自是什么状态。
 ///
 /// 状态标签（需完全控制 / 自动化维持 / 睡眠加固）合并成一个胶囊，
@@ -422,40 +405,36 @@ struct AssertionCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DS.Space.sm) {
-            HStack(alignment: .top, spacing: DS.Space.sm) {
-                Image(systemName: kind.symbolName)
-                    .font(.system(size: 15))
-                    .foregroundStyle(isOn ? DS.Tone.good : Color.secondary)
-                    .frame(width: 20)
+        HStack(spacing: DS.Space.md) {
+            Image(systemName: kind.symbolName)
+                .font(.system(size: 14))
+                .foregroundStyle(isOn ? DS.Tone.good : Color.secondary)
+                .frame(width: 18)
 
-                VStack(alignment: .leading, spacing: DS.Space.xxs) {
+            VStack(alignment: .leading, spacing: DS.Space.xxs) {
+                HStack(spacing: DS.Space.xs) {
                     Text(kind.title)
-                        .font(.body.weight(.medium))
-                    Text(kind.subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Spacer(minLength: 0)
-
-                Toggle("", isOn: Binding(
-                    get: { isOn },
-                    set: { newValue in
-                        Task { await controller.setAssertion(kind, enabled: newValue) }
+                        .font(.callout.weight(.medium))
+                    if let badgeText {
+                        Tag(text: badgeText, color: badgeColor)
                     }
-                ))
-                .labelsHidden()
-                .toggleStyle(.switch)
+                }
+                Text(statusText)
+                    .font(.caption2)
+                    .foregroundStyle(statusTint)
             }
 
-            HStack(spacing: DS.Space.sm) {
-                StatusPill(text: statusText, isActive: isOn, color: statusTint)
-                if let badgeText {
-                    Tag(text: badgeText, color: badgeColor)
+            Spacer(minLength: DS.Space.sm)
+
+            Toggle("", isOn: Binding(
+                get: { isOn },
+                set: { newValue in
+                    Task { await controller.setAssertion(kind, enabled: newValue) }
                 }
-            }
+            ))
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .controlSize(.small)
         }
         .padding(DS.Space.md)
         .frame(maxWidth: .infinity, alignment: .leading)

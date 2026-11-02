@@ -52,7 +52,7 @@ struct ScheduleView: View {
             countdownCard
             scheduledWakeCard
             repeatWakeCard
-            notesCard
+            lidWakeNotice
             Spacer(minLength: 0)
         }
         .onAppear {
@@ -68,7 +68,7 @@ struct ScheduleView: View {
     private var countdownCard: some View {
         SectionCard(
             title: "倒计时睡眠",
-            subtitle: "到点自动进入睡眠。开始前会先放掉本应用自己的阻止睡眠请求，否则会被自己挡住。",
+            subtitle: "到点自动进入睡眠。",
             symbol: "timer",
             accessory: AnyView(
                 StatusPill(
@@ -127,7 +127,7 @@ struct ScheduleView: View {
     private var scheduledWakeCard: some View {
         SectionCard(
             title: "排定唤醒",
-            subtitle: "通过 pmset 在指定时刻把 Mac 从睡眠中唤醒。需要完全控制权限。",
+            subtitle: "到点把 Mac 从睡眠中唤醒。需要完全控制权限。",
             symbol: "clock.arrow.circlepath",
             accessory: AnyView(readyTag)
         ) {
@@ -191,12 +191,22 @@ struct ScheduleView: View {
         }
     }
 
+    /// 合盖时不会唤醒 —— 这是机型限制，不是设置错了。
+    ///
+    /// 排了唤醒却发现合上盖子没人叫，用户会以为排定失败。这句话必须留在
+    /// 排定相关界面上，但只说结论，不解释 macOS 的电源管理机制。
+    private var lidWakeNotice: some View {
+        Label("合盖状态下通常不会被定时唤醒。", systemImage: "laptopcomputer.and.iphone")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+    }
+
     // MARK: - 循环排定
 
     private var repeatWakeCard: some View {
         SectionCard(
             title: "循环唤醒",
-            subtitle: "每周固定几天在固定时刻唤醒。用 pmset repeat 实现，系统重启后仍然有效。",
+            subtitle: "每周固定几天在固定时刻唤醒，重启后仍然有效。",
             symbol: "repeat",
             accessory: AnyView(readyTag)
         ) {
@@ -260,22 +270,6 @@ struct ScheduleView: View {
                         .insetPanel()
                     }
                 }
-            }
-        }
-    }
-
-    // MARK: - 说明
-
-    private var notesCard: some View {
-        SectionCard(
-            title: "说明",
-            symbol: "info.circle"
-        ) {
-            VStack(alignment: .leading, spacing: DS.Space.sm) {
-                BulletLine("排定唤醒由系统的电源管理服务执行，即使 Deep Sleep 未运行也会在指定时间生效。")
-                BulletLine("取消只作用于 Deep Sleep 自己排的那一条，不会动到其它程序排定的唤醒。")
-                BulletLine("合盖状态下能否被唤醒取决于机型与电源状态，Apple Silicon 机型合盖时通常不会被定时唤醒。")
-                BulletLine("一次性排定在触发后由系统消费，之后会从系统列表里消失 —— 这是正常的。")
             }
         }
     }
@@ -346,7 +340,7 @@ struct ScheduleView: View {
 /// 一条排定的紧凑行。
 ///
 /// 删除按钮只作用于 **Deep Sleep 自己排的那一条**，不会动到其它程序排定的
-/// 唤醒 —— 这一约定写在按钮的 help 与「说明」卡里，不要改文案含义。
+/// 唤醒 —— 这一约定写在按钮的 help 里，不要改文案含义。
 struct PlScheduledWakeRow: View {
 
     let entry: ScheduledWake

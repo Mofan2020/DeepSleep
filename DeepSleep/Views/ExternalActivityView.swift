@@ -39,8 +39,7 @@ struct ExternalActivityView: View {
     private var rivalsCard: some View {
         SectionCard(
             title: "可能争夺电源控制的程序",
-            subtitle: "这些程序自己不拦睡眠，所以不会出现在下面的列表里，"
-                + "但它们会直接改系统电源设置，和 Deep Sleep 互相覆盖。",
+            subtitle: "它们会直接改系统电源设置，和 Deep Sleep 互相覆盖。 它们自己不拦睡眠，所以不会出现在下面那张表里。",
             symbol: "exclamationmark.triangle",
             accent: monitor.rivals.isEmpty ? DS.Tone.good : DS.Tone.critical
         ) {
@@ -81,8 +80,7 @@ struct ExternalActivityView: View {
     private var blockersCard: some View {
         SectionCard(
             title: "谁在阻止休眠",
-            subtitle: "系统里此刻所有拦着睡眠的进程。数据由内核直接给出，"
-                + "Deep Sleep 自己的也在里面，方便对照。",
+            subtitle: "Deep Sleep 自己的也在里面，方便对照。",
             symbol: "hand.raised.fill",
             accent: DS.Tone.caution,
             accessory: AnyView(
@@ -164,10 +162,7 @@ struct ExternalActivityView: View {
     private var changesCard: some View {
         SectionCard(
             title: "电源设置的改动记录",
-            subtitle: "Deep Sleep 每 6 秒比对一次系统设置。"
-                + "能确定改了什么、从什么变成什么、什么时候，以及是不是本应用自己改的；"
-                + "但 macOS 不提供「哪个进程写入了设置」的接口，"
-                + "所以这里不会去猜一个进程名。",
+            subtitle: "记录改了什么、从什么变成什么、什么时候。",
             symbol: "waveform.path.ecg",
             accent: .purple,
             accessory: AnyView(

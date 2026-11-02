@@ -51,11 +51,15 @@ struct KeepAliveView: View {
     /// 所以靠下面的定时刷新同步 —— 状态本身很少变，20 秒一次足够。
     @State private var reauthorizationTaskIDs: Set<UUID> = []
 
+    /// 待确认的删除。`nil` 表示没有删除在等确认。
+    @State private var pendingDelete: TlDeleteRequest?
+
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.lg) {
             SectionCard(
                 title: "AI 保活",
-                subtitle: "在每天固定时刻给订阅制 AI 服务发一条超短请求，把「按最后一次使用起算」的滚动窗口钉成固定窗口。Deep Sleep 退出后保活停止。",
+                subtitle: "每天定时给订阅制 AI 服务发一条极短请求。能否延长使用窗口由服务方决定，需要自己实测。"
+                        + "请求很短，但仍会记进该服务的用量统计。",
                 symbol: "bolt.horizontal.circle",
                 accent: .teal
             ) {
@@ -76,7 +80,7 @@ struct KeepAliveView: View {
 
             SectionCard(
                 title: "保活任务",
-                subtitle: engine.tasks.isEmpty ? nil : "每条一行：接口、频率、下次执行。",
+                subtitle: nil,
                 symbol: "list.bullet.rectangle",
                 accessory: AnyView(
                     Button {
@@ -107,7 +111,16 @@ struct KeepAliveView: View {
                                 },
                                 onTrigger: { engine.triggerNow(id: task.id) },
                                 onRestoreTemplate: { engine.restoreDefaultTemplate(id: task.id) },
-                                onDelete: { engine.remove(id: task.id) }
+                                onDelete: {
+                                    // 删除会连带删掉钥匙串里的 API Key —— 删了就找不回来，
+                                    // 所以先问一句。
+                                    pendingDelete = TlDeleteRequest(
+                                        title: "删除保活任务？",
+                                        message: "「\(task.name)」会被删掉，钥匙串里对应的 API Key 也会一并删除。"
+                                            + "删掉之后想恢复，只能重新填一次 Key。",
+                                        perform: { engine.remove(id: task.id) }
+                                    )
+                                }
                             )
                             if task.id != engine.tasks.last?.id {
                                 Divider()
@@ -116,21 +129,9 @@ struct KeepAliveView: View {
                     }
                 }
             }
-
-            SectionCard(
-                title: "说明",
-                symbol: "info.circle"
-            ) {
-                VStack(alignment: .leading, spacing: DS.Space.sm) {
-                    BulletLine("时刻按本机时区算，到点后最多 15 秒内发出。")
-                    BulletLine("选中的星期之外不发，那几天的窗口会自然重置。")
-                    BulletLine("滚动窗口的重置规则由服务端决定，本地无法验证；能否真的延长窗口需要你自己实测。")
-                    BulletLine("请求固定 max_tokens=1，消耗极低，但仍会记入该服务的用量统计。")
-                    BulletLine("API Key 存在系统钥匙串里，不写入偏好设置，也不会出现在日志中。")
-                }
-            }
         }
         .pageLayout()
+        .deleteConfirmation($pendingDelete)
         .task {
             // 钥匙串的授权状态不在 @Published 里，这里定期同步一次。
             while !Task.isCancelled {
@@ -330,6 +331,8 @@ struct KeepAliveTaskRow: View {
                 }
             } label: {
                 Image(systemName: "ellipsis.circle")
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
@@ -492,7 +495,7 @@ struct KeepAliveTaskEditor: View {
                             .caption2()
                             .foregroundStyle(DS.Tone.caution)
                     } else {
-                        Text("留空表示不修改原 Key。Key 存在系统钥匙串里。")
+                        Text("留空表示不修改原 Key。")
                             .caption2()
                     }
                 }
@@ -586,7 +589,7 @@ struct KeepAliveTaskEditor: View {
 
                 Text(weekdays.isEmpty
                      ? "没选任何一天，这条任务不会自动发送。"
-                     : "只在选中的日子发送。没选的日子窗口会自然重置。")
+                     : "只在选中的日子发送。")
                     .caption2()
                     .foregroundStyle(weekdays.isEmpty ? DS.Tone.caution : .secondary)
             }

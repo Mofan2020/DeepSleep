@@ -291,20 +291,10 @@ struct NiceView: View {
                                 if newPage != currentPage { currentPage = newPage }
                             }
                         )
-                    }
-                }
-            }
 
-            SectionCard(
-                title: "nice 值含义",
-                subtitle: nil,
-                symbol: "info.circle"
-            ) {
-                VStack(alignment: .leading, spacing: DS.Space.sm) {
-                    BulletLine("-20 最高优先级（抢 CPU 资源）；+19 最低优先级（让出 CPU）。")
-                    BulletLine("正值（>0）也必须走 root —— POSIX 的硬约束，应用层无特权不能 setpriority。")
-                    BulletLine("改错值会让系统变卡：负值会跟系统进程抢 CPU。系统进程一律被 Deep Sleep 拒绝。")
-                    BulletLine("本工具等价于 `sudo renice <value> <pid>`。")
+                        Text("等价于 `sudo renice <值> <PID>`。")
+                            .caption2()
+                    }
                 }
             }
         }
@@ -467,7 +457,7 @@ struct NiceView: View {
 
     private var pageSubtitle: String {
         if filteredEntries.isEmpty {
-            return "系统进程与保护名单里的应用已过滤掉；改 nice 走特权助手，需要先启用「完全控制」。"
+            return "系统进程与保护名单里的应用已过滤掉。改 nice 需要先启用「完全控制」。"
         }
         let showing = pagedEntries.count
         let first = (currentPage - 1) * pageSize + 1

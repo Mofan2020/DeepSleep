@@ -133,12 +133,18 @@ struct HostsView: View {
                             .foregroundStyle(DS.Tone.good)
                             .fixedSize(horizontal: false, vertical: true)
                     }
+
+                    // 两条「用户要动手才能解决」的信息：备份在哪、缓存怎么刷。
+                    // 不单独开一张「注意事项」卡 —— 放回它所属的这张卡里，
+                    // 用户改 Hosts 时正好会看到。
+                    BulletLine("原文备份在 `/etc/hosts.deepsleep.bak`，下次写入会覆盖。")
+                    BulletLine("改了 Hosts 后浏览器 / `ping` 没变化，运行 `sudo dscacheutil -flushcache` 刷新 DNS 缓存。")
                 }
             }
 
             SectionCard(
                 title: "谁能修改 Hosts",
-                subtitle: "空白名单表示谁都能改（默认开放）。填了之后只有名单里的人能改 Hosts 和这份名单。uid 和用户名可以分开填：填 uid 时用户名写错也能通过；填用户名会在助手启动时展开成 uid。",
+                subtitle: "留空表示谁都能改。填了之后只有名单里的人能改。uid 和用户名可以分开填。",
                 symbol: "person.crop.circle.badge.checkmark"
             ) {
                 VStack(alignment: .leading, spacing: DS.Space.md) {
@@ -185,22 +191,6 @@ struct HostsView: View {
 
                         Spacer()
                     }
-
-                    BulletLine("白名单为空时所有 uid 都能改 Hosts；写入第一个 uid 后立刻收紧。")
-                    BulletLine("改 Hosts 与改本白名单共用同一份白名单 —— 这是为了让「加自己」这件事也得先得到现有白名单批准。")
-                }
-            }
-
-            SectionCard(
-                title: "注意事项",
-                subtitle: nil,
-                symbol: "info.circle"
-            ) {
-                VStack(alignment: .leading, spacing: DS.Space.sm) {
-                    BulletLine("写入后原文备份在 `/etc/hosts.deepsleep.bak`，下次写入会被覆盖。")
-                    BulletLine("macOS 自带的 `sudo vi /etc/hosts` 不会改本白名单 —— 它直接走 root，与本工具无关。")
-                    BulletLine("如果改了 Hosts 后浏览器 / `ping` 看不到效果，运行 `sudo dscacheutil -flushcache` 刷新 DNS 缓存（不在本工具职责范围）。")
-                    BulletLine("白名单以 root 写入 `/Library/Application Support/com.skyc8266.deepsleep/hosts-editors.plist`，mode `0600`。")
                 }
             }
         }
@@ -229,7 +219,7 @@ struct HostsView: View {
 
         return VStack(alignment: .leading, spacing: DS.Space.xs) {
             if allUids.isEmpty && allNames.isEmpty {
-                Label("空白名单：任何 uid 都能改 Hosts。", systemImage: "person.crop.circle.badge.questionmark")
+                Label("空白名单：任何人都能改 Hosts。", systemImage: "person.crop.circle.badge.questionmark")
                     .font(.caption)
                     .foregroundStyle(DS.Tone.caution)
             } else {

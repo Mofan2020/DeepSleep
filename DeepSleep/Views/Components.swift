@@ -291,6 +291,48 @@ struct BannerView: View {
     }
 }
 
+// MARK: - 删除二次确认
+
+/// 一次待确认的删除。
+///
+/// 删除按钮本身不执行删除 —— 它先填一份请求，弹窗里用户点了确认才真的动手。
+/// 需要这条的场合：删掉之后东西就没了，或者会连带删掉别的东西
+/// （例如删保活任务会连带删掉钥匙串里的 API Key）。
+struct TlDeleteRequest: Identifiable {
+
+    let id = UUID()
+    /// 弹窗标题。
+    var title: String
+    /// 弹窗正文：说清删掉的是什么、有没有连带影响。
+    var message: String
+    /// 确认按钮的文案。
+    var confirmTitle: String = "删除"
+    /// 确认后真正执行的动作。
+    let perform: () -> Void
+}
+
+extension View {
+    /// 给视图挂一个删除二次确认弹窗。
+    ///
+    /// 视图里放一个 `@State private var pendingDelete: TlDeleteRequest?`，
+    /// 删除按钮填一份请求，确认弹窗接受后才执行。
+    func deleteConfirmation(_ request: Binding<TlDeleteRequest?>) -> some View {
+        alert(
+            Text(request.wrappedValue?.title ?? "确认删除"),
+            isPresented: Binding(
+                get: { request.wrappedValue != nil },
+                set: { if !$0 { request.wrappedValue = nil } }
+            ),
+            presenting: request.wrappedValue
+        ) { item in
+            Button(item.confirmTitle, role: .destructive) { item.perform() }
+            Button("取消", role: .cancel) {}
+        } message: { item in
+            Text(item.message)
+        }
+    }
+}
+
 // MARK: - 页面布局
 
 extension View {

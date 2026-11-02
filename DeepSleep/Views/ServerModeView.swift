@@ -33,7 +33,6 @@ struct ServerModeView: View {
             scheduleCard
             assertionsCard
             detectionCard
-            notesCard
         }
         .onAppear {
             // 把 controller 当前值同步到控件初值。
@@ -108,7 +107,6 @@ struct ServerModeView: View {
     private var scheduleCard: some View {
         SectionCard(
             title: "锁屏节奏",
-            subtitle: "关闭后参数仍保留；下次开启沿用同一组值。",
             symbol: "timer"
         ) {
             VStack(alignment: .leading, spacing: DS.Space.md) {
@@ -132,7 +130,22 @@ struct ServerModeView: View {
                     mode.idleThresholdSeconds = TimeInterval(v * 60)
                 }
 
-                Text("空闲从你最后一次动键盘或鼠标开始算。屏幕关掉以后计时停住，你回来动一下重新从 \(idleMinutes) 分钟算起。")
+                Text("空闲按最后一次键盘或鼠标操作计时，屏幕关掉后暂停。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text("锁屏需要系统设置 → 锁屏 →「立即要求密码」已勾选。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                // 关掉服务器模式或退出 Deep Sleep 会恢复系统原来的睡眠设置
+                // —— 除非在「完全控制」页打开了「退出时保留当前的阻止睡眠设置」。
+                // 这条必须写出来：用户开服务器模式跑长任务，关掉应用后 Mac
+                // 又睡过去，会以为「永不睡眠」是系统级设置会留着。
+                Text("关掉服务器模式或退出 Deep Sleep 会恢复系统原来的睡眠设置"
+                     + "（除非在「完全控制」页打开了「退出时保留当前的阻止睡眠设置」）。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -145,7 +158,6 @@ struct ServerModeView: View {
     private var assertionsCard: some View {
         SectionCard(
             title: "当前阻止睡眠的请求",
-            subtitle: "此刻真正在拦着系统睡眠的东西。服务器模式开着时，至少有一条。",
             symbol: "lock.shield"
         ) {
             VStack(alignment: .leading, spacing: DS.Space.md) {
@@ -153,7 +165,7 @@ struct ServerModeView: View {
                     Image(systemName: "powerplug")
                         .foregroundStyle(controller.sleepDisabled ? DS.Tone.good : DS.Tone.idle)
                         .frame(width: DS.Space.xl)
-                    Text("系统永不睡眠（pmset disablesleep）")
+                    Text("系统永不睡眠")
                         .font(.body)
                     Spacer(minLength: DS.Space.sm)
                     Tag(
@@ -203,7 +215,7 @@ struct ServerModeView: View {
     private var detectionCard: some View {
         SectionCard(
             title: "空闲检测方式",
-            subtitle: "两种都按「距上次操作多久」计时。开启后不能切换，要先关掉服务器模式。",
+            subtitle: "服务器模式开启后不能切换。",
             symbol: "clock.arrow.circlepath"
         ) {
             VStack(alignment: .leading, spacing: DS.Space.md) {
@@ -227,23 +239,7 @@ struct ServerModeView: View {
         }
     }
 
-    // MARK: - 机制说明
-
-    private var notesCard: some View {
-        SectionCard(
-            title: "机制说明",
-            subtitle: nil,
-            symbol: "info.circle"
-        ) {
-            VStack(alignment: .leading, spacing: DS.Space.sm) {
-                BulletLine("「系统永不睡眠」通过 `pmset disablesleep=1` + 特权助手持有的 PreventSystemSleep 断言双重落实，与「完全禁止睡眠」共用对账层。")
-                BulletLine("「关屏」走 `pmset displaysleepnow`，每次都会落日志。")
-                BulletLine("「锁屏」依赖系统设置 → 锁屏 → 「立即要求密码」：勾上之后，关屏即等同 macOS 要求输入密码。**首次开启前请确认该选项已勾选**，否则只会关屏，不会要求输密码。")
-                BulletLine("服务器模式期间，系统监控若启用：仅告警，不弹冻结 / 终结对话框 —— 不打扰后台服务进程。")
-                BulletLine("手动关闭或 Deep Sleep 退出时，`disablesleep` 自动恢复为 0。")
-            }
-        }
-    }
+    // MARK: - 状态
 
     private var statusTitle: String {
         switch mode.phase {

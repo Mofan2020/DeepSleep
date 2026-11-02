@@ -36,7 +36,6 @@ struct ControlView: View {
             exitBehaviourCard
             emailCard
             permissionCard
-            securityCard
         }
     }
 
@@ -174,7 +173,7 @@ struct ControlView: View {
     private var disableSleepCard: some View {
         SectionCard(
             title: "完全禁止系统睡眠",
-            subtitle: "写入系统级设置（pmset disablesleep），效果是连合上盖子也不会睡眠。这是控制力最强、也最耗电的一档。开启后会同时持有一枚系统级断言，并在每 3 秒的对账中持续校验——被外部程序改回时立即恢复。",
+            subtitle: "写入系统级设置，合上盖子也不会睡眠。",
             symbol: "exclamationmark.octagon",
             accent: DS.Tone.caution
         ) {
@@ -229,8 +228,8 @@ struct ControlView: View {
             VStack(alignment: .leading, spacing: DS.Space.md) {
                 Toggle(isOn: $controller.preservesStateOnExit) {
                     VStack(alignment: .leading, spacing: DS.Space.xxs) {
-                        Text("保留 assertion 与 disablesleep").font(.body.weight(.medium))
-                        Text("开启后退出应用时不释放系统级睡眠断言，也不恢复 `pmset disablesleep`。")
+                        Text("退出时保留当前的阻止睡眠设置").font(.body.weight(.medium))
+                        Text("退出应用时不释放阻止睡眠的请求，也不恢复「完全禁止系统睡眠」。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -240,7 +239,7 @@ struct ControlView: View {
 
                 if controller.preservesStateOnExit {
                     Label(
-                        "进程退出后，Deep Sleep 无法再纠正外部对 disablesleep 或 assertion 的改动。"
+                        "退出后 Deep Sleep 无法再纠正外部的改动。"
                         + "需要手动停用「完全控制」或重启系统来恢复。",
                         systemImage: "exclamationmark.triangle"
                     )
@@ -397,7 +396,7 @@ struct ControlView: View {
 
     private var permissionCard: some View {
         SectionCard(
-            title: "权限模型",
+            title: "权限与确认",
             subtitle: nil,
             symbol: "key.horizontal"
         ) {
@@ -405,17 +404,12 @@ struct ControlView: View {
                 PermissionStep(
                     index: 1,
                     title: "一次性管理员授权",
-                    detail: "启用时系统会弹一次授权框，配了 Touch ID 的可以直接用指纹确认。"
+                    detail: "启用时系统会弹一次授权框。"
                 )
                 PermissionStep(
                     index: 2,
                     title: "此后仅需本地确认",
-                    detail: "每次需要提权的操作（合盖防休眠、改电源设置、排定唤醒）只要求 \(BiometricAuth.availableMethodDescription) 确认。"
-                )
-                PermissionStep(
-                    index: 3,
-                    title: "可随时完全回退",
-                    detail: "「停用并卸载」会清掉 /Library 下的文件和相关系统任务，回到安装前的状态。"
+                    detail: "需要提权的操作只要求 \(BiometricAuth.availableMethodDescription) 确认。"
                 )
 
                 Divider()
@@ -434,22 +428,6 @@ struct ControlView: View {
                     }
                 }
                 .toggleStyle(.switch)
-            }
-        }
-    }
-
-    // MARK: - 安全设计
-
-    private var securityCard: some View {
-        SectionCard(
-            title: "安全设计",
-            symbol: "checkmark.seal"
-        ) {
-            VStack(alignment: .leading, spacing: DS.Space.sm) {
-                BulletLine("助手通过 UNIX socket 通信，socket 归当前登录用户所有、权限 0600。")
-                BulletLine("每个连接都用 getpeereid() 校验对端 uid，其他用户无法连接。")
-                BulletLine("可写入的 pmset 键有白名单，取值必须是纯数字，杜绝参数注入。")
-                BulletLine("助手只接受固定的命令行协议，不执行任何外部传入的 shell 字符串。")
             }
         }
     }
