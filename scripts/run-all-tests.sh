@@ -139,6 +139,7 @@ fi
 build_and_run "keepalive-url"        /tmp/t_kaurl    DeepSleep/AIKeepAlive/KeepAliveModels.swift scripts/test-keepalive-url.swift
 build_and_run "keepalive-keychain-access" /tmp/t_kakc DeepSleep/AIKeepAlive/KeepAliveKeychainAccess.swift scripts/test-keepalive-keychain-access.swift
 build_and_run "code-sign-identity"  /tmp/t_sigid   scripts/test-code-sign-identity.swift
+build_and_run "keychain-auth-behavior" /tmp/t_kcauth scripts/test-keychain-auth-behavior.swift
 build_and_run "lsof-service"         /tmp/t_lsof    DeepSleep/Core/LsofService.swift scripts/test-lsof-service.swift
 build_and_run "toolbox-layout"       /tmp/t_tblay    DeepSleep/Views/ToolboxLayout.swift scripts/test-toolbox-layout.swift
 build_and_run "toolbox-gate"         /tmp/t_tbgate   DeepSleep/Views/ToolboxLayout.swift DeepSleep/AIKeepAlive/KeepAliveModels.swift DeepSleep/AIKeepAlive/KeepAliveError.swift DeepSleep/AIKeepAlive/KeepAliveStore.swift DeepSleep/AIKeepAlive/KeepAliveKeychain.swift DeepSleep/AIKeepAlive/KeepAliveKeychainAccess.swift scripts/test-toolbox-gate.swift
