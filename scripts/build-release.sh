@@ -61,13 +61,20 @@ echo "==> 固定代码签名的 designated requirement"
 # designated requirement 默认是 **cdhash**（可执行文件的哈希）—— 也就是说
 # 「这个 App 是哪个 App」这件事，每次重新构建答案都不一样。
 #
-# 钥匙串靠 designated requirement 判断「来读的是不是同一个应用」。于是：
-# 每次发新版 → cdhash 变 → 钥匙串认为换了应用 → 读取时弹框要求输入钥匙串
-# 密码 → 用户输入后系统才把新签名加进信任列表。这就是「每次更新后都要
-# 重新授权一次」的直接原因。
-#
 # 把它固定成 `identifier "..."`（只认 bundle id），签名内容变不变都不影响
-# 身份判定 → 更新后不需要重新授权。
+# requirement 的**声明**。
+#
+# ⚠️ **但这不能免掉钥匙串的重新授权。** 实测（`scripts/test-keychain-auth-behavior.swift`
+# 把否证实验固化成测试了）：造两个二进制内容不同、requirement 完全相同的 app，
+# A 写条目、B 读 —— **B 照样挂起要密码**。钥匙串匹配 trusted application
+# 看的是代码签名**身份**（ad-hoc 下就是 cdhash），不是 requirement 的**声明**。
+# 所以这一步的意义是「让 requirement 稳定可读」，不是「让用户免输密码」。
+# 想真正免掉只有三条路：申请 Developer ID 证书（唯一既免密码又保持访问
+# 控制原样的办法）、把凭据改成不绑定应用身份的存法、或维持现状（每次更新
+# 输一次，但不再反复弹）。
+#
+# 步骤本身保留：正式签名之后 requirement 天然稳定，这一步届时可以简化，
+# 但不要删 —— 除非确认正式签名下同样稳定。
 #
 # 只在打包前做这一步，不动 Xcode 的构建设置：本地开发构建照旧，
 # 发布产物才有稳定标识。
@@ -93,6 +100,9 @@ case "$APP_REQUIREMENT" in
         ;;
 esac
 echo "    requirement: $APP_REQUIREMENT"
+# 提醒一句，免得看日志的人以为这一步能免掉钥匙串密码 —— 它不能。
+echo "    （注意：这只固定了 requirement 的声明，钥匙串仍按签名身份判定，"
+echo "      更新后第一次读还是要输一次密码）"
 
 echo "==> 打包"
 /bin/rm -rf "$OUT"
