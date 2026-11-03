@@ -408,12 +408,24 @@ final class MenuBarController: NSObject {
         return image ?? NSImage()
     }
 
-    /// macOS 27 起 AppKit 会自行决定菜单项图标是否显示（多数情况下不显示）。
+    /// macOS 27 起 AppKit 会自行决定菜单项图标是否显示（通常隐藏）。
     /// 这些图标是我们特意加的状态标识，所以显式要求「始终可见」。
+    ///
+    /// **为什么用 KVC 而不是 `item.preferredImageVisibility = .visible`**：
+    /// 那个属性只在 macOS 27 SDK 里存在。CI 用的是 Xcode 26.6（SDK 26.5），
+    /// 直接写会编译失败 —— `#available` 只保护**运行时**，不保护**编译期符号
+    /// 是否存在**。SDK 里没有这个符号，`#available(macOS 27.0, *)` 包着也照样
+    /// 报 "value of type 'NSMenuItem' has no member 'preferredImageVisibility'"。
+    ///
+    /// `NSMenuItemImageVisibilityVisible` 的 rawValue 是 1
+    /// （Automatic=0 / Visible=1 / Hidden=2，查 MacOSX27.2.sdk 的 NSMenuItem.h）。
     private func showImageAlways(_ item: NSMenuItem) {
-        if #available(macOS 27.0, *) {
-            item.preferredImageVisibility = .visible
+        // 26 上没这个 setter，KVC 直接写会抛 NSUnknownKeyException。
+        guard item.responds(to: NSSelectorFromString("setPreferredImageVisibility:")) else {
+            // macOS 26 及更早：设了 image 就会显示，不用额外处理。
+            return
         }
+        item.setValue(1, forKey: "preferredImageVisibility")
     }
 
     // MARK: - 菜单动作

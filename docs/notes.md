@@ -3649,3 +3649,61 @@ Deep Sleep 用 ad-hoc 签名（没有 Developer ID 证书），签名身份就�
 - ACL 读取：真实钥匙串里自建条目 → 读到受信任应用 → 删掉（`DS_KEYCHAIN_AUTHORIZER_TEST=1` 才跑）
 - **「用户点始终允许」那一下没法自动测**，必须人工点。所以真实场景的
   完整验证由用户手测完成。
+
+---
+
+## 本机能编 ≠ CI 能编（SDK 版本差）
+
+v1.11.4 第一次推 tag 时 CI 构建挂了，本机却编得好好的：
+
+    error: value of type 'NSMenuItem' has no member 'preferredImageVisibility'
+
+原因：**本机 Xcode 27.2（SDK 27.2），CI 用 Xcode 26.6（SDK 26.5）**。
+`preferredImageVisibility` 是 macOS 27 新增的属性，26.5 SDK 里没有这个符号。
+
+原代码写的是：
+
+```swift
+if #available(macOS 27.0, *) {
+    item.preferredImageVisibility = .visible   // ❌ 26.5 SDK 编译失败
+}
+```
+
+**`#available` 只保护运行时，不保护编译期符号是否存在。** SDK 里没有这个
+符号，包在 `#available` 里也一样报「没有这个成员」。
+
+### 规矩
+
+用到任何比 CI 更新的 API 时，**必须走运行时探测**，不能靠 `#available` 兜：
+
+```swift
+guard item.responds(to: NSSelectorFromString("setPreferredImageVisibility:")) else {
+    return  // 老系统本来就没这问题
+}
+item.setValue(1, forKey: "preferredImageVisibility")
+```
+
+枚举值要靠 SDK 头文件查实数，不要猜：
+`NSMenuItemImageVisibility` 是 Automatic=0 / Visible=1 / Hidden=2
+（`MacOSX27.2.sdk/.../NSMenuItem.h`）。
+
+### 排查手法
+
+CI 报错只有一个文件时，说明**其它文件都过了 26.5 的编译** ——
+Swift 是整模块一次性编译，报出的错就是全部错。所以不用疑神疑鬼，
+照报错的文件改就行。
+
+本机只装了 Xcode 27，没法切 26.5 SDK 做对齐验证。这种情况只能：
+1. 代码层面确认没有引用比 CI 更新的符号（`grep` 一遍 `#available(macOS 27` 之类）
+2. 推上去看 CI
+
+### 发版流程上的处理
+
+这次 v1.11.4 的 build job 挂了，**publish job 没跑，release 根本没建出来**
+（`gh release view v1.11.4` 返回 "release not found"）。
+
+所以删 tag 重打是干净的 —— 没有任何用户能下载到那个版本。
+判断依据是「有没有已发布的产物」，不是「tag 推没推」：
+
+- release 已发出来 → 不能复用 tag，开新版本号（v1.11.4 → v1.11.5）
+- release 没发出来（构建失败）→ 可以删 tag 重打同一个版本号
