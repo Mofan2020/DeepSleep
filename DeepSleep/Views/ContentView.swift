@@ -198,11 +198,28 @@ struct ContentView: View {
     @State private var selection: SidebarItem = .dashboard
     @State private var searchText: String = ""
 
+    /// 页面路由。菜单栏在视图之外，切页只能靠它中转。
+    ///
+    /// 订阅 `revision` 而不是 `page`：连续两次请求同一个页面时
+    /// 目标值没变，订阅 `page` 不会被唤醒。
+    @ObservedObject private var router = PageRouter.shared
+
     var body: some View {
         NavigationSplitView {
             sidebar
         } detail: {
             detail
+        }
+        .onAppear {
+            // 窗口被 SwiftUI 销毁重建时，新建的视图要回到用户最后看的那一页。
+            selection = router.page
+        }
+        .onChange(of: router.revision) { _, _ in
+            selection = router.page
+        }
+        .onChange(of: selection) { _, newValue in
+            // 界面内部换页同步回路由：菜单栏下次「快速跳转」要知道当前在哪。
+            router.noteLocalNavigation(newValue)
         }
     }
 
@@ -300,7 +317,7 @@ struct ContentView: View {
     @ViewBuilder
     private var detailContent: some View {
         switch selection {
-        case .dashboard:      DashboardView()
+        case .dashboard:      DashboardView(onOpenTool: { tool in selection = tool.sidebarItem })
         case .control:        ControlView()
         case .power:          PowerSettingsView()
         case .automation:     AutomationView()

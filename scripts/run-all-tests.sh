@@ -138,13 +138,14 @@ if [ -f scripts/check-keepalive-isolation.py ]; then
 fi
 build_and_run "keepalive-url"        /tmp/t_kaurl    DeepSleep/AIKeepAlive/KeepAliveModels.swift scripts/test-keepalive-url.swift
 build_and_run "keepalive-keychain-access" /tmp/t_kakc DeepSleep/AIKeepAlive/KeepAliveKeychainAccess.swift scripts/test-keepalive-keychain-access.swift
+build_and_run "keychain-authorizer"  /tmp/t_kcauthz DeepSleep/AIKeepAlive/KeepAliveKeychainAuthorizer.swift DeepSleep/AIKeepAlive/KeepAliveKeychain.swift DeepSleep/AIKeepAlive/KeepAliveKeychainAccess.swift scripts/test-keychain-authorizer.swift
 build_and_run "code-sign-identity"  /tmp/t_sigid   scripts/test-code-sign-identity.swift
 # keychain-auth-behavior **故意不放进回归**：它要弹钥匙串授权框、要人输密码，
 # 跑一次弹一次，密码长的话每弹一次都是折磨。默认跳过，要跑得显式设
 # DS_KEYCHAIN_AUTH_TEST=1，而且跑之前要跟用户打招呼。
 # 说明见 scripts/test-keychain-auth-behavior.swift 顶部。
 # build_and_run "keychain-auth-behavior" /tmp/t_kcauth scripts/test-keychain-auth-behavior.swift
-build_and_run "lsof-service"         /tmp/t_lsof    DeepSleep/Core/LsofService.swift scripts/test-lsof-service.swift
+build_and_run "lsof-service"         /tmp/t_lsof    DeepSleep/Core/ExternalCommand.swift DeepSleep/Core/LsofService.swift scripts/test-lsof-service.swift
 build_and_run "toolbox-layout"       /tmp/t_tblay    DeepSleep/Views/ToolboxLayout.swift scripts/test-toolbox-layout.swift
 build_and_run "toolbox-gate"         /tmp/t_tbgate   DeepSleep/Views/ToolboxLayout.swift DeepSleep/AIKeepAlive/KeepAliveModels.swift DeepSleep/AIKeepAlive/KeepAliveError.swift DeepSleep/AIKeepAlive/KeepAliveStore.swift DeepSleep/AIKeepAlive/KeepAliveKeychain.swift DeepSleep/AIKeepAlive/KeepAliveKeychainAccess.swift scripts/test-toolbox-gate.swift
 build_and_run "keepalive-schedule"   /tmp/t_kasch    scripts/test-support/KeepAliveTestStubs.swift DeepSleep/AIKeepAlive/KeepAliveModels.swift DeepSleep/AIKeepAlive/KeepAliveError.swift DeepSleep/AIKeepAlive/KeepAliveStore.swift DeepSleep/AIKeepAlive/KeepAliveKeychainAccess.swift DeepSleep/AIKeepAlive/KeepAliveClient.swift DeepSleep/AIKeepAlive/KeepAliveEngine.swift scripts/test-keepalive-schedule.swift
@@ -163,10 +164,11 @@ build_and_run "diagnostic-rules"    /tmp/t_diag    Shared/DiagnosticModel.swift 
 build_and_run "diagnostic-rules2"   /tmp/t_diag2   Shared/DiagnosticModel.swift DeepSleep/Core/DiagnosticsExtras.swift DeepSleep/Core/DiagnosticsExtras2.swift scripts/test-diagnostic-rules2.swift
 # WOL 的魔术包构造与 MAC 解析：发错了在界面上看不出来，只能在这里挡。
 # 依赖里带上了助手协议 / socket / 客户端：WOLService 现在会请特权助手
-# 读邻居表（兜底），编译期需要这几个文件。
-build_and_run "wol-packet"          /tmp/t_wol     Shared/HelperProtocol.swift Shared/UnixSocket.swift DeepSleep/Privileged/HelperClient.swift DeepSleep/Core/WakeOnLANService.swift scripts/test-wol-packet.swift
+# 读邻居表（兜底），编译期需要这几个文件。ExternalCommand 是 WOL 跑外部
+# 命令的依赖（v1.11.4 起），也要带上。
+build_and_run "wol-packet"          /tmp/t_wol     Shared/HelperProtocol.swift Shared/UnixSocket.swift DeepSleep/Privileged/HelperClient.swift DeepSleep/Core/ExternalCommand.swift DeepSleep/Core/WakeOnLANService.swift scripts/test-wol-packet.swift
 # WOL 的邻居表解析与特权助手兜底：ARP / 邻居表 / netstat 三种格式 + 合并 + 摘要三态。
-build_and_run "wol-neighbor-table"  /tmp/t_wolneighbor Shared/HelperProtocol.swift Shared/UnixSocket.swift DeepSleep/Privileged/HelperClient.swift DeepSleep/Core/WakeOnLANService.swift scripts/test-wol-neighbor-table.swift
+build_and_run "wol-neighbor-table"  /tmp/t_wolneighbor Shared/HelperProtocol.swift Shared/UnixSocket.swift DeepSleep/Privileged/HelperClient.swift DeepSleep/Core/ExternalCommand.swift DeepSleep/Core/WakeOnLANService.swift scripts/test-wol-neighbor-table.swift
 # 未响应检测的过滤器与配置。
 build_and_run "hang-config"         /tmp/t_hangcfg DeepSleep/Core/HangDetectionConfig.swift scripts/test-hang-config.swift
 # 仪表盘的结构护栏：环形仪表 + 卡片网格 + 令牌合规，改坏了不能发版。
@@ -176,6 +178,64 @@ build_and_run "ui-cleanup"          /tmp/t_uicleanup  scripts/test-ui-cleanup.sw
 # 未响应判据本身：符号可用性 + 正常应用不许被误报。
 # 这条要 AppKit，所以带 sdk 与 target。
 build_and_run_raw "hang-verdict"    /tmp/t_hangverdict -parse-as-library -sdk $(xcrun --show-sdk-path --sdk macosx) -target arm64-apple-macos26.0 DeepSleep/Core/HangDetector.swift DeepSleep/Core/HangDetectionConfig.swift scripts/test-hang-verdict.swift
+# 外部命令执行器：基本功能 + 超时 + 并发不死锁。
+#
+# 这条挡的是 v1.11.4 修的「整个未响应」：旧实现在全局队列上同步等命令
+# 结束，64 路并发正好占满根队列的线程软上限 —— 死锁。
+build_and_run "external-command"   /tmp/t_extcmd   DeepSleep/Core/ExternalCommand.swift scripts/test-external-command.swift
+# 变异测试：把实现换回旧写法，测试**必须红**。
+#
+# 「测试绿了不代表它在测东西」——这条专门证明并发那条断言真的在测死锁。
+# 旧实现在这里会直接挂死（跑不完），所以给一个硬超时：超时 = 变异被抓住。
+echo "--- 变异测试：旧实现必须挂死（超时 = 变异被抓住）---"
+MUTATION_BIN=/tmp/t_extcmd_mutation
+swiftc -parse-as-library scripts/mutation/ExternalCommandLegacy.swift scripts/test-external-command.swift -o "$MUTATION_BIN" 2>/dev/null
+if [ ! -x "$MUTATION_BIN" ]; then
+  echo "  [失败] 变异实现编译不过 —— 变异文件与测试文件不同步"
+  FAIL=$((FAIL+1))
+  FAILED_LIST+=("external-command-mutation")
+else
+  # 20 秒：旧实现会死锁，永远跑不完；新实现 0.06 秒就跑完。
+  if timeout 20 "$MUTATION_BIN" >/dev/null 2>&1; then
+    echo "  [失败] 变异实现居然跑完了 —— 并发断言没在测死锁"
+    FAIL=$((FAIL+1))
+    FAILED_LIST+=("external-command-mutation")
+  else
+    echo "  [通过] 变异实现挂死，并发断言确实在测死锁"
+    PASS=$((PASS+1))
+  fi
+fi
+
+echo
+# 变异测试 2：把「始终允许」的判据从 `after > before` 放宽成 `after >= before`，
+# 测试必须红。防的是那种「ACL 没变也报已授权」的实现 —— 那等于把
+# 「仅此一次」误报成「始终允许」，用户以为搞定了，下次照样弹框。
+echo "--- 变异测试：放宽 ACL 判据必须被测试抓住 ---"
+MUT2_SRC=/tmp/t_kcauthz_mutation_src.swift
+MUT2_BIN=/tmp/t_kcauthz_mutation
+sed 's/if after > before { return .alwaysAllowed }/if after >= before { return .alwaysAllowed }/' \
+    DeepSleep/AIKeepAlive/KeepAliveKeychainAuthorizer.swift > "$MUT2_SRC"
+if ! grep -q "after >= before" "$MUT2_SRC"; then
+  echo "  [失败] 变异点没找到 —— 判据那一行改了，变异测试要同步更新"
+  FAIL=$((FAIL+1))
+  FAILED_LIST+=("keychain-authorizer-mutation")
+else
+  swiftc -O "$MUT2_SRC" DeepSleep/AIKeepAlive/KeepAliveKeychain.swift \
+         DeepSleep/AIKeepAlive/KeepAliveKeychainAccess.swift \
+         scripts/test-keychain-authorizer.swift -o "$MUT2_BIN" 2>/dev/null
+  if [ ! -x "$MUT2_BIN" ]; then
+    echo "  [失败] 变异实现编译不过"
+    FAIL=$((FAIL+1))
+    FAILED_LIST+=("keychain-authorizer-mutation")
+  elif timeout 60 "$MUT2_BIN" >/dev/null 2>&1; then
+    echo "  [失败] 放宽的判据居然通过了测试 —— 断言没在测「ACL 有没有变多」"
+    FAIL=$((FAIL+1))
+    FAILED_LIST+=("keychain-authorizer-mutation")
+  else
+    echo "  [通过] 放宽的判据被测试抓住，断言确实在测 ACL 变化"
+    PASS=$((PASS+1))
+  fi
+fi
 
 echo
 echo "=== 结果 ==="

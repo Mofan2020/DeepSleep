@@ -3374,3 +3374,278 @@ Deep Sleep 自己的三条（`com.skyc8266.deepsleep.email` / `.ka` / `.keepaliv
 `errSecUserCanceled`（-128）**。所以「挂起等密码」和「用户点了拒绝」
 是两种不同的现象，测试要分得清 —— 把两者混为一谈会把「用户拒绝」误报成
 「代码坏了」。
+
+---
+
+## v1.11.4 — 「整个未响应」根因：全局 dispatch 队列被自己的等待逻辑占满
+
+用户报：扫了一次 WOL 之后，整个程序未响应。
+
+### 复现与证据
+
+用**真实源码**写探针跑 `NetworkScanner.performScan`（不是抄一份逻辑），
+180 秒没跑完。`sample` 抓下来：
+
+```
+Dispatch Thread Soft Limit: 64 reached in 2033 of 2033 samples
+-- too many dispatch threads blocked in synchronous operations
+
+64 个 Thread_xxx  DispatchQueue_16: com.apple.root.user-initiated-qos (concurrent)
+  + specialized static NetworkScanner.runBlocking(_:_:_:) + 2276
+    + _dispatch_group_wait_slow
+      + _dlock_wait
+        + __ulock_wait
+```
+
+64 条线程**全部**卡在 `runBlocking` 里的 `group.wait()`，一个都没跑起来。
+utility 队列上的线程数是 **0** —— 读管道的任务一个都没被调度。
+
+### 根因
+
+旧实现把「等命令结束」放在 `DispatchQueue.global()` 的线程上，
+**同时**把读管道的任务派到**同一个**全局队列：
+
+```swift
+DispatchQueue.global(qos: .userInitiated).async {
+    group.wait()          // ← 阻塞占住这条全局队列线程
+}
+DispatchQueue.global(qos: .utility).async {
+    outPipe.fileHandleForReading.readDataToEndOfFile()   // ← 排在同一个队列
+    group.leave()
+}
+```
+
+扫 /24 是 64 路 ping 并发，正好等于 libdispatch 根队列的 **64 个线程软上限**：
+
+- 64 条线程全卡在 `group.wait()` 上等读管道；
+- 读管道的任务排在同一个队列里，**拿不到线程**；
+- 双方互等 → **死锁**。
+
+后果不限于这一页：全局队列是整个 App 共用的，
+`HelperClient.send`（助手通信）、温度监控、系统监控、界面刷新全靠它。
+全局队列一停摆，**整个程序看起来就没响应了** —— 正是用户报的现象。
+
+同样的写法在 `LsofService.executeBlocking` 与
+`DeviceDiagnostics.runShellBlocking` 里各有一份。设备诊断用 `async let`
+并发跑十几条命令，同样会撞上，所以三处一起改。
+
+### 修法
+
+新增 `DeepSleep/Core/ExternalCommand.swift`：跑外部命令的统一封装，
+**全程不占 dispatch 线程**。
+
+- 等进程退出走 `terminationHandler`（回调），不用 `waitUntilExit()`；
+- 输出走临时文件，不用管道 —— 免掉「读端 / 写端」这层麻烦，
+  也免掉子进程写满管道缓冲区卡在 write 上的死锁；
+- 超时用**专用串行队列**定时，不碰全局队列 —— 全局队列被占满时
+  派到它上面的定时器会跟着停摆，正好是最需要它的时候；
+- 状态机保证 continuation **只恢复一次**（`terminationHandler` 与超时
+  定时器谁先到都行）。
+
+三处调用点全部切过去，旧的 `runBlocking` / `executeBlocking` /
+`runShellBlocking` 与随之无用的 `DataBox` 一并删掉。
+
+### 实测
+
+同一份探针（真实源码），修复前后：
+
+| | 修复前 | 修复后 |
+| --- | --- | --- |
+| 结果 | 180 秒超时未完成 | **36.2 秒跑完** |
+| 峰值线程数 | 64（全部卡死） | **11**（基线 1） |
+| 扫到设备 | 无结果 | **8 台** |
+
+### 回归测试
+
+`scripts/test-external-command.swift`：基本功能 + 超时 + **并发不死锁**。
+
+并发那条的判据是「扫描期间全局队列还能调度任务」—— 用一个每 100 毫秒
+记一次的心跳任务来量。**不能直接数心跳次数**：扫描只花 0.06 秒时，
+心跳当然跳不满 3 次，那是测试自己写错了。正确判据是相对基准 ——
+同样时长里扫描期的心跳次数不能塌掉。
+
+### 变异测试（这条最重要）
+
+「测试绿了不代表它在测东西」。把实现换回旧写法
+（`scripts/mutation/ExternalCommandLegacy.swift`）再跑：
+
+| 实现 | 结果 |
+| --- | --- |
+| 新实现 | 16 项断言全通过，0.06 秒跑完 |
+| 旧实现 | **直接挂死，20 秒超时跑不完** |
+
+旧实现的失败形态就是真实故障形态（卡死，不是报错）——
+所以变异测试的判据是「超时 = 变异被抓住」。
+这条已固化进 `scripts/run-all-tests.sh`。
+
+### 顺带：ping 并发 64 → 16
+
+本机 Little Snitch 在跑，它按**目标地址**判定是否放行，换一个 IP 就可能
+触发一次拦截。扫 /24 最多 254 个不同目标，64 路并发会一次性弹出几十个
+授权对话框，用户来不及点，被拦的 ping 就一直挂着 —— 界面上同样表现为
+「扫描卡住」。16 路并发时弹窗节奏跟得上。
+
+### 走过的弯路：原生 ICMP socket
+
+试过用一个 `socket(AF_INET, SOCK_DGRAM, IPPROTO_ICMP)` 发完整个网段
+（不 fork 进程，快得多）。**结论：不能用。**
+
+Little Snitch 会拦截未签名二进制的出站 ICMP 包，`sendto` 一直阻塞到
+用户点授权为止，扫一整轮根本跑不完。`/sbin/ping` 是 Apple 签名的系统
+二进制，不受这个影响。
+
+教训：探针本身也会被防火墙类软件拦。**「探针卡住」有两种可能 ——
+代码有 bug，或者环境在拦。** 分不清的时候，先换一个不依赖被拦路径的
+实现去对照，而不是继续在同一个路径上猜。
+
+（对照证据：`/sbin/ping` 连发 20 个不同地址用了 24 秒，而同一个地址
+重复 ping 只要 0.01 秒 —— 差别全在「换目标地址触发 Snitch 判定」。）
+
+---
+
+## v1.11.4 — 界面改造
+
+### 液态玻璃：统一档位，不让页面直接调玻璃 API
+
+新增 `DeepSleep/Views/GlassDesign.swift`，定义了 `GlassLevel` 四档：
+
+- `.hero` —— 大面积容器（总览页主卡）
+- `.card` —— 常规卡片
+- `.panel` —— 面板 / 浮层
+- `.button` —— 按钮
+
+页面只引用档位，**不直接调 `glassEffect`**。理由：玻璃 API 的参数
+（`in:` 形状、tint、interactive）如果散落在各个页面里，改一次视觉就得
+翻遍全仓库。收口到一处之后，档位含义变了只改一个文件。
+
+`DesignSystem.glassCard()` / `glassSurface()` 是老代码进玻璃层的唯一入口，
+改这两个函数，全 App 卡片一起变。
+
+### 玻璃 API 的真实位置
+
+`glassEffect` **不在 SwiftUI 主接口里，在 SwiftUICore**。
+`Glass.regular` / `Glass.clear` / `Glass.identity` / `Glass.tint(_:)` /
+`Glass.interactive(_:)` / `glassEffect(_:in:)` / `GlassEffectContainer` 都是。
+
+写之前用 SDK 的 swiftinterface 查过签名，没凭记忆写。
+
+### 页面路由：菜单栏在视图之外，怎么切页
+
+菜单栏是 AppKit 对象，拿不到 SwiftUI 的 `selection`（`@State` 只在视图
+内部可写）。解法是一个单例中转 `PageRouter`：
+
+- 外部请求切页 → `pageRouter.request(item)`，`revision` +1
+- 内容视图订阅 `revision`，把它写进自己的 `selection`
+- 界面内部换页 → `noteLocalNavigation(item)` 同步回路由
+
+订阅 `revision` 而不是 `page`：**连续两次请求同一个页面时目标值没变**，
+订阅 `page` 不会被唤醒。窗口被 SwiftUI 销毁重建时，新建的视图在
+`onAppear` 里读 `router.page`，回到用户最后看的那一页。
+
+`showMainWindow(selecting:)` 的顺序是**先切页再显示窗口**。反过来窗口会
+先显示旧页面然后再跳过去，用户看到闪一下。
+
+### 系统监控卡片：单位陷阱
+
+`DashboardSystemCards.swift` 里三个数据源单位不一样：
+
+- `memoryDetail.usedPercent` 是 0–100
+- `ramPercent` 是 0–100
+- 卷的 `usedFraction` 是 0–1，要 ×100
+- `MetricTile` 的 `progress` 参数要 0–1
+
+混用会得到「内存 4800%」这种值。
+
+### 「不可用」不能显示成 0
+
+读不到数据的 tile 显示「不可用」，status 显示「无数据」。
+显示 0 会被读成「确实是 0」——用户看不出是没采到还是真的空闲。
+
+### ViewBuilder 里不能裸调返回 Void 的函数
+
+```swift
+TimelineView(.periodic(from: .now, by: 1)) { _ in
+    SystemMetricsCollector.shared.start()   // ❌ type '()' cannot conform to 'View'
+    let _ = SystemMetricsCollector.shared.start()   // ✅
+}
+```
+
+ViewBuilder 闭包里只有 View 表达式能成立。返回 `Void` 的副作用函数要用
+`let _ =` 明确丢弃返回值，否则编译报「类型 () 不能符合 View」。
+
+### 菜单栏图标跟着状态走
+
+图标语义由**形状**承担，颜色留给菜单里的状态点：模板图会被系统按明暗
+主题反色，上色会被吃掉。
+
+- 允许睡眠 = `moon.zzz.fill`
+- 保持清醒 = `cup.and.saucer.fill`
+- 已禁止睡眠 = `exclamationmark.octagon.fill`
+
+刷新时机用 `objectWillChange` + `Task` 推到下一轮主线程：
+`objectWillChange` 在赋值**之前**发出，直接刷新读到的是旧值。
+
+状态一律「颜色圆点 + 文字」双编码，不靠颜色单独区分。
+
+---
+
+## v1.11.4 — API Key 一键授权
+
+### 问题
+
+Deep Sleep 用 ad-hoc 签名（没有 Developer ID 证书），签名身份就是可执行
+文件的 cdhash，**每次重新构建都会变**。钥匙串条目的 ACL 里记的正是
+`cdhash:xxxx`（实测，见条目 ACL 里那条 `Partitions` 描述），所以每次更新
+之后，新版本读旧条目都会被当成陌生应用，弹框要密码。
+
+原来的解法是「点编辑、把 API Key 重新填一次」—— 有 N 条任务就要填 N 次。
+
+### 解法
+
+`KeepAliveKeychainAuthorizer`：一次点按，把 N 条全部触发一遍授权，
+用户在每个框上点「始终允许」，之后这个版本就不会再弹。
+
+**不发任何网络请求**，只读钥匙串。
+
+### 判定「始终允许」还是「仅此一次」
+
+这是整个功能里最容易写错的地方。
+
+**不能靠「再读一遍成功」判断**：用户点「仅此一次」之后，同一个进程在本轮
+生命周期内再读同一条不会再弹框（系统记住了这次会话的授权）。两个选项都会
+让第二次读取成功。
+
+**唯一可靠的判据是 ACL 里受信任应用的数量**：
+
+- 「始终允许」把当前 cdhash 追加进 ACL → 数量 +1
+- 「仅此一次」不碰 ACL → 数量不变
+
+所以授权前记一次、授权后再记一次，**变多了才是真的始终授权**。
+
+计数用 `SecKeychainItemCopyAccess` → `SecAccessCopyACLList` →
+`SecACLCopyContents`，统计所有 ACL 里 `SecTrustedApplication` 的总数。
+这三个 API 在 macOS 10.10 就标了 deprecated（`SecKeychain` 整体被 `SecItem`
+取代），但实测在 macOS 26 上仍然可用、能读到真实数据。这里用它是因为
+**没有替代品**：新的 `SecItem` API 完全不暴露 ACL。
+
+### 判定逻辑抽成纯函数
+
+`decide(before:after:elapsed:)` —— 完整路径要弹系统授权框，没法自动化测；
+而阈值和 nil 分支才是最容易写错的地方。抽成纯函数后能穷举覆盖，
+变异测试也能验证断言有效。
+
+耗时只作为辅助判据（用户点一下至少一秒，0.5 秒内返回说明没弹过框），
+**主判据永远是 ACL 数量变化**。变异测试 2 就是把这个判据放宽成
+`after >= before` 看测试会不会红 —— 会红。
+
+### 授权成功后要解除「跳过」标记
+
+`KeepAliveKeychainAccess` 记着哪些 account 已知授权失败、调度时直接跳过。
+一键授权成功后必须 `clear(account)`，否则调度器仍然主动跳过，等于白授权。
+
+### 能自动化验证到哪一步
+
+- 判定逻辑：22 项断言，全部可自动跑（`scripts/test-keychain-authorizer.swift`）
+- ACL 读取：真实钥匙串里自建条目 → 读到受信任应用 → 删掉（`DS_KEYCHAIN_AUTHORIZER_TEST=1` 才跑）
+- **「用户点始终允许」那一下没法自动测**，必须人工点。所以真实场景的
+  完整验证由用户手测完成。

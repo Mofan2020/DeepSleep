@@ -602,14 +602,24 @@ public final class NetworkScanner {
     /// 扫描代号。进度回调要跨回主线程，晚到的旧回调不能把新一轮的状态改回去。
     private var generation = 0
 
-    /// 并发 ping 的数量。64 路在 /24 上一轮七八秒能扫完；再高对家用路由是压力。
+    /// 并发 ping 的数量。
     ///
-    /// `nonisolated`：这三个常量被 nonisolated 的扫描函数读，标了 @MainActor 的话
-    /// Swift 6 会把这种跨 actor 读当错误。
-    nonisolated static let pingConcurrency = 64
+    /// **64 → 16（v1.11.4）**。降并发的理由是 Little Snitch：它按**目标
+    /// 地址**判定是否放行，换一个 IP 就可能触发一次拦截，扫 /24 意味着
+    /// 最多 254 个不同目标。64 路并发会一次性弹出几十个授权对话框，
+    /// 用户来不及点，被拦的 ping 就一直挂着 —— 界面上表现为「扫描卡住」。
+    /// 16 路并发时弹窗节奏跟得上，整轮也能在可接受的时间内跑完。
+    ///
+    /// `nonisolated`：这个常量被 nonisolated 的扫描函数读，标了 @MainActor
+    /// 的话 Swift 6 会把这种跨 actor 读当错误。
+    nonisolated static let pingConcurrency = 16
     /// 单次 ping 等回包的毫秒数。太低会把慢设备漏掉，太高会让整轮变慢。
     nonisolated static let pingTimeoutMilliseconds = 500
     /// ping 进程本身的硬上限（秒）。`-W` 只控制等回包，进程启动异常时靠这个兜底。
+    ///
+    /// **这个上限就是 Snitch 拦截时的兜底**：Snitch 拦下的 ping 不会自己
+    /// 返回，超时后被 terminate 掉，扫描继续往下走。2.5 秒 × 254 个地址
+    /// ÷ 16 路 ≈ 40 秒，是最坏情况的界。
     nonisolated static let pingProcessTimeout: TimeInterval = 2.5
 
     private init() {}
@@ -673,7 +683,6 @@ public final class NetworkScanner {
             let fraction = 0.06 + 0.88 * (Double(done) / Double(hosts.count))
             progress(fraction, "正在扫描… \(done)/\(hosts.count)")
         }
-
         // 第二遍 ARP：ping 触发过解析，新设备这时才带 MAC 出现在表里。
         progress(0.96, "扫描完成，正在读取 ARP 表…")
         table = await readARPTable()
@@ -751,10 +760,26 @@ public final class NetworkScanner {
         return candidates.first
     }
 
-    /// 并发 ping 整个网段，返回回应了的地址。
+    /// 探测整个网段，返回回应了的地址。
     ///
-    /// 用 TaskGroup 控制同时在跑的数量：一次把 254 个 ping 全拉起来会顶到进程数上限，
-    /// 串行又太慢。
+    /// 并发 fork `/sbin/ping`，用 TaskGroup 控制同时在跑的数量：一次把
+    /// 254 个 ping 全拉起来会顶到进程数上限，串行又太慢。
+    ///
+    /// **每个 ping 的等待走 `ExternalCommand` —— 不占 dispatch 线程。**
+    /// 这是 v1.11.4 修「整个未响应」的关键：旧实现把「等命令结束」放在
+    /// `DispatchQueue.global()` 的线程上，同时把读管道的任务派到**同一个**
+    /// 全局队列。64 路并发正好占满 libdispatch 根队列的 64 个线程软上限，
+    /// 于是「等命令结束」等「读管道」而「读管道」拿不到线程 —— 互相死等。
+    /// 全局队列一停摆，整个程序看起来就没响应了（助手通信、温度监控、
+    /// 界面刷新全靠它）。
+    ///
+    /// 现在这条路径全程不占 dispatch 线程：进程退出走 `terminationHandler`
+    /// 回调，输出走临时文件，超时用专用串行队列。
+    ///
+    /// **为什么不用原生 ICMP socket**：试过（一个 socket 发完整个网段，
+    /// 不 fork 进程，更快）。但本机 Little Snitch 会拦截未签名二进制的
+    /// 出站 ICMP 包 —— `sendto` 会一直阻塞到用户点授权为止，扫一整轮
+    /// 根本跑不完。`/sbin/ping` 是 Apple 签名的系统二进制，不受这个影响。
     nonisolated static func pingSweep(
         hosts: [String],
         onProgress: @escaping @Sendable (Int) -> Void
@@ -1119,7 +1144,7 @@ public final class NetworkScanner {
         return inet_pton(AF_INET, text, &address) == 1
     }
 
-    // MARK: 跑外部命令
+    // MARK: - 跑外部命令
 
     struct ProcessResult {
         let status: Int32
@@ -1128,85 +1153,26 @@ public final class NetworkScanner {
         let timedOut: Bool
     }
 
-    /// 跑一个外部命令。阻塞部分扔到全局队列，读管道和等退出都有超时。
+    /// 跑一个外部命令，等它退出。
+    ///
+    /// **实现换成了 `ExternalCommand`（v1.11.4）** —— 旧实现在
+    /// `DispatchQueue.global()` 的线程上同步等命令结束，同时把读管道的
+    /// 任务派到同一个全局队列。扫 /24 时 64 路 ping 并发正好占满
+    /// libdispatch 根队列的 64 个线程软上限，于是「等命令结束」等
+    /// 「读管道」而「读管道」拿不到线程 —— 死锁。全局队列一死，
+    /// 整个程序看起来就没响应了（助手通信、温度监控、界面刷新全靠它）。
+    ///
+    /// 现在全程不占 dispatch 线程：进程退出走 `terminationHandler` 回调，
+    /// 输出走临时文件，超时用专用串行队列。
     nonisolated static func run(
         _ executable: String,
         _ arguments: [String],
         timeout: TimeInterval
     ) async -> ProcessResult {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                continuation.resume(returning: runBlocking(executable, arguments, timeout))
-            }
-        }
-    }
-
-    nonisolated static func runBlocking(
-        _ executable: String,
-        _ arguments: [String],
-        _ timeout: TimeInterval
-    ) -> ProcessResult {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-
-        let outPipe = Pipe()
-        let errPipe = Pipe()
-        process.standardOutput = outPipe
-        process.standardError = errPipe
-
-        do {
-            try process.run()
-        } catch {
-            return ProcessResult(status: -1, stdout: "", stderr: error.localizedDescription, timedOut: false)
-        }
-
-        // 两个管道同时读：只读一个的话另一个写满缓冲区，子进程会卡在 write 上。
-        let group = DispatchGroup()
-        var outData = Data()
-        var errData = Data()
-        let lock = NSLock()
-
-        group.enter()
-        DispatchQueue.global(qos: .utility).async {
-            let data = outPipe.fileHandleForReading.readDataToEndOfFile()
-            lock.lock(); outData = data; lock.unlock()
-            group.leave()
-        }
-        group.enter()
-        DispatchQueue.global(qos: .utility).async {
-            let data = errPipe.fileHandleForReading.readDataToEndOfFile()
-            lock.lock(); errData = data; lock.unlock()
-            group.leave()
-        }
-
-        let deadline = Date().addingTimeInterval(timeout)
-        while process.isRunning && Date() < deadline {
-            Thread.sleep(forTimeInterval: 0.02)
-        }
-
-        var timedOut = false
-        if process.isRunning {
-            timedOut = true
-            process.terminate()
-            let hardDeadline = Date().addingTimeInterval(0.5)
-            while process.isRunning && Date() < hardDeadline {
-                Thread.sleep(forTimeInterval: 0.02)
-            }
-            // terminate 只是 SIGTERM，卡在内核里的进程可能不理，用 SIGKILL 收尸。
-            if process.isRunning {
-                kill(process.processIdentifier, SIGKILL)
-            }
-        }
-
-        process.waitUntilExit()
-        group.wait()
-
-        lock.lock()
-        let outText = String(decoding: outData, as: UTF8.self)
-        let errText = String(decoding: errData, as: UTF8.self)
-        lock.unlock()
-
-        return ProcessResult(status: process.terminationStatus, stdout: outText, stderr: errText, timedOut: timedOut)
+        let result = await ExternalCommand.run(executable, arguments, timeout: timeout)
+        return ProcessResult(status: result.status,
+                             stdout: result.stdout,
+                             stderr: result.stderr,
+                             timedOut: result.timedOut)
     }
 }

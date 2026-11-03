@@ -103,110 +103,25 @@ enum DeviceDiagnostics {
     /// 约 0.5 秒），10 秒足够跑完，又不至于某个命令卡死把界面永远挂在「检测中」。
     static let commandTimeout: TimeInterval = 10
 
-    /// 跑一条外部命令。整个过程在后台队列上做 —— waitUntilExit 是阻塞调用，
-    /// 占着主线程界面会僵住。
+    /// 跑一条外部命令。
+    ///
+    /// **实现换成了 `ExternalCommand`（v1.11.4）** —— 旧实现在
+    /// `DispatchQueue.global()` 的线程上同步等命令结束，同时把读管道的
+    /// 任务派到同一个全局队列。设备诊断用 `async let` 并发跑十几条命令，
+    /// 加上别的页面同时在跑命令，就会占满 libdispatch 根队列的 64 个线程
+    /// 软上限，于是「等命令结束」等「读管道」而「读管道」拿不到线程 ——
+    /// 死锁。全局队列一死，整个程序看起来就没响应了。
+    ///
+    /// 现在全程不占 dispatch 线程。
     static func runShell(_ executable: String,
                          _ arguments: [String] = [],
                          timeout: TimeInterval = commandTimeout) async -> ShellResult {
-        await withCheckedContinuation { (continuation: CheckedContinuation<ShellResult, Never>) in
-            DispatchQueue.global(qos: .userInitiated).async {
-                continuation.resume(returning: runShellBlocking(executable, arguments, timeout: timeout))
-            }
-        }
-    }
-
-    private static func runShellBlocking(_ executable: String,
-                                         _ arguments: [String],
-                                         timeout: TimeInterval) -> ShellResult {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-
-        let outPipe = Pipe()
-        let errPipe = Pipe()
-        process.standardOutput = outPipe
-        process.standardError = errPipe
-        // 不继承 stdin：有的命令（如 spctl）会等输入，继承终端就会永远挂着。
-        process.standardInput = FileHandle.nullDevice
-
-        do {
-            try process.run()
-        } catch {
-            return ShellResult(status: -1,
-                               stdout: "",
-                               stderr: "",
-                               timedOut: false,
-                               launchFailure: "无法启动 \(executable)：\(error.localizedDescription)")
-        }
-
-        // 两个管道各自在后台线程读。输出能有几百 KB，不并发读的话管道缓冲区
-        // 写满，命令卡在 write 上，两边一起走不下去。
-        let group = DispatchGroup()
-        let outBox = DataBox()
-        let errBox = DataBox()
-        group.enter()
-        DispatchQueue.global(qos: .utility).async {
-            outBox.set(outPipe.fileHandleForReading.readDataToEndOfFile())
-            group.leave()
-        }
-        group.enter()
-        DispatchQueue.global(qos: .utility).async {
-            errBox.set(errPipe.fileHandleForReading.readDataToEndOfFile())
-            group.leave()
-        }
-
-        let deadline = Date().addingTimeInterval(timeout)
-        while process.isRunning && Date() < deadline {
-            Thread.sleep(forTimeInterval: 0.02)
-        }
-        if process.isRunning {
-            process.terminate()
-            let hardDeadline = Date().addingTimeInterval(1)
-            while process.isRunning && Date() < hardDeadline {
-                Thread.sleep(forTimeInterval: 0.02)
-            }
-            if process.isRunning {
-                kill(process.processIdentifier, SIGKILL)
-            }
-            group.wait()
-            closePipes(outPipe, errPipe)
-            return ShellResult(status: -1, stdout: "", stderr: "",
-                               timedOut: true, launchFailure: nil)
-        }
-
-        process.waitUntilExit()
-        group.wait()
-        closePipes(outPipe, errPipe)
-
-        return ShellResult(status: process.terminationStatus,
-                           stdout: String(decoding: outBox.value, as: UTF8.self),
-                           stderr: String(decoding: errBox.value, as: UTF8.self),
-                           timedOut: false,
-                           launchFailure: nil)
-    }
-
-    /// 读完就关管道，别把文件描述符漏着。
-    private static func closePipes(_ outPipe: Pipe, _ errPipe: Pipe) {
-        try? outPipe.fileHandleForReading.close()
-        try? errPipe.fileHandleForReading.close()
-    }
-
-    /// 带锁的数据盒：管道读取线程写、等待线程读。
-    private final class DataBox: @unchecked Sendable {
-        private let lock = NSLock()
-        private var storage = Data()
-
-        func set(_ data: Data) {
-            lock.lock()
-            storage = data
-            lock.unlock()
-        }
-
-        var value: Data {
-            lock.lock()
-            defer { lock.unlock() }
-            return storage
-        }
+        let result = await ExternalCommand.run(executable, arguments, timeout: timeout)
+        return ShellResult(status: result.status,
+                           stdout: result.stdout,
+                           stderr: result.stderr,
+                           timedOut: result.timedOut,
+                           launchFailure: result.launchFailure)
     }
 
     // MARK: - 采集入口

@@ -435,79 +435,24 @@ enum LsofService {
         return kept.joined(separator: "\n")
     }
 
-    /// 执行 lsof。整个过程放到全局队列上做 —— `waitUntilExit` 是阻塞调用，
-    /// 占着主线程的话界面会僵住。
+    /// 执行 lsof。
+    ///
+    /// **实现换成了 `ExternalCommand`（v1.11.4）** —— 旧实现在
+    /// `DispatchQueue.global()` 的线程上同步等命令结束，同时把读管道的
+    /// 任务派到同一个全局队列。lsof 的输出能有几 MB，两个页面同时查、
+    /// 再叠加别的命令，就会占满 libdispatch 根队列的 64 个线程软上限，
+    /// 于是「等命令结束」等「读管道」而「读管道」拿不到线程 —— 死锁。
+    /// 全局队列一死，整个程序看起来就没响应了。
+    ///
+    /// 现在全程不占 dispatch 线程。
     private static func execute(arguments: [String], timeout: TimeInterval) async throws -> RunResult {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<RunResult, Error>) in
-            DispatchQueue.global(qos: .userInitiated).async {
-                do {
-                    continuation.resume(returning: try executeBlocking(arguments: arguments, timeout: timeout))
-                } catch {
-                    continuation.resume(throwing: error)
-                }
-            }
+        let result = await ExternalCommand.run(executablePath, arguments, timeout: timeout)
+        if let failure = result.launchFailure {
+            throw LsofError.launchFailed(failure)
         }
-    }
-
-    private static func executeBlocking(arguments: [String], timeout: TimeInterval) throws -> RunResult {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executablePath)
-        process.arguments = arguments
-
-        let outPipe = Pipe()
-        let errPipe = Pipe()
-        process.standardOutput = outPipe
-        process.standardError = errPipe
-
-        do {
-            try process.run()
-        } catch {
-            throw LsofError.launchFailed(error.localizedDescription)
-        }
-
-        // 两个管道各自在后台线程读。lsof 的输出能有几 MB，不并发读的话
-        // 管道缓冲区写满，lsof 卡在 write 上，两边一起走不下去。
-        let group = DispatchGroup()
-        let outBox = DataBox()
-        let errBox = DataBox()
-
-        group.enter()
-        DispatchQueue.global(qos: .utility).async {
-            outBox.set(outPipe.fileHandleForReading.readDataToEndOfFile())
-            group.leave()
-        }
-        group.enter()
-        DispatchQueue.global(qos: .utility).async {
-            errBox.set(errPipe.fileHandleForReading.readDataToEndOfFile())
-            group.leave()
-        }
-
-        // 超时保护：到点就终止进程，不让它一直挂着。
-        let deadline = Date().addingTimeInterval(timeout)
-        while process.isRunning && Date() < deadline {
-            Thread.sleep(forTimeInterval: 0.02)
-        }
-        if process.isRunning {
-            process.terminate()
-            let hardDeadline = Date().addingTimeInterval(1)
-            while process.isRunning && Date() < hardDeadline {
-                Thread.sleep(forTimeInterval: 0.02)
-            }
-            if process.isRunning {
-                kill(process.processIdentifier, SIGKILL)
-            }
-            group.wait()
-            throw LsofError.timedOut(timeout)
-        }
-
-        process.waitUntilExit()
-        group.wait()
-
-        return RunResult(
-            status: process.terminationStatus,
-            stdout: String(decoding: outBox.value, as: UTF8.self),
-            stderr: String(decoding: errBox.value, as: UTF8.self)
-        )
+        return RunResult(status: result.status,
+                         stdout: result.stdout,
+                         stderr: result.stderr)
     }
 
     /// 带锁的数据盒：管道读取线程写、等待线程读。

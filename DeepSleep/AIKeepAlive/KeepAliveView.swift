@@ -54,6 +54,11 @@ struct KeepAliveView: View {
     /// 待确认的删除。`nil` 表示没有删除在等确认。
     @State private var pendingDelete: TlDeleteRequest?
 
+    /// 最近一次「一键授权」的结果。`nil` 表示还没跑过。
+    @State private var authorizationReport: KeepAliveAuthorizationReport?
+    /// 是否正在授权。授权期间按钮要禁用 —— 连点会叠出好几个系统授权框。
+    @State private var isAuthorizing = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.lg) {
             SectionCard(
@@ -71,7 +76,23 @@ struct KeepAliveView: View {
                                isActive: !engine.tasks.isEmpty,
                                color: engine.tasks.isEmpty ? DS.Tone.idle : DS.Tone.info)
                     Spacer(minLength: DS.Space.sm)
+                    // 一键授权：不需要先等到失败才点 —— 应用更新之后主动点一次，
+                    // 比等某条任务定时触发时才弹框省事。
+                    Button {
+                        runAuthorization()
+                    } label: {
+                        Label(isAuthorizing ? "正在授权…" : "一键授权 Key",
+                              systemImage: isAuthorizing ? "hourglass" : "key.horizontal.fill")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isAuthorizing || engine.tasks.isEmpty)
+                    .help("逐条读取钥匙串里的 API Key（不发任何请求）。"
+                          + "每个系统弹框里选「始终允许」，之后定时运行就不会再问。")
                 }
+            }
+
+            if let report = authorizationReport {
+                authorizationResultNotice(report)
             }
 
             if !reauthorizationTaskIDs.isEmpty {
@@ -149,6 +170,72 @@ struct KeepAliveView: View {
         }
     }
 
+    // MARK: - 一键授权
+
+    /// 逐条把 API Key 重新授权一遍。
+    ///
+    /// 用户点一次按钮，系统会为每条 Key 弹一次授权框（如果这个版本还没被信任），
+    /// 用户在每个框里点「始终允许」，之后这个版本的定时任务就不再弹框。
+    ///
+    /// **不发任何网络请求** —— 只读钥匙串。
+    private func runAuthorization() {
+        guard !isAuthorizing else { return }
+        let targets = engine.tasks.map { (name: $0.name, account: $0.apiKeyRef) }
+        guard !targets.isEmpty else { return }
+
+        isAuthorizing = true
+        authorizationReport = nil
+
+        // 必须离开主线程：每一条都可能弹系统授权框并等用户操作，
+        // 跑在主线程上整个界面会僵住。
+        Task {
+            // 只把 targets 交给后台 —— 不捕获 self，避免跨 actor 传递整个 View。
+            let report = await Task.detached(priority: .userInitiated) {
+                KeepAliveKeychainAuthorizer.authorizeAll(targets)
+            }.value
+
+            // 授权到位的任务解除「跳过」标记 ——
+            // 不解的话调度器仍然会主动跳过，等于白授权。
+            for item in report.items where item.outcome.isSettled {
+                KeepAliveKeychainAccess.shared.clear(item.account)
+            }
+            authorizationReport = report
+            isAuthorizing = false
+            refreshReauthorizationState()
+        }
+    }
+
+    /// 授权结果条。
+    ///
+    /// 成功的部分只说「已就绪」，失败的逐条列出要用户做什么 ——
+    /// 用户点完一堆系统弹框之后，需要知道哪几条还没成。
+    private func authorizationResultNotice(_ report: KeepAliveAuthorizationReport) -> some View {
+        let allSettled = report.allSettled
+        let pending = report.items.filter { !$0.outcome.isSettled }
+        return HStack(alignment: .top, spacing: DS.Space.sm) {
+            Image(systemName: allSettled ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(allSettled ? DS.Tone.good : DS.Tone.caution)
+            VStack(alignment: .leading, spacing: DS.Space.xxs) {
+                Text(report.summary)
+                    .foregroundStyle(.primary)
+                ForEach(pending) { item in
+                    Text("\(item.taskName)：\(item.outcome.title)")
+                        .foregroundStyle(.secondary)
+                }
+                if let hint = pending.first?.outcome.hint {
+                    Text(hint)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .font(.caption)
+            .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(DS.Space.md)
+        .insetPanel()
+    }
+
     // MARK: - 钥匙串重新授权
 
     /// 从钥匙串的授权状态里算出哪些任务需要用户重新输入 API Key。
@@ -172,11 +259,11 @@ struct KeepAliveView: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(DS.Tone.caution)
             VStack(alignment: .leading, spacing: DS.Space.xxs) {
-                Text("有 \(reauthorizationTaskIDs.count) 条任务的 API Key 需要重新输入一次。")
+                Text("有 \(reauthorizationTaskIDs.count) 条任务的 API Key 需要重新授权。")
                     .foregroundStyle(.primary)
                 Text("应用更新之后，系统钥匙串会认不出这是同一个应用，于是拒绝读取。"
-                     + "点对应任务的「编辑」，把 API Key 重新填一次就好 —— 只需要这一次，"
-                     + "之后更新不会再问。在这之前这些任务不会发请求，也不会再弹授权框。")
+                     + "点上面的「一键授权 Key」，在每个系统弹框里选「始终允许」——"
+                     + "只做这一次，之后更新不会再问。在这之前这些任务不会发请求，也不会再弹授权框。")
                     .foregroundStyle(.secondary)
             }
             .font(.caption)

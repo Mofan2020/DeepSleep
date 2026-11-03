@@ -29,15 +29,41 @@ struct DashboardView: View {
 
     @EnvironmentObject private var controller: SleepController
 
+    /// 点某个置顶工具。调用方（ContentView）负责切 selection。
+    /// 默认 nil —— 不传就只有入口没有跳转，向后兼容。
+    var onOpenTool: ((ToolboxTool) -> Void)? = nil
+
+    /// 工具箱里置顶的工具。用户随时能改置顶，所以每次仪表盘出现时
+    /// 重新读一次布局，不缓存。
+    @State private var pinnedTools: [ToolboxTool] = DashboardView.loadPinnedTools()
+
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.lg) {
             StatusHeroCard()
                 .environmentObject(controller)
 
+            // 没有置顶工具就不占位置，也不放空态占位。
+            if !pinnedTools.isEmpty {
+                DashboardQuickAccess(tools: pinnedTools) { tool in
+                    onOpenTool?(tool)
+                }
+            }
+
             assertionGrid
+
+            DashboardSystemCards()
 
             bottomRow
         }
+        .onAppear {
+            // 从工具箱页改过置顶后回到仪表盘，这里读到最新布局。
+            pinnedTools = DashboardView.loadPinnedTools()
+        }
+    }
+
+    /// 置顶的工具，按置顶顺序（工具箱布局里 pinned 数组的顺序）。
+    private static func loadPinnedTools() -> [ToolboxTool] {
+        ToolboxStore.load().pinned.compactMap { ToolboxTool(rawValue: $0) }
     }
 
     // MARK: - 保持清醒（四项）

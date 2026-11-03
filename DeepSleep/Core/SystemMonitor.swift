@@ -496,6 +496,19 @@ public final class SystemMetricsCollector: @unchecked Sendable {
     /// 加速器的采样间隔（秒）。跟 `MonitorConfig.sampleIntervalSeconds` 一致。
     private var acceleratorInterval: TimeInterval = 3
 
+    /// 卷信息的刷新间隔（秒）。
+    ///
+    /// 读卷要调 `mountedVolumeURLs`，它会逐个卷触发 CacheDelete 系统调用
+    /// （`volumeAvailableCapacityForImportantUsageKey` 就是它的入口）。
+    /// 机器上挂着无效卷时（卸载残留、FUSE 挂载点）每次都会失败并打日志，
+    /// 每秒一轮既费 CPU 又刷屏。
+    ///
+    /// 磁盘容量本来变化就慢，5 秒的延迟看不出来，调用量却降到 1/5。
+    private static let volumeInterval: TimeInterval = 5
+    /// 上一次读卷的时间与结果。
+    private var lastVolumeReadAt: Date?
+    private var latestVolumes: [SystemMetrics.DiskVolume] = []
+
     public init() {}
 
     /// 最近一次采样结果。同步读，不触发采集。
@@ -540,6 +553,10 @@ public final class SystemMetricsCollector: @unchecked Sendable {
             // 拿到新读数再显示数字，比拿离开页面前的旧读数冒充当前值诚实。
             self?.latestAccelerator = nil
             self?.lastAcceleratorReadAt = nil
+            // 卷缓存同理：下次进页面一定重读一次，
+            // 不让「插拔过 U 盘」这种变化被旧的 5 秒缓存盖住。
+            self?.latestVolumes = []
+            self?.lastVolumeReadAt = nil
         }
     }
 
@@ -562,7 +579,7 @@ public final class SystemMetricsCollector: @unchecked Sendable {
         }
 
         snapshot.memory = Self.readMemory(pageSize: pageSize(), totalMemory: totalMemory())
-        snapshot.volumes = Self.readVolumes()
+        snapshot.volumes = volumesThrottled(now: now)
         snapshot.loadAverage = Self.readLoadAverage()
         snapshot.uptimeSeconds = Self.readUptime()
 
@@ -690,6 +707,21 @@ public final class SystemMetricsCollector: @unchecked Sendable {
                                              totalBytes: totalMemory,
                                              swapUsedBytes: swapUsed,
                                              swapTotalBytes: swapTotal)
+    }
+
+    /// 已挂载卷（带节流）。
+    ///
+    /// 间隔未到时直接返回上一轮结果，不碰 `mountedVolumeURLs`。
+    /// 首次采样没有缓存，一定会真读一次。
+    private func volumesThrottled(now: Date) -> [SystemMetrics.DiskVolume] {
+        if let last = lastVolumeReadAt,
+           now.timeIntervalSince(last) < Self.volumeInterval {
+            return latestVolumes
+        }
+        let volumes = Self.readVolumes()
+        latestVolumes = volumes
+        lastVolumeReadAt = now
+        return volumes
     }
 
     /// 已挂载卷。

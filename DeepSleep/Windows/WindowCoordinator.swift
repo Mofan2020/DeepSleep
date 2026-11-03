@@ -14,7 +14,46 @@
 //
 
 import AppKit
+import Combine
 import SwiftUI
+
+/// 主窗口的页面路由。
+///
+/// 菜单栏（AppKit 侧）与主窗口内容（SwiftUI 侧）之间没有直接的引用关系，
+/// 所以用这个单例当中转：外部入口「请求切页」，内容视图订阅并应用。
+///
+/// 为什么要中转而不是直接改 `ContentView` 的 `selection`：
+/// `selection` 是 `@State`，只在视图内部可写；而菜单栏在视图之外。
+/// 路由把「谁要切到哪一页」这件事独立出来，两边都只跟它打交道。
+@MainActor
+final class PageRouter: ObservableObject {
+
+    static let shared = PageRouter()
+
+    /// 修订号：每次外部请求 +1。
+    ///
+    /// 内容视图靠它发现「有新请求了」。不直接用目标页面做触发值，
+    /// 是因为连续两次请求同一个页面时目标值没变，订阅方不会被唤醒。
+    @Published private(set) var revision = 0
+
+    /// 当前应该显示的页面。
+    ///
+    /// 外部请求与界面内部换页都会更新它 —— 窗口被销毁重建后，
+    /// 新建的内容视图要能回到用户最后看的那一页。
+    private(set) var page: SidebarItem = .dashboard
+
+    /// 外部请求切到某个页面。
+    func request(_ item: SidebarItem) {
+        page = item
+        revision &+= 1
+    }
+
+    /// 界面内部换页时同步回来。
+    func noteLocalNavigation(_ item: SidebarItem) {
+        guard item != page else { return }
+        page = item
+    }
+}
 
 @MainActor
 final class WindowCoordinator {
@@ -63,6 +102,18 @@ final class WindowCoordinator {
         }
 
         NSApp.activate()
+    }
+
+    /// 打开主窗口并切到指定页面。
+    ///
+    /// 菜单栏的「快速跳转」用这个。**先请求切页、再让窗口显示出来** ——
+    /// 顺序反了的话窗口会先显示旧页面，然后才跳过去，用户会看到闪一下。
+    ///
+    /// 窗口被销毁重建时也能对：切页请求记在 `PageRouter` 里，
+    /// 新建的内容视图建立时会去读它当前该显示哪一页。
+    func showMainWindow(selecting item: SidebarItem) {
+        PageRouter.shared.request(item)
+        showMainWindow()
     }
 
     // MARK: - Dock 图标策略

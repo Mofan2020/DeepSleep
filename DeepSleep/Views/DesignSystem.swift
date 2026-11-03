@@ -103,20 +103,15 @@ enum DS {
 
 extension View {
 
-    /// L1 卡片容器：材质底 + 细描边 + 轻阴影。
+    /// L1 卡片容器：液态玻璃 + 细描边。
     ///
     /// 页面上的每一个独立区块都套它，不要自己写 `.background(.regularMaterial)`。
+    ///
+    /// 玻璃材质的细节（类型 / 描边 / 圆角）由 `GlassLevel.card` 统一决定 ——
+    /// 见 `GlassDesign.swift`。页面不直接调 `glassEffect`。
     func glassCard(cornerRadius: CGFloat = DS.Radius.card) -> some View {
         self
-            .background(
-                .regularMaterial,
-                in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .strokeBorder(DS.Tone.hairline)
-            )
-            .shadow(color: .black.opacity(0.06), radius: 10, x: 0, y: 3)
+            .glassSurface(level: .card, cornerRadius: cornerRadius)
     }
 
     /// L2 卡片内分区：比卡片再低一层，用于卡内成组的次级信息。
@@ -137,7 +132,7 @@ extension View {
     /// **只用在页面上最该被看见的一两个元素**（首屏状态卡、浮层、
     /// 侧边栏底部摘要）。整页都用玻璃会互相干扰，反而更乱。
     func glassSurface(cornerRadius: CGFloat = DS.Radius.hero) -> some View {
-        self.glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
+        self.glassSurface(level: .hero, cornerRadius: cornerRadius)
     }
 }
 
