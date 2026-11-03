@@ -55,18 +55,31 @@ jobs:
               exit 1
             fi
 
-      - name: 准备 release notes
+      - name: 准备 release notes（只取本版那一段）
         run: |
-            if [ ! -f release-notes.md ]; then
-              echo "## v${{ steps.ver.outputs.version }}" > release-notes.md
+            VERSION="${{ steps.ver.outputs.version }}"
+            # release-notes.md 是累积的：新版写最上面，底下留着历史。
+            # 直接拿整个文件当 body，会把所有历史版本一起贴进这一次的
+            # release 说明 —— v1.11.3 那版就贴了 9 个版本、v1.11.4 贴了 10 个。
+            # 这里只截「## v<本版>」到下一个「## v」之间的内容。
+            awk -v want="## v$VERSION" '
+              $0 == want { hit = 1 }
+              hit && /^## v/ && $0 != want { exit }
+              hit { print }
+            ' release-notes.md > /tmp/release-body.md
+            # 没匹配到就退回标题，别发一个空 body 出去。
+            if [ ! -s /tmp/release-body.md ]; then
+              echo "## v$VERSION" > /tmp/release-body.md
             fi
+            echo "--- 本次 release body ---"
+            cat /tmp/release-body.md
 
       - name: 创建 GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: v${{ steps.ver.outputs.version }}
           tag_name: v${{ steps.ver.outputs.version }}
-          body_path: release-notes.md
+          body_path: /tmp/release-body.md
           files: |
               build/release/DeepSleep.zip
               build/release/DeepSleep.zip.sha256

@@ -554,12 +554,30 @@ def check_release_workflow():
                 "workflow 无条件覆写 release-notes.md，手写的发布说明会只剩一行标题"
             )
 
-    # 4. body_path 指向的文件必须存在。
+    # 4. body_path 指向的文件必须存在 —— 或者在 workflow 里当场生成。
+    #
+    #    运行时生成是正常做法：release-notes.md 是累积的（新版在最上面、
+    #    底下留着历史），发版前要先截出本版那一段写到临时文件里。
     body_path = re.search(r"body_path:\s*(\S+)", workflow)
     if body_path:
         target = body_path.group(1)
         if not os.path.exists(os.path.join(ROOT, target)):
-            problems.append(f"workflow 的 body_path 指向不存在的文件：{target}")
+            generates = re.search(r">\s*" + re.escape(target) + r"\b", workflow)
+            if not generates:
+                problems.append(
+                    f"workflow 的 body_path 指向不存在的文件，"
+                    f"而且 workflow 里也没生成它：{target}"
+                )
+
+    # 5. body_path 不能直接指向累积的 release-notes.md。
+    #
+    #    那个文件底下留着所有历史版本，直接当 body 会把它们一起贴进本次
+    #    发布说明 —— 实测 v1.11.3 的页面贴了 9 个版本、v1.11.4 贴了 10 个。
+    if body_path and body_path.group(1).lstrip("./") == "release-notes.md":
+        problems.append(
+            "workflow 直接把累积的 release-notes.md 当 release body —— "
+            "历史版本会一起贴进本次发布说明，应该先截出本版那一段"
+        )
 
     if problems:
         failures.append("发布 workflow 与文档不一致：" + "；".join(problems))
