@@ -6,7 +6,7 @@
   <img src="./docs/images/icon.png" width="128" alt="Deep Sleep icon">
 </p>
 
-macOS has never had a real answer to: *"I want my Mac to stay awake until this download finishes, sleep at 2am, and wake me up at 7:30."* `pmset` works, but its CLI is hostile. `caffeinate` does half the job. AlDente owns one slice of it. Deep Sleep owns the whole shape of sleep, wake, and power — and it stays out of your way the rest of the time.
+macOS has never had a real answer to: *"I want my Mac to stay awake until this download finishes, sleep at 2am, and wake me up at 7:30."* `pmset` works, but its CLI is hostile. `caffeinate` does half the job. Deep Sleep owns the whole shape of sleep, wake, and power — and it stays out of your way the rest of the time.
 
 ![Platform](https://img.shields.io/badge/Platform-macOS%2026%2B-blue.svg)
 ![Swift](https://img.shields.io/badge/Swift-5.9-orange.svg)
