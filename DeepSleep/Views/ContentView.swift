@@ -47,7 +47,9 @@ enum SidebarItem: String, CaseIterable, Identifiable {
     case hosts
     /// Quarantine 属性管理：扫描并清除 macOS 的 quarantine 扩展属性。
     case quarantine
-    /// 工具箱：nice / hosts / quarantine / AI 保活 的卡片网格。
+    /// 音频控制（实验性）：逐应用音量调节。
+    case audioControl
+    /// 工具箱：nice / hosts / quarantine / AI 保活 / 音频控制 的卡片网格。
     ///
     /// 这几个 case 保留在枚举里，但**不从侧边栏渲染** —— 侧边栏「工具」段
     /// 只渲染工具箱一项。工具箱页点卡片时切 selection 到对应 case。
@@ -89,6 +91,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .nice:           return "进程优先级"
         case .hosts:          return "Hosts 编辑"
         case .quarantine:     return "Quarantine"
+        case .audioControl:   return "音频控制"
         case .toolbox:        return "工具箱"
         case .aiKeepAlive:    return "AI 保活"
         case .imageUpscale:   return "图片超分"
@@ -120,6 +123,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .nice:           return "gauge.with.dots.needle.bottom.50percent"
         case .hosts:          return "doc.text.fill"
         case .quarantine:     return "lock.shield"
+        case .audioControl:   return "slider.horizontal.3"
         case .toolbox:        return "wrench.and.screwdriver.fill"
         case .aiKeepAlive:    return "bolt.heart.fill"
         case .imageUpscale:   return "arrow.up.left.and.arrow.down.right"
@@ -152,6 +156,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .nice:           return "优先级 nice 进程 调度"
         case .hosts:          return "hosts 域名 屏蔽 改写"
         case .quarantine:     return "隔离 解除 隔离属性 下载"
+        case .audioControl:   return "音量 音频 应用 音量控制 静音"
         case .toolbox:        return "工具 全部 实用"
         case .aiKeepAlive:    return "保活 ai 模型 接口 心跳"
         case .imageUpscale:   return "图片 放大 超分 清晰度"
@@ -306,7 +311,7 @@ struct ContentView: View {
     /// 当前页是不是「从工具箱进来的工具页」。
     private var showsBackToToolbox: Bool {
         switch selection {
-        case .nice, .hosts, .quarantine, .aiKeepAlive,
+        case .nice, .hosts, .quarantine, .aiKeepAlive, .audioControl,
              .imageUpscale, .lsof, .shellConfig, .deviceDiagnostics, .wakeOnLAN:
             return true
         default:
@@ -335,6 +340,7 @@ struct ContentView: View {
         case .nice:           NiceView()
         case .hosts:          HostsView()
         case .quarantine:     QuarantineView()
+        case .audioControl:   AudioControlView()
         case .toolbox:
             ToolboxView { tool in
                 selection = tool.sidebarItem

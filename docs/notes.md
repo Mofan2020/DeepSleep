@@ -3707,3 +3707,238 @@ Swift 是整模块一次性编译，报出的错就是全部错。所以不用�
 
 - release 已发出来 → 不能复用 tag，开新版本号（v1.11.4 → v1.11.5）
 - release 没发出来（构建失败）→ 可以删 tag 重打同一个版本号
+
+---
+
+## v1.12.0 — 音频控制（实验性）
+
+### macOS 没有 per-app 音量 API
+
+先说结论：**macOS 不提供原生的逐应用音量控制**。系统设置里没有，
+公开 SDK 里也没有。这不是「没找到」，是「不存在」。
+
+试过并否掉的路线：
+
+| 路线 | 结果 |
+| --- | --- |
+| `kAudioProcessPropertyVolumeScalar` | 属性不存在，读不到也写不了 |
+| process object 上的任何音量 selector | 即便进程正在出声也不存在 |
+| `kAudioDevicePropertySubVolumeScalar` | 对聚合设备返回 `2003332927`（`who?`，四字码表示未知属性） |
+| `kAudioHardwarePropertyProcessIsAudible`（`pmut`） | 系统对象上可写，element 可以是 PID，但**写一个 PID 会同时影响所有 PID** —— 是全局开关，不是 per-app |
+| per-process 默认输出设备（`sys-obj / dOut@Global / element=pid`） | 写入返回 `noErr`，读回**值没变** —— 被静默忽略 |
+
+所以唯一可行的路是**自己接管音频路径**。
+
+### 最终架构：tap + 聚合设备 + IOProc
+
+参考 `vorssaint/vorssaint-utils` 的 `AppVolumeMixer`（它的注释直接写着
+*"Per-app volume control, something macOS does not offer natively"*）：
+
+```
+目标进程 ──► tap（mutedWhenTapped）──┐
+                                     ├──► 聚合设备 ──► IOProc（vDSP 乘增益）──► 真实输出设备
+真实输出设备（作为 sub-device）──────┘
+```
+
+四个关键点：
+
+1. **tap 的 mute behavior 必须是 `.mutedWhenTapped`**
+   被 tap 的进程声音不再直接走硬件，改由聚合设备的 IOProc 重渲染回去。
+   `.muted` 会让进程永远不出声；`.unmuted` 会造成双重播放。
+
+2. **聚合设备的 sub-device 列表放真实输出设备，taps 列表放 tap**
+   搞反的话（tap 当主 sub-device）聚合设备能建、能启动，但
+   `buffers=0` —— tap 只提供输入，没有输出流。
+
+3. **三个 UID 键不能混用**
+   - `kAudioAggregateDeviceUIDKey` — 聚合设备自身
+   - `kAudioSubDeviceUIDKey` — 真实输出设备
+   - `kAudioSubTapUIDKey` — tap
+
+4. **不需要改系统默认输出**
+   聚合设备是 private 的，真实输出设备仍��系统默认。CoreAudio 在设备层混音，
+   多个引擎可以同时往同一个物理设备送。
+
+### 为什么音量上限锁在 1.0
+
+增益曲线是平方：`gain = volume²`（0.5 → 0.25，1.0 → 1.0），感知音量才线性。
+
+**上限锁死 1.0，不允许放大**。放大需要限制器（limiter）来防削波，
+那是实时线程里最复杂的一块（vorssaint 为此引入了 Boost 的 lookahead limiter
+和一个限幅回退路径）。功能需求明确说了「不支持附加音效」，那就不要削波风险，
+只做衰减。少一个实时线程里的复杂状态 = 少一类崩溃。
+
+`scripts/test-audio-control.swift` 里有一条断言专门守着这个：
+全量程增益不得超过 1。
+
+### 踩过的坑
+
+**tap 的 UUID 拿不到**
+`kAudioTapPropertyUID` 读出来是空的。原因是 `CATapDescription` 在
+Swift 里的属性名被 `NS_REFINED_FOR_SWIFT` 改过：
+`isMono` / `isExclusive` / `isMixdown` / `isPrivate` / `isProcessRestoreEnabled`，
+不是 `mono` / `exclusive` / `mixdown` / `privateTap` / `processRestoreEnabled`。
+
+**Swift closure 不能直接当 C 函数指针**
+`AudioDeviceIOProc` 是 C 函数指针类型，闭包捕获上下文就编不过
+（`a C function pointer cannot be formed from a closure that captures context`）。
+解法是把上下文塞进 `AudioDeviceCreateIOProcID` 的 `clientData` 参数，
+用 `Unmanaged.passUnretained` 传裸指针，IOProc 里再取回来。
+
+**`AudioBufferList.mBuffers` 不是数组**
+它是 C 的柔性数组成员，Swift 里 `mBuffers[i]` 编不过。
+用 `UnsafeMutableRawPointer(&abl.pointee.mBuffers).assumingMemoryBound(to: AudioBuffer.self)`
+自己算偏移。直接 `&abl.pointee.mBuffers` 还会触发 `TemporaryPointers` 警告
+（取的是临时值的地址）。
+
+**`AudioObjectGetPropertyData` 读 CFString 不用 `takeRetainedValue()`**
+读 `CFString?` 属性时，`AudioObjectGetPropertyData` 直接填 CFString 引用，
+不需要 `takeRetainedValue()`（那是 `Unmanaged<CFString>` 才有的方法）。
+写成 `uid.takeRetainedValue()` 编不过。
+
+**`UserDefaults.double(forKey:)` 对缺失键返回 0**
+「从没设置过音量」会被误判成「静音」—— 用户打开应用发现所有 app 都没声音。
+`storedVolume` 用 `defaults.object(forKey:) != nil` 区分「没设过」与「设成了 0」。
+
+**采样率不匹配导致 tap 采不到音频**
+tap 要用**目标进程实际在用的设备**建，不能用系统默认输出的设备。
+本机默认输出是蓝牙耳机（44100Hz），而目标进程可能走内置扬声器（48000Hz），
+不匹配就是一路零。tap 的 deviceUID 和 stream 要按进程实际的 `kAudioProcessPropertyDevices` 来取。
+
+### 稳定性设计
+
+- **退出路径必须显式 stop**
+  tap 是 muted-when-tapped。Deep Sleep 进程死掉时，tap 与聚合设备随之消失，
+  被 tap 的应用会**一直哑掉**直到 coreaudiod 清掉残留。
+  所以 `applicationShouldTerminate` 里必须调 `shutdownForAppExit()`。
+
+- **IOProc 里不许有锁、分配、Swift 堆操作**
+  实时线程上一旦有阻塞就是爆音或丢帧。IOProc 里只做
+  `vDSP_vsmul`（vDSP 是无分配的）。
+
+- **实验性功能默认关闭**
+  `isEnabled` 存 UserDefaults，默认 false。用户显式开启才建引擎。
+
+- **引擎只在音量 ≠ 100% 且进程在出声时创建**
+  音量 100% 的 app 完全不碰 —— 零开销、零风险。
+
+### 没有验证的部分
+
+- **IOProc 的实际增益效果没有在真机上量过。** 链路（tap → 聚合 → IOProc → 输出）
+  逐段验证过：tap 建得起来、聚合设备 48kHz/2ch/float、IOProc 能启动并回调
+  （实测 141 次回调）、系统默认输出切换成功又恢复成功。但**没有拿到
+  gain=1.0 与 gain=0.0 的 RMS 对比数据** —— 探针跑的时候目标进程选错了
+  （选到了没真正出声的 `CoreSpeech`），tap 输入是零。
+- **蓝牙耳机 / AirPlay 输出未验证。** 本机默认输出是 Redmi Buds 6（44100Hz），
+  而 tap 按 48000 建。设备枚举在那轮测试里也出了问题（CoreAudio 只返回
+  麦克风），需要重启 coreaudiod 才能复测。
+- **多应用同时调节未验证。** 每个 app 一个独立聚合设备、全部指向同一个物理输出设备，
+  理论可行（CoreAudio 设备层混音），但没有实测两个引擎同时跑。
+
+### 排查方法留下的痕迹
+
+反复创建 + 销毁聚合设备会把 coreaudiod 的 HAL 状态搞坏 ——
+之后 `kAudioHardwarePropertyDevices` 只返回麦克风，`system_profiler` 却仍显示
+扬声器正常。是**客户端枚举卡住**，不是硬件坏了，重启 coreaudiod 即可恢复。
+
+调试这类问题时别直接断定「系统音频坏了」：
+先对比 `system_profiler SPAudioDataType`（走另一条路径，仍能看到扬声器）
+和 CoreAudio 枚举（卡住），两者不一致就说明是 HAL 客户端状态问题。
+
+---
+
+## v1.12.0（续）— 菜单栏入口与音频链路自愈
+
+### 菜单栏入口
+
+音频管理是一个**独立的 `NSStatusItem`**，由设置里的 `menuBar` 开关控制，默认关。
+不开的时候菜单栏里不多任何东西，也不会建任何 tap。
+
+- 开关与音量落在同一个 suite：`UserDefaults(suiteName: "com.skyc8266.deepsleep.audio.v1")`，
+  键是 `enabled` / `menuBar` / `volume:<bundleID>`。没有另起一套配置。
+- 打开菜单栏开关会连带把功能总开关打开 —— 否则菜单里没有任何能调的东西。
+- 菜单每次弹出都重建，行是 `NSMenuItem.view` 自定义视图（`AudioMenuRowView`）：
+  应用图标 + 名称 + 0–100% 滑杆 + 静音按钮。拖动过程中就生效（`isContinuous`），
+  松手才改的话用户听不出哪一档是对的。
+- 三种空/异常态：没有 app 在出声、没授权（带「去系统设置授权」一行）、
+  授权被撤销后自动回到空态。
+- 单独占一格而不是塞进原来的右键菜单：开着时用户要的是抬手就调，
+  关掉时不该在菜单栏留东西。
+
+### 补掉的五个洞
+
+| 洞 | 改法 | 为什么 |
+| --- | --- | --- |
+| 信 `desc.uuid` | 建完 tap 后读 `kAudioTapPropertyUID`（`'tuid'`） | HAL 回写 description 是未文档化行为；Apple 示例读的是属性。旧代码还多建了一个根本没用上的 description |
+| 没授权时全零、无错误码 | IOProc 里用 `vDSP_maxmgv` 量**增益之前**的输入峰值；每 6 秒一个窗口，全零且目标 `'piro'`=1 → 拆掉重建一次，再全零就判未授权 | 没授权时 `CreateProcessTap` / 聚合设备 / `AudioDeviceStart` / IOProc 全部 `noErr`，数据全零，没有任何 API 会报错 |
+| 上一轮音频残留 | 进 IOProc 第一件事：把所有 out buffer `memset` 成 0 | 没有 tap 数据的周期直接 return 会把硬件缓冲里上一轮内容重复播放，听感是卡带式重复 |
+| 按 PID 建 tap，进程换 PID 就断 | `desc.bundleIDs = [bundleID]` + `desc.isProcessRestoreEnabled = true` | app 退出重开换 PID 时 tap 自己跟；有 bundleID 的引擎不再因进程变化重建，少一次断音 |
+| ad-hoc 签名导致每次升级重弹授权 | **本轮不改构建配置**，只记结论（见下） | 下面单说 |
+
+授权被撤销的处理：拆掉**所有**引擎。没授权时 tap 照样把 app 从系统混音里摘走了，
+数据却是零 —— 留在那儿就是把这个 app 静音了。拆掉声音立刻回来，然后每 6 秒
+建一个 1.5 秒的「金丝雀」tap 探一次，探到峰值就自动恢复用户调过的音量。
+金丝雀不能常驻：没授权时它会让目标 app 静那 1.5 秒。
+
+### 签名：自签证书，别用 ad-hoc（本条没动构建配置）
+
+实测同一份代码的 designated requirement：
+
+```
+ad-hoc 签名   → designated => cdhash H"c901eed7..."              ← 每次构建/每个版本都变
+自签 ECC 证书 → designated => identifier "com.x.y" and certificate leaf = H"b1fe859d..."   ← 稳定
+```
+
+TCC 按 designated requirement 记账。用 ad-hoc 就是**每发一个版本，用户都要重新
+授权一次「录制系统音频」**；用自签证书，只要证书不变，授权跟着 bundle id 跨版本保留。
+不需要开发者账号（openssl 现造一张 ECC 证书即可）。
+
+副作用：自签证书不进系统信任链，用户的 Gatekeeper 流程仍是「右键打开」，
+和现在 ad-hoc 一样，没变差。
+
+### 异常恢复
+
+| 事件 | 监听 | 动作 |
+| --- | --- | --- |
+| coreaudiod 重启（`killall`、系统更新、Audio MIDI 设置崩） | `kAudioHardwarePropertyServiceRestarted`（`'srst'`） | 硬失效：先 `stop()` 全量拆，再全量重建，重新挂监听。旧 id 一律不复用 |
+| 默认输出设备变化（插 AirPods / HDMI / 手动切） | `kAudioHardwarePropertyDefaultOutputDevice` | 重建聚合设备，tap 的 `deviceUID` 跟着换；否则 tap 抓的是旧设备的流，全零 |
+| 设备被拔 | `kAudioDevicePropertyDeviceIsAlive` 掉 0、`kAudioHardwarePropertyDevices` 变化 | 先 `AudioDeviceStop` → 拆聚合设备 → 销毁 tap。**中间不留「tap 活着但没人读」**：`mutedWhenTapped` 期间目标 app 已被摘出混音，读端没了就是真静音。等默认设备回来再建 |
+| 目标 app 退出/重开 | `processRestoreEnabled` + 2 秒一轮的进程列表刷新 | 有 bundleID 的 tap 自己跟；无 bundleID 的按 pid 重建 |
+| tap 建成功但不出声 | IOProc 峰值 + 6 秒窗口 | 拆掉重建一次，两次全零 → 判未授权，引导去系统设置 |
+| 用户中途关掉授权 | 无通知，只能探活 | 6 秒一次窗口 + 金丝雀探测，见上 |
+| DeepSleep 自己崩/被杀 | — | tap 是 `isPrivate` 且随进程销毁，音频自动回流，不需要 watchdog。前提是**不能**用 `CATapMuted`（必须是 `mutedWhenTapped`） |
+
+两条实现约束：
+
+- **所有重建走同一个串行队列**（`com.skyc8266.deepsleep.audio.rebuild`），
+  队列里只放 CoreAudio 的建与拆，状态只在主线程改。两个聚合设备同时挂同一个
+  物理设备会把 coreaudiod 的 HAL 状态搞坏。
+- **`AudioDeviceStop` 省电**：目标安静满 8 轮刷新（约 16 秒）就停 IOProc，tap 与
+  聚合设备留着。不定成 1 轮 —— 通知音这类间歇出声的 app 会被反复停/启，每次都
+  有一个可听的断点。
+
+### 一个不在原清单里的坑：IOProc 上下文悬垂指针
+
+旧实现在 init 里 `var ctx = IOProcContext(...)`，把 `&ctx` 交给
+`AudioDeviceCreateIOProcID`。那个 struct 在 init 的栈帧上，init 一返回指针就
+指向已回收的栈 —— IOProc 每帧读到的是随机值。现在整块放堆上
+（`RenderContext` 类 + `Unmanaged`），生命周期跟着引擎。
+
+顺带：`AudioDeviceCreateProcessTap` 之后 `kAudioTapPropertyUID` 读不到就直接
+失败，不再拿 `desc.uuid` 兜底。
+
+### 一处防自激
+
+`kAudioHardwarePropertyDevices` 在我们自己建/拆聚合设备时也会发。无脑全量重建
+就成了无限重建，所以那个监听只做一件事：比对当前默认输出设备的 UID 与引擎指着
+的是不是同一个，不一样才重建。
+
+### 本轮验证到哪一步
+
+已验证：Debug 编译通过；`scripts/test-audio-control.swift` 44 项全过；
+`scripts/test-audio-control-mutation.sh` 6 个变异点全部被抓住。
+
+没验证（本机没有替用户点授权，也没有可听的比对）：
+点过「允许」之后增益是否真的生效、已授权时是否还会重复弹窗、
+蓝牙/AirPods 切换时的断音与重建耗时、多个引擎同时跑时的混音。
+这几条只能在授权后由人耳确认。

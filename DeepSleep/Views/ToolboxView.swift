@@ -28,6 +28,7 @@ extension ToolboxTool {
         case .hosts:          return .hosts
         case .quarantine:     return .quarantine
         case .aiKeepAlive:    return .aiKeepAlive
+        case .audioControl:   return .audioControl
         case .imageUpscale:   return .imageUpscale
         case .lsof:           return .lsof
         case .shellConfig:    return .shellConfig
@@ -137,6 +138,8 @@ struct ToolboxView: View {
                 : ToolCard.Status(text: "助手未就绪", isActive: false, color: DS.Tone.caution)
         case .quarantine:
             return ToolCard.Status(text: "可用", isActive: true, color: DS.Tone.good)
+        case .audioControl:
+            return ToolCard.Status(text: "实验性", isActive: true, color: DS.Tone.info)
         case .imageUpscale, .shellConfig, .deviceDiagnostics:
             // 纯本地能力：不依赖助手，也不依赖网络。
             return ToolCard.Status(text: "可用", isActive: true, color: DS.Tone.good)
@@ -169,7 +172,7 @@ struct ToolboxView: View {
             // proc_pidinfo + proc_pidpath + 读 nice，历史要 4~5 秒，
             // 放在这一页会卡住整页。
             return "共 \(ToolboxProcessCounter.count) 个进程"
-        case .hosts, .quarantine:
+        case .hosts, .quarantine, .audioControl:
             return nil
         case .imageUpscale, .lsof, .shellConfig, .deviceDiagnostics, .wakeOnLAN:
             // 这几个工具不做常驻采样，卡片上不放数字（工具箱页不触发任何重 IO）。
@@ -322,22 +325,31 @@ struct ToolCard: View {
         )
     }
 
+    /// 工具图标。
+    ///
+    /// 徽板本身画 30pt，但**热区**抬到 44pt（DS.Metric.minimumTouchTarget）：
+    /// 图标小一点没关系，手不用瞄那么准 —— 触控板上 30pt 的目标很难点中。
+    ///
+    /// 用 minHeight + top 对齐而不是直接给 44×44：徽板还是原来那么大，
+    /// 只是热区变高，不会把标题挤下去。
     private var iconContainer: some View {
         Image(systemName: symbol)
             .font(.system(size: 16, weight: .semibold))
             .foregroundStyle(isInactive ? Color.secondary : Color.accentColor)
-            .frame(width: 30, height: 30)
+            .frame(width: DS.Metric.toolIconSize, height: DS.Metric.toolIconSize)
             .background(
                 (isInactive ? Color.secondary : Color.accentColor).opacity(0.14),
                 in: RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous)
             )
+            .frame(minHeight: DS.Metric.minimumTouchTarget, alignment: .top)
+            .contentShape(Rectangle())
     }
 
     private var pinIcon: some View {
         Image(systemName: isPinned ? "pin.fill" : "pin")
             .font(.system(size: 14))
             .foregroundStyle(isPinned ? Color.accentColor : Color.secondary)
-            .frame(width: 24, height: 24)
+            .frame(width: DS.Metric.iconButtonSize, height: DS.Metric.iconButtonSize)
             .contentShape(Rectangle())
             .help(isPinned ? "取消置顶" : "置顶")
     }

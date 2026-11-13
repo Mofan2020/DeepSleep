@@ -145,6 +145,9 @@ struct MonitoringView: View {
             accent: DS.Tone.info
         ) {
             VStack(alignment: .leading, spacing: DS.Space.md) {
+                // 首屏最要紧的四块（CPU / 内存 / 磁盘 / 网络）排在网格最前。
+                // 后面三块（温度 / GPU / NPU）是「看情况才关心」的，
+                // 排在后面不碍事。
                 LazyVGrid(
                     columns: [
                         GridItem(.flexible(), spacing: DS.Space.md),
@@ -154,8 +157,9 @@ struct MonitoringView: View {
                 ) {
                     cpuTile
                     memoryTile
-                    temperatureTile
                     rootVolumeTile
+                    networkTile
+                    temperatureTile
                     gpuTile
                     npuTile
                 }
@@ -226,6 +230,54 @@ struct MonitoringView: View {
         )
     }
 
+    /// 网络速率（下行）。
+    ///
+    /// 之前网络只在下面的次级读数里以一行文字出现，得滚过指标块才看得到；
+    /// 现在提到首屏，和 CPU / 内存 / 磁盘并列 —— 四个最常看的指标一眼能扫完。
+    ///
+    /// 只放下行：上行留在下面的读数面板里。同一个数在一页里出现两次，
+    /// 用户会以为是两个不同的读数。
+    private var networkTile: some View {
+        let rate = snapshot.networkRate?.downloadBytesPerSecond
+        let parts = rate.map { rateParts($0) }
+        return MetricTile(
+            title: "网络（下行）",
+            value: parts?.value ?? "不可用",
+            unit: parts?.unit,
+            status: networkStatusText,
+            tint: networkTone,
+            progress: nil,
+            symbol: "arrow.down"
+        )
+    }
+
+    /// 网络的状态词：跟面板上那条高亮线比。
+    private var networkStatusText: String {
+        guard snapshot.networkRate != nil else { return "正在采样" }
+        if isNetworkOverThreshold { return "超过阈值" }
+        return "正常"
+    }
+
+    private var networkTone: Color {
+        guard snapshot.networkRate != nil else { return DS.Tone.idle }
+        return isNetworkOverThreshold ? DS.Tone.caution : DS.Tone.good
+    }
+
+    private var isNetworkOverThreshold: Bool {
+        guard let rate = snapshot.networkRate else { return false }
+        return metricThresholds.networkBytesPerSecond > 0
+            && rate.downloadBytesPerSecond >= metricThresholds.networkBytesPerSecond
+    }
+
+    /// 速率 → (数值, 单位)。跟总览页的口径一致（十进制 1000 进制）。
+    private func rateParts(_ bytesPerSecond: Double) -> (value: String, unit: String) {
+        let clamped = min(max(bytesPerSecond, 0), Double(UInt64.max))
+        let formatted = SystemMetrics.formatBytes(UInt64(clamped.rounded()))
+        let parts = formatted.split(separator: " ")
+        guard parts.count == 2 else { return (formatted, "/s") }
+        return (String(parts[0]), "\(parts[1])/s")
+    }
+
     /// GPU 使用率。数据来自本机 IOKit 的 `IOAccelerator` 性能计数器，
     /// 不需要特权助手 —— 助手没装也能读到。
     private var gpuTile: some View {
@@ -256,9 +308,11 @@ struct MonitoringView: View {
         )
     }
 
-    /// 次级读数：负载、开机时长、热压力、网络。
+    /// 次级读数：负载、开机时长、热压力、上行速率。
     ///
     /// 这些不是「百分比型」指标，做不成 MetricTile，用 LabeledContent 排。
+    ///
+    /// 下行速率已经在上面的指标块里了，这里只留上行 —— 同一个数不出现两次。
     private var liveReadoutPanel: some View {
         VStack(alignment: .leading, spacing: DS.Space.xs) {
             LabeledContent("负载均值（1 / 5 / 15 分钟）") {
@@ -272,8 +326,8 @@ struct MonitoringView: View {
             LabeledContent("热压力（系统热压力等级）") {
                 Text(thermalStateText)
             }
-            LabeledContent("网络（所有物理网卡合计）") {
-                Text(networkText)
+            LabeledContent("网络上行（所有物理网卡合计）") {
+                Text(uploadRateText)
                     .monospacedDigit()
             }
         }
@@ -366,7 +420,7 @@ struct MonitoringView: View {
     private var coreUsageCard: some View {
         SectionCard(
             title: "每核心 CPU",
-            subtitle: "颜色随占用率变化。",
+            subtitle: "颜色随占用率变化，分档说明见下方图例。",
             symbol: "cpu",
             accent: DS.Tone.info
         ) {
@@ -383,6 +437,9 @@ struct MonitoringView: View {
                                     .frame(height: max(2, 56 * min(max(value, 0), 100) / 100))
                             }
                             .frame(height: 56)
+                            // 光靠颜色分不出「这根是哪一档」—— 把百分比写进
+                            // 提示里，鼠标一停就能读到具体数值。
+                            .help("\(index) 号核心 \(Int(value))%")
 
                             Text("\(index)")
                                 .font(.system(size: 9, design: .monospaced))
@@ -398,9 +455,48 @@ struct MonitoringView: View {
                     Tag(text: "\(snapshot.perCoreCPUPercent.count) 核", color: DS.Tone.idle)
                     Spacer(minLength: DS.Space.sm)
                 }
+
+                coreUsageLegend
             }
         }
     }
+
+    /// 每核心占用的四档图例。
+    ///
+    /// 颜色不能是唯一的区分手段（设计规则 4）—— 色条本身没有文字，
+    /// 所以这里把四档的档名写出来，颜色与档名一一对应。
+    /// 档名与 coreColor(for:) 的分档完全一致，改一处就要改两处。
+    private var coreUsageLegend: some View {
+        HStack(spacing: DS.Space.md) {
+            ForEach(Self.coreBands, id: \.label) { band in
+                HStack(spacing: DS.Space.xxs) {
+                    Circle()
+                        .fill(band.tone)
+                        .frame(width: 7, height: 7)
+                    Text(band.label)
+                        .font(.caption2)
+                        .foregroundStyle(band.tone)
+                }
+            }
+            Spacer(minLength: DS.Space.sm)
+        }
+    }
+
+    /// 每核心占用的分档。文字 + 颜色一起给。
+    private struct CoreBand {
+        let label: String
+        let tone: Color
+    }
+
+    /// 四档从低到高：占用率越高越接近 caution。
+    ///
+    /// 阈值与 coreColor(for:) 一致 —— 30% / 70% / 用户设定的单核高亮线。
+    private static let coreBands: [CoreBand] = [
+        CoreBand(label: "正常", tone: DS.Tone.good),
+        CoreBand(label: "偏高", tone: DS.Tone.info),
+        CoreBand(label: "高", tone: DS.Tone.notice),
+        CoreBand(label: "满载", tone: DS.Tone.caution)
+    ]
 
     private var corePeak: Double {
         snapshot.perCoreCPUPercent.max() ?? 0
@@ -439,11 +535,11 @@ struct MonitoringView: View {
                     memoryStackedBar(memory)
 
                     VStack(spacing: DS.Space.sm) {
-                        memoryRow("应用占用", bytes: memory.appBytes, percent: memory.appPercent, color: .blue)
-                        memoryRow("联动（wired）", bytes: memory.wiredBytes, percent: memory.wiredPercent, color: .orange)
-                        memoryRow("压缩", bytes: memory.compressedBytes, percent: memory.compressedPercent, color: .purple)
-                        memoryRow("缓存", bytes: memory.cachedBytes, percent: memory.cachedPercent, color: .teal)
-                        memoryRow("空闲", bytes: memory.freeBytes, percent: memory.freePercent, color: .secondary)
+                        memoryRow("应用占用", bytes: memory.appBytes, percent: memory.appPercent, color: DS.Tone.info)
+                        memoryRow("联动（wired）", bytes: memory.wiredBytes, percent: memory.wiredPercent, color: DS.Tone.caution)
+                        memoryRow("压缩", bytes: memory.compressedBytes, percent: memory.compressedPercent, color: DS.Tone.info)
+                        memoryRow("缓存", bytes: memory.cachedBytes, percent: memory.cachedPercent, color: DS.Tone.notice)
+                        memoryRow("空闲", bytes: memory.freeBytes, percent: memory.freePercent, color: DS.Tone.idle)
                     }
 
                     Divider()
@@ -486,11 +582,11 @@ struct MonitoringView: View {
     private func memoryStackedBar(_ memory: SystemMetrics.MemoryBreakdown) -> some View {
         GeometryReader { geo in
             HStack(spacing: 0) {
-                segment(memory.appPercent, total: geo.size.width, color: .blue)
-                segment(memory.wiredPercent, total: geo.size.width, color: .orange)
-                segment(memory.compressedPercent, total: geo.size.width, color: .purple)
-                segment(memory.cachedPercent, total: geo.size.width, color: .teal)
-                segment(memory.freePercent, total: geo.size.width, color: .secondary.opacity(0.3))
+                segment(memory.appPercent, total: geo.size.width, color: DS.Tone.info)
+                segment(memory.wiredPercent, total: geo.size.width, color: DS.Tone.caution)
+                segment(memory.compressedPercent, total: geo.size.width, color: DS.Tone.info)
+                segment(memory.cachedPercent, total: geo.size.width, color: DS.Tone.notice)
+                segment(memory.freePercent, total: geo.size.width, color: DS.Tone.idle.opacity(0.3))
             }
             .background(Color.secondary.opacity(0.08))
             .clipShape(RoundedRectangle(cornerRadius: DS.Radius.control, style: .continuous))
@@ -595,7 +691,7 @@ struct MonitoringView: View {
         guard let fraction = volume.usedFraction else { return .secondary }
         let percent = fraction * 100
         if percent >= metricThresholds.diskUsagePercent { return DS.Tone.caution }
-        if percent >= 75 { return .yellow }
+        if percent >= 75 { return DS.Tone.notice }
         return .primary
     }
 
@@ -1088,17 +1184,19 @@ struct MonitoringView: View {
         snapshot.thermalState?.displayName ?? "不可用"
     }
 
-    private var networkText: String {
+    /// 上行速率。上行只在下面这一处出现 —— 下行已经提到首屏的指标块里了。
+    private var uploadRateText: String {
         guard let network = snapshot.networkRate else { return "正在采样" }
-        return "↓ \(SystemMetrics.formatRate(network.downloadBytesPerSecond))"
-            + "  ↑ \(SystemMetrics.formatRate(network.uploadBytesPerSecond))"
+        return SystemMetrics.formatRate(network.uploadBytesPerSecond)
     }
 
     private func coreColor(for value: Double) -> Color {
-        if value >= metricThresholds.coreCPUPercent { return .orange }
-        if value >= 70 { return .yellow }
-        if value >= 30 { return .teal }
-        return .green
+        // 四档各占一个语义色，彼此必须可分：
+        // 占用率越高越接近「满载」，所以从 good 一路升到 caution。
+        if value >= metricThresholds.coreCPUPercent { return DS.Tone.caution }
+        if value >= 70 { return DS.Tone.notice }
+        if value >= 30 { return DS.Tone.info }
+        return DS.Tone.good
     }
 
     // MARK: - 数据新鲜度

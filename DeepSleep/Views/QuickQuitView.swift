@@ -91,7 +91,22 @@ struct QuickQuitView: View {
                 }
 
                 Button {
-                    Task { _ = await engine.run(dryRun: false, trigger: "界面按钮") }
+                    // 「立即退出全部」会结束名单里所有应用及其全部子进程，
+                    // 不可撤销 —— 所以先弹二次确认，别让一次误点就把
+                    // 用户正在写的文档一起带走。
+                    //
+                    // 复用 Components.swift 里现成的 TlDeleteRequest +
+                    // deleteConfirmation：确认按钮是 destructive 样式，
+                    // 用户一眼看得出这是不可逆的操作。
+                    pendingDelete = TlDeleteRequest(
+                        title: "立即退出全部？",
+                        message: "会结束名单里 \(engine.targets.count) 个应用及其全部子进程。"
+                            + "这个操作不可撤销，尚未保存的工作会丢失。",
+                        confirmTitle: "退出全部",
+                        perform: {
+                            Task { _ = await engine.run(dryRun: false, trigger: "界面按钮") }
+                        }
+                    )
                 } label: {
                     Label("立即退出全部", systemImage: "xmark.circle.fill")
                 }
@@ -99,7 +114,7 @@ struct QuickQuitView: View {
                 .tint(.red)
                 .disabled(engine.targets.isEmpty || engine.isRunning)
 
-                Text("会一并结束名单里这些应用的**全部子进程**（受保护的系统进程除外）。先点「演练一次」看看会动哪些。")
+                Text("会一并结束名单里这些应用的全部子进程（受保护的系统进程除外）。先点「演练一次」看看会动哪些。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

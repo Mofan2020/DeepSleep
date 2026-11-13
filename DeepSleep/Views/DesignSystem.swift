@@ -65,6 +65,16 @@ enum DS {
         static let caution = Color.orange
         /// 失败 / 危险阈值
         static let critical = Color.red
+        /// 注意，但还没到危险。
+        ///
+        /// 为什么单独加这一档：温度是四档（正常 / 偏高 / 过高 / 紧急），
+        /// 四档必须彼此可分 —— 而 good / caution / critical 已经被
+        /// 「正常 / 过高 / 紧急」占掉了，「偏高」这一档原本没有落点，
+        /// 只能直接用 Color.yellow 写在页面里（装饰色漏进页面）。
+        ///
+        /// 不能拿 caution 顶替：那样「偏高」和「过高」就同色，
+        /// 颜色 + 文字的双编码只剩一半意思，用户分不出两档。
+        static let notice = Color.yellow
         /// 强调、进行中
         static let info = Color.accentColor
         /// 未启用 / 静默
@@ -87,6 +97,38 @@ enum DS {
         /// 跟下方内容之间的视觉权重差变小了，72 的圈看起来偏小、
         /// 不像这一页的主状态。84 跟旁边 title2 的标题大小配得上。
         static let gaugeDiameter: CGFloat = 84
+
+        /// 图标按钮里**图标本体**的边长。
+        ///
+        /// 只是把「图标画多大」收进令牌：视觉尺寸不变（还是 24），
+        /// 但页面里不再散着 24 这个字面量 —— 同一个图标在几个页面
+        /// 长得不一样，根源就是每处各写各的数字。
+        static let iconButtonSize: CGFloat = 24
+
+        /// 触控目标的最小边长。
+        ///
+        /// 图标本体可以小（见 iconButtonSize），但**热区**不能小：
+        /// 24pt 的图标在触控板上很难点中。热区统一抬到 44pt，
+        /// 视觉尺寸保持不变 —— 用户看到的是同一个图标，
+        /// 只是手不用瞄那么准。
+        static let minimumTouchTarget: CGFloat = 44
+
+        /// 工具箱卡片里图标徽板的边长。
+        ///
+        /// 徽板是装饰，30pt 就够；但它的热区另有尺寸
+        /// （见 minimumTouchTarget），两者分开是因为「画多大」和
+        /// 「点得准不准」是两个问题。
+        static let toolIconSize: CGFloat = 30
+
+        /// 「应用无响应」提示面板里的图标边长。
+        static let alertIconSize: CGFloat = 40
+
+        /// 「应用无响应」提示面板的宽度。
+        ///
+        /// 面板是固定宽度的（宿主视图也按这个宽度约束），所以这个数
+        /// 同时被 SwiftUI 视图和 AppKit 约束引用 —— 收进令牌是为了
+        /// 两边不会各写各的、宽度对不上。
+        static let alertPanelWidth: CGFloat = 340
     }
 
     // MARK: 动效

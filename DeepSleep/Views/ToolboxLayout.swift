@@ -24,6 +24,8 @@ enum ToolboxTool: String, CaseIterable, Identifiable, Hashable {
     case hosts
     case quarantine
     case aiKeepAlive
+    /// 音频控制（实验性）：逐应用音量调节。
+    case audioControl
     /// 图片超分：把图片放大 2–4 倍，多种算法可选。
     case imageUpscale
     /// lsof：查端口 / 文件被哪个进程占用。
@@ -43,6 +45,7 @@ enum ToolboxTool: String, CaseIterable, Identifiable, Hashable {
         case .hosts:          return "Hosts 编辑"
         case .quarantine:     return "Quarantine"
         case .aiKeepAlive:    return "AI 保活"
+        case .audioControl:   return "音频控制"
         case .imageUpscale:   return "图片超分"
         case .lsof:           return "lsof 查询"
         case .shellConfig:    return "Shell 配置"
@@ -58,6 +61,7 @@ enum ToolboxTool: String, CaseIterable, Identifiable, Hashable {
         case .hosts:          return "读写 /etc/hosts，并管理「谁能改 hosts」白名单。"
         case .quarantine:     return "扫描并清除 macOS 的 quarantine 扩展属性。"
         case .aiKeepAlive:    return "按计划给指定接口发一次请求，避免会话闲置失效。"
+        case .audioControl:   return "实验性：独立调节不同应用的音量（不改系统主音量）。"
         case .imageUpscale:   return "放大图片，可选神经网络超分、Lanczos、双三次、最近邻。"
         case .lsof:           return "查端口或文件被哪个进程占用，支持按端口、PID、路径查询。"
         case .shellConfig:    return "编辑 .zshrc / .zprofile 等启动文件，保存前语法检查并自动备份。"
@@ -73,6 +77,7 @@ enum ToolboxTool: String, CaseIterable, Identifiable, Hashable {
         case .hosts:          return "doc.text.fill"
         case .quarantine:     return "lock.shield.fill"
         case .aiKeepAlive:    return "bolt.heart.fill"
+        case .audioControl:   return "slider.horizontal.3"
         case .imageUpscale:   return "arrow.up.left.and.arrow.down.right"
         case .lsof:           return "network"
         case .shellConfig:    return "terminal"

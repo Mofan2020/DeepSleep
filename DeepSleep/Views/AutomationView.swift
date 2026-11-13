@@ -549,7 +549,10 @@ struct RuleRow: View {
                 onEdit()
             } label: {
                 Image(systemName: "pencil")
-                    .frame(width: 24, height: 24)
+                    .frame(width: DS.Metric.iconButtonSize, height: DS.Metric.iconButtonSize)
+                    // 热区 44pt：图标本体仍是 24pt，只是手不用瞄那么准。
+                    .frame(minWidth: DS.Metric.minimumTouchTarget,
+                           minHeight: DS.Metric.minimumTouchTarget)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
@@ -559,7 +562,9 @@ struct RuleRow: View {
                 onDelete()
             } label: {
                 Image(systemName: "trash")
-                    .frame(width: 24, height: 24)
+                    .frame(width: DS.Metric.iconButtonSize, height: DS.Metric.iconButtonSize)
+                    .frame(minWidth: DS.Metric.minimumTouchTarget,
+                           minHeight: DS.Metric.minimumTouchTarget)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
@@ -637,7 +642,9 @@ struct PlScheduledCommandRow: View {
 
             Button(role: .destructive, action: onDelete) {
                 Image(systemName: "trash")
-                    .frame(width: 24, height: 24)
+                    .frame(width: DS.Metric.iconButtonSize, height: DS.Metric.iconButtonSize)
+                    .frame(minWidth: DS.Metric.minimumTouchTarget,
+                           minHeight: DS.Metric.minimumTouchTarget)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
@@ -693,7 +700,9 @@ struct PlRestartTargetRow: View {
 
             Button(role: .destructive, action: onDelete) {
                 Image(systemName: "trash")
-                    .frame(width: 24, height: 24)
+                    .frame(width: DS.Metric.iconButtonSize, height: DS.Metric.iconButtonSize)
+                    .frame(minWidth: DS.Metric.minimumTouchTarget,
+                           minHeight: DS.Metric.minimumTouchTarget)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)

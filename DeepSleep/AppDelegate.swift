@@ -7,6 +7,7 @@
 //
 
 import AppKit
+import os
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
@@ -16,6 +17,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         WindowCoordinator.shared.observeWindowLifecycle()
+
+        // 自启先复查。
+        //
+        // launchd 里的 disabled 标记比 plist 更强势：一旦这个 label 被写进
+        // 那个标记（历史版本用过 `launchctl unload -w`，或用户在系统设置里
+        // 关过），登录时 launchd 会默默跳过它——界面上「开机自启」是开的，
+        // 重启后却什么都没发生，而且没有任何错误。这里每次启动都确认一遍
+        // 「plist 在、任务也在 launchd 里」，不在就补上。
+        if let note = AutoStartManager.repairIfNeeded() {
+            os_log(.info, log: .default, "自启复查：%{public}@", note)
+        }
 
         // 启动流程先开闸再等：Siri / 快捷指令 / deepsleep:// 可能在
         // bootstrap 跑完之前就把请求送到，`ensureReady()` 是它们的安全阀。
@@ -71,6 +83,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor in
             await SleepController.shared.shutdown()
             await SleepController.shared.restoreSleepDisabledIfNeeded()
+            // 音频控制：必须拆掉 tap 与聚合设备，否则被 tap 的应用会一直哑掉。
+            AudioControlManager.shared.shutdownForAppExit()
             NSApp.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
@@ -152,6 +166,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case "--status":
                 emit(summary(from: controller))
                 index += 1
+
+            case "--audio":
+                // 音频控制状态：开关 + 正在输出音频的应用 + 各自的音量。
+                // 不带参数只读状态；带 --audio set <应用> <音量> 才改。
+                index = Self.handleAudioArguments(arguments, startingAt: index)
+                continue
 
             case "--wait":
                 // 让 --status 能在运行一段时间后再报告，
@@ -304,6 +324,93 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 这里只补上只有 AppKit 才知道的 Dock 图标策略。
         controller.statusSummary
             + " dockIcon=\(NSApp.activationPolicy() == .accessory ? "hidden" : "visible")"
+    }
+
+    /// `--audio` 子命令：查状态 / 开关 / 设某个应用的音量。
+    ///
+    /// 用法：
+    ///   --audio                     列出状态（开关 + 正在出声的应用 + 音量）
+    ///   --audio on | off            开 / 关逐应用音量控制
+    ///   --audio set <应用> <音量>    设某个应用的音量（0...1，或 0-100 的百分数）
+    ///
+    /// 「应用」用 bundleID 或显示名（不区分大小写）。
+    ///
+    /// 返回值是下一个待处理的参数下标 —— 调用方据此继续推进。
+    @MainActor
+    private static func handleAudioArguments(_ arguments: [String], startingAt start: Int) -> Int {
+        let manager = AudioControlManager.shared
+        guard start + 1 < arguments.count else {
+            emitAudioStatus(manager)
+            return arguments.count
+        }
+
+        switch arguments[start + 1] {
+        case "on", "off":
+            manager.isEnabled = (arguments[start + 1] == "on")
+            emit(manager.isEnabled ? "逐应用音量控制已开启" : "逐应用音量控制已关闭")
+            return start + 2
+
+        case "set":
+            guard start + 3 < arguments.count else {
+                emit("--audio set 需要应用名与音量，例如 --audio set com.apple.Safari 0.5")
+                return arguments.count
+            }
+            let target = arguments[start + 2]
+            guard let volume = parseAudioVolume(arguments[start + 3]) else {
+                emit("音量不是合法数字：\(arguments[start + 3])")
+                return arguments.count
+            }
+            // 先确保有一份应用清单，否则没有 app 可改。
+            manager.refreshNow()
+            let apps = manager.controlledApps
+            guard let app = apps.first(where: {
+                $0.bundleID?.lowercased() == target.lowercased()
+                    || $0.displayName.lowercased() == target.lowercased()
+            }) else {
+                emit("没找到正在输出音频的应用「\(target)」。当前列表：")
+                for item in apps {
+                    emit("    \(item.displayName) —— \(item.bundleID ?? "无 bundleID")")
+                }
+                if apps.isEmpty { emit("    （空）") }
+                return start + 4
+            }
+            manager.setVolume(volume, for: app)
+            emit("「\(app.displayName)」的音量设为 \(AudioControlSupport.formatPercent(volume))")
+            return start + 4
+
+        default:
+            emit("--audio 不识别的子命令：\(arguments[start + 1])")
+            emit("可用：--audio [on|off|set <应用> <音量>]")
+            return arguments.count
+        }
+    }
+
+    /// 音量参数解析。接受 0...1 的小数，或 0...100 的百分数。
+    ///
+    /// 两种写法都认，是因为命令行里 `0.5` 和 `50` 都会被人写。
+    /// 大于 1 的值按百分数处理（50 → 0.5）。
+    private static func parseAudioVolume(_ raw: String) -> Double? {
+        guard let value = Double(raw) else { return nil }
+        if value > 1.0 { return AudioControlSupport.clampVolume(value / 100.0) }
+        return AudioControlSupport.clampVolume(value)
+    }
+
+    /// 打印音频控制状态。
+    @MainActor
+    private static func emitAudioStatus(_ manager: AudioControlManager) {
+        manager.refreshNow()
+        emit("逐应用音量控制 —— \(manager.isEnabled ? "已开启" : "已关闭")")
+        let apps = manager.controlledApps
+        if apps.isEmpty {
+            emit("    当前没有正在输出音频的应用")
+            return
+        }
+        for app in apps {
+            let engine = manager.engines[app.uniqueKey]
+            let state = engine != nil ? "引擎运行中" : "未调节"
+            emit("    \(app.displayName) —— \(AudioControlSupport.formatPercent(app.volume))"
+                 + "（\(state)，PID \(app.processIDs.map(String.init).joined(separator: ","))）")
+        }
     }
 
     /// 打印自动化接入清单：Siri 短语 + `deepsleep://` 命令。

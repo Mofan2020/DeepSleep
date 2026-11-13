@@ -47,6 +47,12 @@ struct ThermalView: View {
 
     @ObservedObject var monitor: ThermalMonitor
 
+    /// 风扇控制器。
+    ///
+    /// 只读它的「接管状态」与「兜底是否生效」两个状态：
+    /// 「交回系统」这个动作要落在控制器上（见 handOverButton）。
+    @ObservedObject private var fanController = FanController.shared
+
     /// 传感器分组的展开状态。
     ///
     /// SoC / 电池 / 存储 是常看且量小的，默认展开；GPU / 其它 / 校准参考
@@ -63,8 +69,8 @@ struct ThermalView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.lg) {
+            thermalStatusCard
             summaryCard
-            safetyCard
             sensorCard
             bandCard
             Spacer(minLength: 0)
@@ -85,100 +91,37 @@ struct ThermalView: View {
         }
     }
 
-    // MARK: - 概览
+    // MARK: - 顶部「热力状态」
 
-    private var summaryCard: some View {
+    /// 首屏的热力状态卡。
+    ///
+    /// 为什么放最上面：这一页最要紧的两件事是「当前最高温」与
+    /// 「90°C 兜底有没有生效」。原先兜底状态在传感器列表下面，
+    /// 用户得滚过去才看得到 —— 真出问题时恰恰来不及滚。
+    ///
+    /// 兜底状态只在这里出现一次（原来那张安全兜底卡已删）：
+    /// 同一个状态在一页里出现两次，用户会以为两处说的是不同的事。
+    private var thermalStatusCard: some View {
         SectionCard(
-            title: "温度概览",
-            subtitle: nil,
-            symbol: "thermometer.medium",
+            title: "热力状态",
+            subtitle: "当前最高温与 \(Int(emergencyThreshold))°C 安全兜底状态。",
+            symbol: "flame",
             accent: summaryTint
         ) {
             VStack(alignment: .leading, spacing: DS.Space.md) {
-                metricRow
-
-                HStack(spacing: DS.Space.sm) {
-                    Text("共 \(totalSensors) 个传感器读数")
-                        .font(.caption2)
+                HStack(alignment: .firstTextBaseline, spacing: DS.Space.sm) {
+                    Text(hottestText)
+                        .metricNumber(22)
+                        .foregroundStyle(hottestTint)
+                    Text("°C")
+                        .font(.callout)
                         .foregroundStyle(.secondary)
-                    Spacer(minLength: DS.Space.sm)
-                    // 「N 秒前更新」必须自己走。它是按当前时间算的，但视图
-                    // 只在 @Published 变化时重算 —— 10 秒才动一次，平时就
-                    // 一直停在「刚刚更新」，反而容易被判成「没在刷新」。
-                    TimelineView(.periodic(from: .now, by: 1)) { context in
-                        Text(updatedText(now: context.date))
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                            .monospacedDigit()
-                    }
+                    Spacer(minLength: DS.Space.md)
+                    // 最高温落在哪一档要写出来：光一个数字读不出
+                    // 「这算不算高」，颜色 + 文字才是双编码。
+                    Tag(text: band(for: monitor.hottestCelsius).text, color: hottestTint)
                 }
 
-                if !monitor.isAvailable {
-                    Label("温度读取当前不可用", systemImage: "exclamationmark.circle")
-                        .font(.caption)
-                        .foregroundStyle(DS.Tone.caution)
-                }
-            }
-        }
-    }
-
-    /// 一行指标格。没传感器的类别整格不渲染，不留空位。
-    private var metricRow: some View {
-        HStack(alignment: .top, spacing: DS.Space.sm) {
-            metricTile(title: "最高温", celsius: monitor.hottestCelsius, symbol: "thermometer.high")
-            if let soc = groupMax(.soc) {
-                metricTile(title: "SoC 最高", celsius: soc, symbol: "cpu")
-            }
-            if let gpu = groupMax(.gpu) {
-                metricTile(title: "GPU 最高", celsius: gpu, symbol: "display")
-            }
-            if let battery = groupMax(.battery) {
-                metricTile(title: "电池", celsius: battery, symbol: "battery.100")
-            }
-            if let storage = groupMax(.storage) {
-                metricTile(title: "存储", celsius: storage, symbol: "internaldrive")
-            }
-        }
-    }
-
-    private func metricTile(title: String, celsius: Double?, symbol: String) -> some View {
-        // 这里**不能**写 `celsius.map { band(for: $0) }`。
-        //
-        // `band(for:)` 原本有 Double? 与 Double 两个重载，闭包的返回类型推不出来，
-        // 编译器就会在 `Optional.map` 的两个候选之间挑错：SwiftUI 给
-        // `Optional` 加了一个 `map`（`where Wrapped: Gesture`），Xcode 26 会
-        // 挑中它并报「referencing instance method 'map' on 'Optional' requires
-        // that 'Double' conform to 'Gesture'」。Xcode 27 修好了这个重载解析，
-        // 所以本机编译得过、CI 上编不过。
-        //
-        // 现在两处都堵上了：`band(for:)` 只留 Double? 一个重载，这里也用
-        // 显式 if let —— 哪个编译器都不会有歧义。
-        var band: Band?
-        if let celsius {
-            band = self.band(for: celsius)
-        } else {
-            band = nil
-        }
-        return MetricTile(
-            title: title,
-            value: celsius.map { String(format: "%.1f", $0) } ?? "—",
-            unit: celsius == nil ? nil : "°C",
-            status: band?.text ?? "无读数",
-            tint: band?.tint,
-            symbol: symbol
-        )
-    }
-
-    // MARK: - 安全兜底（永久渲染，不随状态隐藏）
-
-    private var safetyCard: some View {
-        SectionCard(
-            title: "安全兜底 · \(Int(emergencyThreshold))°C 强制最大转速",
-            subtitle: nil,
-            symbol: "shield.lefthalf.filled",
-            accent: DS.Tone.caution
-        ) {
-            VStack(alignment: .leading, spacing: DS.Space.md) {
                 // 状态与倒计时放在同一个 TimelineView 里：冷却期一结束，
                 // 状态词要当场从「注意」翻回「正常」，不能等下一次温度
                 // 采样（10 秒后）才翻。
@@ -235,8 +178,139 @@ struct ThermalView: View {
                         .foregroundStyle(DS.Tone.caution)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+
+                handOverRow
             }
         }
+    }
+
+    /// 「交回系统」那一行：按钮 + 一句说明。
+    ///
+    /// 放在这一页是因为兜底期间风扇被强制拉到最大转速 —— 用户在这里
+    /// 看到「Deep Sleep 正在接管风扇」，最想做的就是立刻把它交回去。
+    /// 动作与风扇控制页的总开关关闭是同一个（见 fanController）。
+    ///
+    /// 兜底生效中不能交：紧急状态不接受任何降速意图，交回去等于
+    /// 把正在救命的转速也降下来。按钮置灰并写明原因，
+    /// 免得用户点了没反应。
+    private var handOverRow: some View {
+        VStack(alignment: .leading, spacing: DS.Space.xs) {
+            Button {
+                Task { await fanController.setEnabled(false) }
+            } label: {
+                Label("交回系统", systemImage: "arrow.uturn.backward")
+            }
+            .buttonStyle(.bordered)
+            .disabled(!canHandOverToSystem)
+            .help(handOverCaption)
+
+            Text(handOverCaption)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// 现在能不能交回系统。
+    private var canHandOverToSystem: Bool {
+        fanController.isEnabled && !fanController.isEmergencyActive
+    }
+
+    /// 按钮旁的一句话说明：为什么可交 / 为什么不可交。
+    private var handOverCaption: String {
+        if fanController.isEmergencyActive {
+            return "兜底生效中：风扇正被强制拉到最大转速，此时交回会被系统拒绝。"
+        }
+        if !fanController.isEnabled {
+            return "风扇当前由系统接管，无需交回。"
+        }
+        return "关闭 Deep Sleep 的风扇控制，所有风扇交回系统自动控制。"
+    }
+
+    // MARK: - 概览
+
+    private var summaryCard: some View {
+        SectionCard(
+            title: "温度概览",
+            subtitle: nil,
+            symbol: "thermometer.medium",
+            accent: summaryTint
+        ) {
+            VStack(alignment: .leading, spacing: DS.Space.md) {
+                metricRow
+
+                HStack(spacing: DS.Space.sm) {
+                    Text("共 \(totalSensors) 个传感器读数")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: DS.Space.sm)
+                    // 「N 秒前更新」必须自己走。它是按当前时间算的，但视图
+                    // 只在 @Published 变化时重算 —— 10 秒才动一次，平时就
+                    // 一直停在「刚刚更新」，反而容易被判成「没在刷新」。
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        Text(updatedText(now: context.date))
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .monospacedDigit()
+                    }
+                }
+
+                if !monitor.isAvailable {
+                    Label("温度读取当前不可用", systemImage: "exclamationmark.circle")
+                        .font(.caption)
+                        .foregroundStyle(DS.Tone.caution)
+                }
+            }
+        }
+    }
+
+    /// 一行指标格。没传感器的类别整格不渲染，不留空位。
+    ///
+    /// 「最高温」不在这里 —— 它由首屏的热力状态卡用大数字顶着，
+    /// 同一个数在一页里出现两次，用户会以为是两个不同的数。
+    private var metricRow: some View {
+        HStack(alignment: .top, spacing: DS.Space.sm) {
+            if let soc = groupMax(.soc) {
+                metricTile(title: "SoC 最高", celsius: soc, symbol: "cpu")
+            }
+            if let gpu = groupMax(.gpu) {
+                metricTile(title: "GPU 最高", celsius: gpu, symbol: "display")
+            }
+            if let battery = groupMax(.battery) {
+                metricTile(title: "电池", celsius: battery, symbol: "battery.100")
+            }
+            if let storage = groupMax(.storage) {
+                metricTile(title: "存储", celsius: storage, symbol: "internaldrive")
+            }
+        }
+    }
+
+    private func metricTile(title: String, celsius: Double?, symbol: String) -> some View {
+        // 这里**不能**写 `celsius.map { band(for: $0) }`。
+        //
+        // `band(for:)` 原本有 Double? 与 Double 两个重载，闭包的返回类型推不出来，
+        // 编译器就会在 `Optional.map` 的两个候选之间挑错：SwiftUI 给
+        // `Optional` 加了一个 `map`（`where Wrapped: Gesture`），Xcode 26 会
+        // 挑中它并报「referencing instance method 'map' on 'Optional' requires
+        // that 'Double' conform to 'Gesture'」。Xcode 27 修好了这个重载解析，
+        // 所以本机编译得过、CI 上编不过。
+        //
+        // 现在两处都堵上了：`band(for:)` 只留 Double? 一个重载，这里也用
+        // 显式 if let —— 哪个编译器都不会有歧义。
+        var band: Band?
+        if let celsius {
+            band = self.band(for: celsius)
+        } else {
+            band = nil
+        }
+        return MetricTile(
+            title: title,
+            value: celsius.map { String(format: "%.1f", $0) } ?? "—",
+            unit: celsius == nil ? nil : "°C",
+            status: band?.text ?? "无读数",
+            tint: band?.tint,
+            symbol: symbol
+        )
     }
 
     // MARK: - 传感器
@@ -447,6 +521,20 @@ struct ThermalView: View {
         band(for: monitor.hottestCelsius).tint ?? DS.Tone.idle
     }
 
+    /// 首屏那个大数字的颜色。
+    ///
+    /// 正常档没有语义色（band 的 tint 是 nil）—— 那就退回主色：
+    /// 一屏读数多半都正常，用灰色写最大的那个数字会显得像「读不出来」。
+    private var hottestTint: Color {
+        band(for: monitor.hottestCelsius).tint ?? Color.primary
+    }
+
+    /// 最高温的显示文本。读不到时写「—」，不写 0 ——
+    /// 0 会被当成「确实是 0 度」，比「没读到」危险得多。
+    private var hottestText: String {
+        monitor.hottestCelsius.map { String(format: "%.1f", $0) } ?? "—"
+    }
+
     private func updatedText(now: Date) -> String {
         guard let updated = monitor.lastUpdatedAt else { return "尚未采样" }
         let seconds = Int(now.timeIntervalSince(updated))
@@ -461,8 +549,9 @@ struct ThermalView: View {
     /// 紧急档固定来自安全兜底的 90°C。
     ///
     /// 「正常」用主色（tint 为 nil）：一屏读数多半都正常，全绿反而吵。
-    /// 偏高用黄色 —— DS.Tone 里没有这一档的语义色（只有好/注意/危险），
-    /// 而四档必须彼此可分，黄色是「注意但还没到危险」这一档唯一的落点。
+    /// 「偏高」用 DS.Tone.notice（黄）：四档必须彼此可分，
+    /// 而 caution 已经被「过高」占用了，notice 正是「注意但还没到危险」
+    /// 这一档的落点 —— 拿 caution 顶替会让「偏高」和「过高」同色。
     /// 一档温度。
     ///
     /// **用具名结构体，不用具组**：(text, tint: Color?) 这种「元组里套可选」
@@ -479,7 +568,7 @@ struct ThermalView: View {
         guard let celsius else { return Band(text: "无读数", tint: DS.Tone.idle) }
         if celsius >= emergencyThreshold { return Band(text: "紧急", tint: DS.Tone.critical) }
         if celsius >= hotThreshold { return Band(text: "过高", tint: DS.Tone.caution) }
-        if celsius >= warnThreshold { return Band(text: "偏高", tint: Color.yellow) }
+        if celsius >= warnThreshold { return Band(text: "偏高", tint: DS.Tone.notice) }
         return Band(text: "正常", tint: nil)
     }
 }
@@ -497,7 +586,7 @@ struct ThresholdDot: View {
     private var color: Color {
         if celsius >= FanControl.emergencyTemperatureCelsius { return DS.Tone.critical }
         if celsius >= hotThreshold { return DS.Tone.caution }
-        if celsius >= warnThreshold { return Color.yellow }
+        if celsius >= warnThreshold { return DS.Tone.notice }
         return DS.Tone.good.opacity(0.65)
     }
 

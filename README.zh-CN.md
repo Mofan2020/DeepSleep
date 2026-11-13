@@ -88,7 +88,8 @@ brew install mofan2020/tap/deepsleep
 ### 其他
 
 - 倒计时睡眠
-- 工具箱：所有工具收在一页，卡片可置顶（进程优先级 / Hosts 编辑 / Quarantine / AI 保活 / 图片超分 / lsof 查询 / Shell 配置 / 设备诊断）
+- 工具箱：所有工具收在一页，卡片可置顶（进程优先级 / Hosts 编辑 / Quarantine / AI 保活 / 音频控制 / 图片超分 / lsof 查询 / Shell 配置 / 设备诊断）
+- 音频控制（实验性）：单独调节不同应用的音量，不改系统主音量。默认关闭，在工具箱里开启。
 - 未响应应用检测：自动发现卡死的应用，从菜单栏位置弹出提示，可选忽略 / 强制退出 / 重启
 - AI 保活：每天固定时刻给订阅制 AI 服务发一条极短请求，让使用窗口别闲置到点重置
 - 菜单栏常驻：左键打开主界面，右键弹出快速设置，Control + 左键等同右键
@@ -145,6 +146,9 @@ open -a "Deep Sleep" --args --status
 | `--hotkey-status` | 打印快速退出快捷键的注册状态（排查「按了没反应」） |
 | `--autostart` | 由 LaunchAgent 自启动时传的参数：不抢主窗口焦点，仅跑菜单栏与监控 |
 | `--server-mode <0\|1>` | 开启或关闭服务器模式（系统永不睡眠 + 定时关屏锁屏） |
+| `--audio` | 打印音频控制状态（开关 + 各应用音量） |
+| `--audio on\|off` | 开启或关闭逐应用音量控制 |
+| `--audio set <应用> <音量>` | 设置某个应用的音量（0–1，或 0–100 的百分数） |
 | `--nice <pid> <value>` | 把 pid 的 nice 设为 value（[-20, 19]）；系统进程会被助手拒绝 |
 | `--hosts <sub>` | Hosts 编辑：list（白名单）/ read（打印原文）/ write <file>（用文件覆盖）/ allow [uids=...] [names=...]（更新白名单） |
 | `--quarantine <sub>` | Quarantine 属性：scan <dir>（列出带属性的文件）/ clear <dir>（清除），支持 `--no-recursive` / `--no-hidden` |

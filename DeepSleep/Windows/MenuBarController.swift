@@ -58,6 +58,9 @@ final class MenuBarController: NSObject {
         configureButton()
         observeStateChanges()
         Self.current = self
+        // 音频管理是可选的第二个状态栏位置，默认关。它的显隐跟着设置走，
+        // 不占位置时菜单栏里什么都不多。
+        AudioStatusMenuController.shared.activate()
     }
 
     // MARK: - 状态栏按钮
@@ -159,25 +162,30 @@ final class MenuBarController: NSObject {
             menu.addItem(assertionItem(for: kind, tag: index))
         }
 
-        // 3. 倒计时
+        // 3. 音频管理：开着才在菜单栏占位置
+        menu.addItem(.separator())
+        menu.addItem(audioManagementItem())
+
+        // 4. 倒计时
         menu.addItem(.separator())
         menu.addItem(countdownItem())
 
-        // 4. 快速跳转：高频页面不必先开窗口再点侧边栏
+        // 5. 快速跳转：高频页面不必先开窗口再点侧边栏
         menu.addItem(.separator())
         menu.addItem(jumpItem(to: .dashboard))
         menu.addItem(jumpItem(to: .systemMonitor))
         menu.addItem(jumpItem(to: .wakeOnLAN))
+        menu.addItem(jumpItem(to: .audioControl))
 
-        // 5. 最近事件
+        // 6. 最近事件
         menu.addItem(.separator())
         menu.addItem(recentEventItem())
 
-        // 6. 一次性动作
+        // 7. 一次性动作
         menu.addItem(.separator())
         menu.addItem(quickQuitItem())
 
-        // 7. 窗口与退出
+        // 8. 窗口与退出
         menu.addItem(.separator())
         menu.addItem(makeItem(title: "打开 Deep Sleep…", action: #selector(openMainWindow)))
         menu.addItem(makeItem(title: "退出 Deep Sleep", action: #selector(quit), keyEquivalent: "q"))
@@ -307,6 +315,24 @@ final class MenuBarController: NSObject {
                 await controller.setSleepDisabled(false)
             }
         }
+    }
+
+    // MARK: - 音频管理
+
+    /// 音频管理的总开关。打开后菜单栏多一个喇叭图标，
+    /// 从那里能直接调每个正在出声的 app 的音量；关掉就收回去。
+    private func audioManagementItem() -> NSMenuItem {
+        let manager = AudioControlManager.shared
+        let item = makeItem(title: "音频管理", action: #selector(toggleAudioManagement))
+        item.state = manager.isMenuBarEnabled ? .on : .off
+        item.image = Self.symbolImage("speaker.wave.2")
+        showImageAlways(item)
+        return item
+    }
+
+    @objc private func toggleAudioManagement() {
+        let manager = AudioControlManager.shared
+        manager.setMenuBarEnabled(!manager.isMenuBarEnabled)
     }
 
     // MARK: - 断言开关
@@ -481,5 +507,296 @@ final class MenuBarController: NSObject {
 
     @objc private func quit() {
         NSApp.terminate(nil)
+    }
+}
+
+// MARK: - 音频管理的菜单栏位置
+
+/// 逐应用音量的第二个状态栏入口。
+///
+/// 为什么单独占一格而不是塞进上面的右键菜单：这个功能是可选的，开着时
+/// 用户要的是「抬手就能调」，不该先记住「右键那个月亮图标」；关掉时也
+/// 不该在菜单栏留任何东西。所以它的存在由设置里的开关决定。
+///
+/// 菜单每次弹出都重建：里面列的是「此刻正在出声的 app」，
+/// 两分钟前那份没有意义。
+@MainActor
+final class AudioStatusMenuController: NSObject {
+
+    static let shared = AudioStatusMenuController()
+
+    /// 自检用：确认状态项真的建起来了（NSStatusBar 没有查询接口）。
+    private(set) static weak var current: AudioStatusMenuController?
+
+    private var statusItem: NSStatusItem?
+    private var cancellables = Set<AnyCancellable>()
+    private let manager = AudioControlManager.shared
+    private var iconCache: [String: NSImage] = [:]
+
+    /// 开始跟随设置。菜单栏入口建起来时调一次。
+    func activate() {
+        guard Self.current == nil else { return }
+        Self.current = self
+
+        manager.$isMenuBarEnabled
+            .removeDuplicates()
+            .sink { [weak self] enabled in self?.syncStatusItem(visible: enabled) }
+            .store(in: &cancellables)
+
+        manager.$permission
+            .removeDuplicates()
+            .sink { [weak self] _ in self?.refreshStatusButton() }
+            .store(in: &cancellables)
+
+        syncStatusItem(visible: manager.isMenuBarEnabled)
+    }
+
+    // MARK: - 状态栏按钮
+
+    private func syncStatusItem(visible: Bool) {
+        if visible, statusItem == nil {
+            let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+            item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
+            item.button?.target = self
+            item.button?.action = #selector(handleClick)
+            statusItem = item
+            refreshStatusButton()
+        } else if !visible, let item = statusItem {
+            NSStatusBar.system.removeStatusItem(item)
+            statusItem = nil
+        }
+    }
+
+    private func refreshStatusButton() {
+        guard let button = statusItem?.button else { return }
+        let image = NSImage(systemSymbolName: "speaker.wave.2.fill", accessibilityDescription: "音频管理")
+        image?.isTemplate = true
+        button.image = image
+        button.toolTip = manager.permission.isDenied
+            ? "Deep Sleep · 音频管理（需要系统音频录制授权）"
+            : "Deep Sleep · 音频管理"
+    }
+
+    @objc private func handleClick() {
+        guard let button = statusItem?.button else { return }
+        // 和主菜单同一个理由：popUp 不把菜单挂到状态项上，
+        // 收起时不必记得摘掉。
+        makeMenu().popUp(positioning: nil,
+                         at: NSPoint(x: 0, y: button.bounds.height + 4),
+                         in: button)
+    }
+
+    // MARK: - 菜单
+
+    /// 抽出成独立方法：自检要能在不弹出菜单的前提下校验内容
+    /// （弹出是模态的，自动化会卡死在里面）。
+    func makeMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+
+        // 菜单栏开着、但功能在页面上被关掉了：这里要说清楚，并给一个能直接开回来的入口。
+        if !manager.isEnabled {
+            menu.addItem(infoItem(title: "音频管理已关闭"))
+            menu.addItem(actionItem(title: "开启音频管理", action: #selector(enableAudioManagement)))
+            menu.addItem(.separator())
+            menu.addItem(actionItem(title: "打开音频控制…", action: #selector(openAudioPage)))
+            return menu
+        }
+
+        if manager.permission.isDenied {
+            menu.addItem(infoItem(title: "需要授权：系统音频录制"))
+            menu.addItem(actionItem(title: "去系统设置授权", action: #selector(openAudioCaptureSettings)))
+            menu.addItem(.separator())
+        }
+
+        let apps = AudioControlSupport.menuBarApps(manager.controlledApps)
+        if apps.isEmpty {
+            menu.addItem(infoItem(title: "没有正在出声的应用"))
+        } else {
+            for app in apps {
+                menu.addItem(appItem(for: app))
+            }
+        }
+
+        menu.addItem(.separator())
+        menu.addItem(actionItem(title: "打开音频控制…", action: #selector(openAudioPage)))
+        menu.addItem(actionItem(title: "关闭音频管理", action: #selector(disableAudioManagement)))
+
+        return menu
+    }
+
+    private func infoItem(title: String) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        return item
+    }
+
+    private func actionItem(title: String, action: Selector) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        item.target = self
+        return item
+    }
+
+    /// 一行 = 应用名 + 音量滑杆 + 静音。
+    ///
+    /// 用 NSMenuItem.view 而不是「点了弹窗」：菜单本来就是一路点下来的，
+    /// 拖滑杆时菜单该留在原地。
+    private func appItem(for app: AudioControlledApp) -> NSMenuItem {
+        let item = NSMenuItem(title: app.displayName, action: nil, keyEquivalent: "")
+        let row = AudioMenuRowView(app: app, icon: icon(for: app.bundleID))
+
+        row.onVolumeChange = { [weak self] volume in
+            self?.manager.setVolume(volume, for: app)
+        }
+        row.onToggleMute = { [weak self, weak row] in
+            guard let self else { return }
+            self.manager.toggleMute(forKey: app.uniqueKey)
+            let current = self.manager.controlledApps.first { $0.uniqueKey == app.uniqueKey }?.volume
+                ?? app.volume
+            row?.apply(volume: current)
+        }
+
+        item.view = row
+        return item
+    }
+
+    private func icon(for bundleID: String?) -> NSImage? {
+        guard let bundleID, !bundleID.isEmpty else { return nil }
+        if let cached = iconCache[bundleID] { return cached }
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return nil }
+        let image = NSWorkspace.shared.icon(forFile: url.path)
+        image.size = NSSize(width: 16, height: 16)
+        iconCache[bundleID] = image
+        return image
+    }
+
+    // MARK: - 动作
+
+    @objc private func openAudioCaptureSettings() {
+        manager.openPermissionSettings()
+    }
+
+    @objc private func openAudioPage() {
+        WindowCoordinator.shared.showMainWindow(selecting: .audioControl)
+    }
+
+    @objc private func enableAudioManagement() {
+        manager.isEnabled = true
+    }
+
+    @objc private func disableAudioManagement() {
+        manager.setMenuBarEnabled(false)
+        manager.isEnabled = false
+    }
+}
+
+// MARK: - 音频菜单里的一行
+
+/// 菜单项里的自定义视图。用 frame 布局而不是自动布局：
+/// NSMenu 只看 view 的 frame，autolayout 在这里量不出尺寸。
+final class AudioMenuRowView: NSView {
+
+    static let rowWidth: CGFloat = 320
+    static let rowHeight: CGFloat = 50
+
+    private let iconView = NSImageView()
+    private let nameLabel = NSTextField(labelWithString: "")
+    private let percentLabel = NSTextField(labelWithString: "")
+    private let slider = NSSlider(value: 100, minValue: 0, maxValue: 100, target: nil, action: nil)
+    private let muteButton = NSButton(frame: .zero)
+
+    /// 回调里的音量是 0...1。
+    var onVolumeChange: ((Double) -> Void)?
+    var onToggleMute: (() -> Void)?
+
+    private var volume: Double
+
+    init(app: AudioControlledApp, icon: NSImage?) {
+        self.volume = app.volume
+        super.init(frame: NSRect(x: 0, y: 0, width: Self.rowWidth, height: Self.rowHeight))
+
+        iconView.image = icon
+        iconView.imageScaling = .scaleProportionallyDown
+        addSubview(iconView)
+
+        nameLabel.stringValue = app.displayName
+        nameLabel.font = .systemFont(ofSize: 13)
+        nameLabel.lineBreakMode = .byTruncatingTail
+        addSubview(nameLabel)
+
+        percentLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        percentLabel.textColor = .secondaryLabelColor
+        percentLabel.alignment = .right
+        addSubview(percentLabel)
+
+        slider.isContinuous = true
+        slider.controlSize = .small
+        slider.minValue = 0
+        slider.maxValue = 100
+        slider.target = self
+        slider.action = #selector(sliderChanged)
+        slider.toolTip = "「\(app.displayName)」的音量"
+        addSubview(slider)
+
+        muteButton.isBordered = false
+        muteButton.bezelStyle = .inline
+        muteButton.imagePosition = .imageOnly
+        muteButton.target = self
+        muteButton.action = #selector(muteTapped)
+        addSubview(muteButton)
+
+        apply(volume: app.volume)
+        // 菜单项视图不会拿到一次自动的布局 pass，子视图得自己摆一次，
+        // 否则整行空白。
+        layout()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: Self.rowWidth, height: Self.rowHeight)
+    }
+
+    override func layout() {
+        super.layout()
+        let width = bounds.width
+        let height = bounds.height
+
+        iconView.frame = NSRect(x: 14, y: height - 26, width: 16, height: 16)
+        nameLabel.frame = NSRect(x: 36, y: height - 27, width: max(0, width - 36 - 62), height: 18)
+        percentLabel.frame = NSRect(x: width - 62, y: height - 27, width: 44, height: 18)
+        slider.frame = NSRect(x: 14, y: 7, width: max(0, width - 14 - 62), height: 19)
+        muteButton.frame = NSRect(x: width - 42, y: 4, width: 24, height: 24)
+    }
+
+    /// 外部（静音按钮、刷新）改了音量之后同步显示。
+    func apply(volume: Double) {
+        let clamped = AudioControlSupport.clampVolume(volume)
+        self.volume = clamped
+        slider.doubleValue = clamped * 100
+        percentLabel.stringValue = AudioControlSupport.formatPercent(clamped)
+        updateMuteImage(isMuted: clamped <= 0.001)
+    }
+
+    private func updateMuteImage(isMuted: Bool) {
+        let symbol = isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill"
+        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: isMuted ? "取消静音" : "静音")
+        image?.isTemplate = true
+        muteButton.image = image
+        muteButton.toolTip = isMuted ? "取消静音「\(nameLabel.stringValue)」" : "静音「\(nameLabel.stringValue)」"
+    }
+
+    @objc private func sliderChanged() {
+        let value = AudioControlSupport.clampVolume(slider.doubleValue / 100)
+        volume = value
+        // 拖动过程中就生效：松手才改的话，用户听不出哪一档是对的。
+        onVolumeChange?(value)
+        percentLabel.stringValue = AudioControlSupport.formatPercent(value)
+        updateMuteImage(isMuted: value <= 0.001)
+    }
+
+    @objc private func muteTapped() {
+        onToggleMute?()
     }
 }

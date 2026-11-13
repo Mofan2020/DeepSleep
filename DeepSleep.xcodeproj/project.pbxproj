@@ -44,6 +44,7 @@
 		46F0FD7486AF2AD5E745E69A /* Version.swift in Sources */ = {isa = PBXBuildFile; fileRef = F67CFF72B57B6842BFE84727 /* Version.swift */; };
 		48A8411A91BC1725A62EAE46 /* HelperInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64A44533D85F54CB2BC70D48 /* HelperInstaller.swift */; };
 		49BA4D1FF2BB3180D79AA7D5 /* uninstall-helper.sh in Resources */ = {isa = PBXBuildFile; fileRef = 5C4F13990352AAC1FC42479A /* uninstall-helper.sh */; };
+		49F64B16494F84C5C1F0D664 /* AudioControlView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AEB234535D8CBD457F3A1D0 /* AudioControlView.swift */; };
 		4AB25F4953CEC0D898530878 /* NgAcceleratorReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA55B6B5C6AC4BF4906831F0 /* NgAcceleratorReader.swift */; };
 		4CC529F69FC171A6A59CD5E3 /* AssertionKind.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0322343BBDEB6A664F907E5 /* AssertionKind.swift */; };
 		4FB227FEAF25239D85D96593 /* EmailThrottleStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC22A1E420A2DE3FB800D6F0 /* EmailThrottleStore.swift */; };
@@ -67,6 +68,7 @@
 		68BBD23F6A82CF25F557453C /* CPUTemperatureSample.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16BB6D07F5EFD58141E50A48 /* CPUTemperatureSample.swift */; };
 		697159DF6592C3DF33AFB152 /* FanModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE02139511172EAC3BE83EDC /* FanModels.swift */; };
 		6AFBA0A1C3939B8A8162754B /* ProcessGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09942C2FCA248432F203B05D /* ProcessGuard.swift */; };
+		6C1B532C9BCFBD82656FE44D /* AudioControlEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0452061A01656E2042B599EE /* AudioControlEngine.swift */; };
 		6CE01DD4BAA6D26B9C73121A /* NiceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 005259E71AECD16B7A5CE1A1 /* NiceView.swift */; };
 		6F47FDDC8B8A8BCEF68E6621 /* HelperClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CAA06BD31D3CA20982FDE4C /* HelperClient.swift */; };
 		708B71B465D2605742446DBD /* PowerActivityMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C993F30605CB3C3BB8F0EC18 /* PowerActivityMonitor.swift */; };
@@ -79,6 +81,7 @@
 		77AC54EAF737FDB032DEB3FA /* ServerModeIdlePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27F7A85603F8F24BB4412911 /* ServerModeIdlePolicy.swift */; };
 		78D179B4ACE0E28FB61B6555 /* AlertWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B527587ED1D0F7A77206BE2C /* AlertWindowController.swift */; };
 		7B5449CB86A23F58E0331611 /* HostsAllowedEditors.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6450BE748FD8543755017DE /* HostsAllowedEditors.swift */; };
+		7D58AB1F21F49369B387DFB7 /* AudioControlManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFBB541B2C358418FE044051 /* AudioControlManager.swift */; };
 		7D67EE9A219FAB797919FF33 /* ThermalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B2F82075D9BCAEBCCF8EA45 /* ThermalView.swift */; };
 		7E9BB0ED0884AB7842D45981 /* ExternalActivityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 596F4304321F89BFF2BEC9DB /* ExternalActivityView.swift */; };
 		821BC1B933F63E1D2E0BBB95 /* HangDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADF8BD245306888F8A3A0AB6 /* HangDetector.swift */; };
@@ -156,6 +159,7 @@
 		F21DB4CD51453F39B234299D /* ShellConfigView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97F9B8DB97EBAB1D7BF69631 /* ShellConfigView.swift */; };
 		F3EC1D687C622CB696EB4D7B /* CPUAccounting.swift in Sources */ = {isa = PBXBuildFile; fileRef = D35C972BF2F66DC560213914 /* CPUAccounting.swift */; };
 		F46459160672CE1350637D97 /* Version.swift in Sources */ = {isa = PBXBuildFile; fileRef = F67CFF72B57B6842BFE84727 /* Version.swift */; };
+		F713B9284B547ADB96E645A3 /* AudioControlModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89356118F72CE61E9F6D68AC /* AudioControlModels.swift */; };
 		F89E51313B3D9C4CB42EA07D /* ShellConfigService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0957277560CE8A4B64F4A27 /* ShellConfigService.swift */; };
 		F94F4441C4428155BBB5435D /* HostsAllowedEditors.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6450BE748FD8543755017DE /* HostsAllowedEditors.swift */; };
 		F9C83EB7C255F958694CAE61 /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 571B5897312541D688A35CB1 /* DashboardView.swift */; };
@@ -180,6 +184,7 @@
 		007E841B65199B99BD017BA9 /* KeepAliveKeychainAccess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeepAliveKeychainAccess.swift; sourceTree = "<group>"; };
 		0343C5752D94A72187E5078B /* DeepSleepApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepSleepApp.swift; sourceTree = "<group>"; };
 		03B58135C030FD6D97DD7D84 /* UpdateManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateManager.swift; sourceTree = "<group>"; };
+		0452061A01656E2042B599EE /* AudioControlEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioControlEngine.swift; sourceTree = "<group>"; };
 		07D54DD1D4D5168D7EA9FF30 /* AlertRulesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertRulesView.swift; sourceTree = "<group>"; };
 		09942C2FCA248432F203B05D /* ProcessGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessGuard.swift; sourceTree = "<group>"; };
 		09E4540A7ED2046DEB126599 /* DeepSleepIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepSleepIntents.swift; sourceTree = "<group>"; };
@@ -246,6 +251,7 @@
 		76A414E466231BC9EA4876AB /* SystemNotifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemNotifier.swift; sourceTree = "<group>"; };
 		78F748CFEB3C9AEC6F6976EE /* UpdateFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateFlow.swift; sourceTree = "<group>"; };
 		7C643740D2392EB1F876E8BA /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		89356118F72CE61E9F6D68AC /* AudioControlModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioControlModels.swift; sourceTree = "<group>"; };
 		8D28D1837B362CAF3FC59D63 /* FanMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FanMode.swift; sourceTree = "<group>"; };
 		8F1CCE72967AB0DD99C9E36F /* KeepAliveStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeepAliveStore.swift; sourceTree = "<group>"; };
 		9280BE0F52069F606CA7D220 /* ProcessStats.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessStats.swift; sourceTree = "<group>"; };
@@ -260,6 +266,7 @@
 		9850DD4E59DE72351BBB7C5C /* CPUTemperatureAlert.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CPUTemperatureAlert.swift; sourceTree = "<group>"; };
 		9984708438247E1D6DD0C2DF /* ServerModeController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerModeController.swift; sourceTree = "<group>"; };
 		9A765E484E4DB325FDDA6E62 /* WeeklyRestartManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeeklyRestartManager.swift; sourceTree = "<group>"; };
+		9AEB234535D8CBD457F3A1D0 /* AudioControlView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioControlView.swift; sourceTree = "<group>"; };
 		9B115A0DDB6BDEF6504E291C /* LsofService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LsofService.swift; sourceTree = "<group>"; };
 		9B2F82075D9BCAEBCCF8EA45 /* ThermalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThermalView.swift; sourceTree = "<group>"; };
 		A2DD20BF1CBB3194597701CA /* PowerWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowerWatcher.swift; sourceTree = "<group>"; };
@@ -312,6 +319,7 @@
 		F4F9778B6F68F6D06C000E3A /* WakeOnLANView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WakeOnLANView.swift; sourceTree = "<group>"; };
 		F67CFF72B57B6842BFE84727 /* Version.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Version.swift; sourceTree = "<group>"; };
 		F7D2FBFD81DFC7D2B76F709D /* ProcessInventory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessInventory.swift; sourceTree = "<group>"; };
+		FFBB541B2C358418FE044051 /* AudioControlManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioControlManager.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -365,6 +373,9 @@
 				B527587ED1D0F7A77206BE2C /* AlertWindowController.swift */,
 				599B624893AFA02A93639FAE /* AppRestartWatcher.swift */,
 				C0322343BBDEB6A664F907E5 /* AssertionKind.swift */,
+				0452061A01656E2042B599EE /* AudioControlEngine.swift */,
+				FFBB541B2C358418FE044051 /* AudioControlManager.swift */,
+				89356118F72CE61E9F6D68AC /* AudioControlModels.swift */,
 				65EE86101EAC650FBB5F0CBB /* AutomationEngine.swift */,
 				A4120515887C376197CCE7F9 /* AutomationRule.swift */,
 				432740AF96D744E5DAB258F4 /* AutoStartManager.swift */,
@@ -525,6 +536,7 @@
 			isa = PBXGroup;
 			children = (
 				07D54DD1D4D5168D7EA9FF30 /* AlertRulesView.swift */,
+				9AEB234535D8CBD457F3A1D0 /* AudioControlView.swift */,
 				CAB733FD825537CF3DA93F8A /* AutomationView.swift */,
 				13496FAE978C672E3F2EA8B8 /* AutoStartSettings.swift */,
 				178D52B0BEF95859AB8B6D88 /* Components.swift */,
@@ -687,6 +699,10 @@
 				5CF047FA11D64F6D5A7CF6FB /* AppDelegate.swift in Sources */,
 				DD316DAE16D1AA3E9438FA15 /* AppRestartWatcher.swift in Sources */,
 				4CC529F69FC171A6A59CD5E3 /* AssertionKind.swift in Sources */,
+				6C1B532C9BCFBD82656FE44D /* AudioControlEngine.swift in Sources */,
+				7D58AB1F21F49369B387DFB7 /* AudioControlManager.swift in Sources */,
+				F713B9284B547ADB96E645A3 /* AudioControlModels.swift in Sources */,
+				49F64B16494F84C5C1F0D664 /* AudioControlView.swift in Sources */,
 				CDC0DB341A0DB1C90C51A258 /* AutoStartManager.swift in Sources */,
 				A2488626DD99D32998AFF92B /* AutoStartSettings.swift in Sources */,
 				73ACAA59B7A7FB882CB55A50 /* AutomationEngine.swift in Sources */,
@@ -1029,11 +1045,11 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 23;
+				CURRENT_PROJECT_VERSION = 24;
 				INFOPLIST_FILE = DeepSleep/Resources/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
-				MARKETING_VERSION = 1.11.4;
+				MARKETING_VERSION = 1.12.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.skyc8266.deepsleep;
 				PRODUCT_NAME = "Deep Sleep";
 				SDKROOT = macosx;
@@ -1046,11 +1062,11 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 23;
+				CURRENT_PROJECT_VERSION = 24;
 				INFOPLIST_FILE = DeepSleep/Resources/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
-				MARKETING_VERSION = 1.11.4;
+				MARKETING_VERSION = 1.12.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.skyc8266.deepsleep;
 				PRODUCT_NAME = "Deep Sleep";
 				SDKROOT = macosx;

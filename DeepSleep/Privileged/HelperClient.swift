@@ -28,9 +28,34 @@ final class HelperClient {
         FileManager.default.isExecutableFile(atPath: HelperConstants.installedHelperPath)
     }
 
-    /// 是否处于「已安装但助手进程未运行」的状态。
+    /// 助手在不在跑。
+    ///
+    /// **不能只看 socket 文件在不在。** `/var/run` 每次开机是空的，而助手
+    /// 是开机之后才绑的 socket——这段时间里「已安装、正在启动」和「装了但死
+    /// 了」长得一模一样，只看 socket 就会把前者当成后者，让用户去重装。
+    /// 所以再看一眼 launchd：任务注册上了、状态是 running，就算在跑（读
+    /// launchctl 是只读操作，不需要 root）。
     var isLaunched: Bool {
-        FileManager.default.fileExists(atPath: HelperConstants.socketPath)
+        if FileManager.default.fileExists(atPath: HelperConstants.socketPath) {
+            return true
+        }
+        return Self.isRegisteredWithLaunchd
+    }
+
+    /// launchd 里这个任务的状态是不是 running。
+    static var isRegisteredWithLaunchd: Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        process.arguments = ["print", "system/\(HelperConstants.label)"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+        do { try process.run() } catch { return false }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return false }
+        let text = String(data: data, encoding: .utf8) ?? ""
+        return text.contains("state = running")
     }
 
     /// 发送一条命令。会在后台队列上执行阻塞式 socket 往返，
@@ -54,11 +79,25 @@ final class HelperClient {
             throw HelperClientError.notReachable("助手尚未安装")
         }
 
-        let fd: Int32
-        do {
-            fd = try UnixSocket.connect(to: HelperConstants.socketPath, timeout: timeout)
-        } catch {
-            throw HelperClientError.notReachable(error.localizedDescription)
+        // 连不上先重试几轮：开机那几十秒里助手可能刚起，socket 还在路上。
+        // 一次失败就报「助手不可用」，用户看到的就是「每次开机都得重装」。
+        var fd: Int32 = -1
+        var lastError: Error?
+        for attempt in 0..<3 {
+            do {
+                fd = try UnixSocket.connect(to: HelperConstants.socketPath, timeout: timeout)
+                lastError = nil
+                break
+            } catch {
+                lastError = error
+                if attempt < 2 {
+                    Thread.sleep(forTimeInterval: 0.25)
+                }
+            }
+        }
+        guard fd >= 0 else {
+            throw HelperClientError.notReachable(
+                lastError?.localizedDescription ?? "socket 连不上")
         }
         defer { close(fd) }
 

@@ -116,7 +116,9 @@ public final class HangAlertPresenter {
         NSLayoutConstraint.activate([
             host.view.centerXAnchor.constraint(equalTo: container.centerXAnchor),
             host.view.centerYAnchor.constraint(equalTo: container.centerYAnchor),
-            host.view.widthAnchor.constraint(equalToConstant: 340),
+            // 宽度与 SwiftUI 视图用的是同一个令牌 —— 两边各写各的
+            // 数字的话，改了一边另一边就对不上，卡片会被裁掉。
+            host.view.widthAnchor.constraint(equalToConstant: DS.Metric.alertPanelWidth),
             host.view.heightAnchor.constraint(lessThanOrEqualToConstant: 160)
         ])
 
@@ -203,28 +205,28 @@ struct HangAlertCard: View {
     let onRestart: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 11) {
+        VStack(alignment: .leading, spacing: DS.Space.md) {
+            HStack(spacing: DS.Space.md) {
                 Group {
                     if let icon {
                         Image(nsImage: icon)
                             .resizable()
-                            .frame(width: 40, height: 40)
+                            .frame(width: DS.Metric.alertIconSize, height: DS.Metric.alertIconSize)
                     } else {
                         Image(systemName: "app.dashed")
                             .font(.system(size: 30))
                             .foregroundStyle(.secondary)
-                            .frame(width: 40, height: 40)
+                            .frame(width: DS.Metric.alertIconSize, height: DS.Metric.alertIconSize)
                     }
                 }
 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: DS.Space.xxs) {
                     Text(appName)
                         .font(.headline)
                         .lineLimit(1)
                     Text("无响应")
                         .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(DS.Tone.caution)
                 }
                 Spacer(minLength: 0)
             }
@@ -234,7 +236,7 @@ struct HangAlertCard: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            HStack(spacing: 8) {
+            HStack(spacing: DS.Space.sm) {
                 Button("忽略", action: onIgnore)
                     .keyboardShortcut(.cancelAction)
                 Spacer(minLength: 0)
@@ -244,7 +246,7 @@ struct HangAlertCard: View {
             }
             .controlSize(.small)
         }
-        .padding(16)
-        .frame(width: 340)
+        .padding(DS.Space.lg)
+        .frame(width: DS.Metric.alertPanelWidth)
     }
 }

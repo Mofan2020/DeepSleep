@@ -33,7 +33,37 @@ struct AutoStartManagerTests {
         testPlistContent()
         testPlistHasAutostartFlag()
         testPlistNotKeepAlive()
-        print("OK: AutoStartManager plist 内容正确")
+        testRepairPlan()
+        print("OK: AutoStartManager plist 内容与自启复查判据都正确")
+    }
+
+    /// 自启复查的判据。
+    ///
+    /// 这几条对应的是「开关开着、重启后什么都没发生」：plist 在，launchd
+    /// 里却没有这个任务（或者任务被 disabled 挡住）。判错一次，用户就得
+    /// 自己发现自启是假的。
+    static func testRepairPlan() {
+        // 没开自启：什么都不做。
+        var plan = AutoStartManager.plan(plistEnabled: false, registered: false,
+                                         registeredProgram: nil, currentProgram: "/a")
+        assertTrue(plan.isEmpty, "没开自启时不该动任何东西")
+
+        // 开了、已注册、路径一致：什么都不做。
+        plan = AutoStartManager.plan(plistEnabled: true, registered: true,
+                                     registeredProgram: "/Applications/X.app/Contents/MacOS/X",
+                                     currentProgram: "/Applications/X.app/Contents/MacOS/X")
+        assertTrue(plan.isEmpty, "一切正常时不该重启任务")
+
+        // 开了，但 launchd 里没有这个任务：要重新注册（这是那个 bug 本体）。
+        plan = AutoStartManager.plan(plistEnabled: true, registered: false,
+                                     registeredProgram: "/a", currentProgram: "/a")
+        assertTrue(plan.reregister && !plan.rewrite, "任务没注册时必须重新注册")
+
+        // 路径变了（app 挪过位置 / 更新过）：先重写 plist，再注册。
+        plan = AutoStartManager.plan(plistEnabled: true, registered: true,
+                                     registeredProgram: "/old/X.app/Contents/MacOS/X",
+                                     currentProgram: "/Applications/X.app/Contents/MacOS/X")
+        assertTrue(plan.rewrite && plan.reregister, "路径变了必须重写 plist 并重新注册")
     }
 
     static func testDefaultPath() {

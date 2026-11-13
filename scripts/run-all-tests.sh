@@ -152,6 +152,9 @@ build_and_run "keepalive-schedule"   /tmp/t_kasch    scripts/test-support/KeepAl
 build_and_run "keepalive-backoff"    /tmp/t_kabk     scripts/test-support/KeepAliveTestStubs.swift DeepSleep/AIKeepAlive/KeepAliveModels.swift DeepSleep/AIKeepAlive/KeepAliveError.swift DeepSleep/AIKeepAlive/KeepAliveStore.swift DeepSleep/AIKeepAlive/KeepAliveKeychainAccess.swift DeepSleep/AIKeepAlive/KeepAliveClient.swift DeepSleep/AIKeepAlive/KeepAliveEngine.swift scripts/test-keepalive-backoff-timing.swift
 build_and_run "shell-config"         /tmp/t_shellcfg DeepSleep/Core/ShellConfigService.swift scripts/test-shell-config.swift
 build_and_run_raw "image-upscaler"  /tmp/t_upscale -sdk $(xcrun --show-sdk-path --sdk macosx) -target arm64-apple-macos26.0 DeepSleep/Core/ImageUpscaler.swift scripts/test-image-upscaler.swift
+# 音频控制的纯逻辑：增益曲线 / clamp / 同 bundleID 合并 / 存储键。
+# 音频引擎本身要真机才有意义，不进回归；能脱离硬件验证的部分全在这里。
+build_and_run "audio-control"      /tmp/t_audio   DeepSleep/Core/AudioControlModels.swift scripts/test-audio-control.swift
 
 # ---------------------------------------------------------------- v1.10.0
 # 系统监控的换算与格式化（纯逻辑，Shared/ 里那份）。
@@ -235,6 +238,22 @@ else
     echo "  [通过] 放宽的判据被测试抓住，断言确实在测 ACL 变化"
     PASS=$((PASS+1))
   fi
+fi
+
+echo
+# 变异测试 3：音频控制的增益与合并逻辑。
+# 「测试绿了不代表它在测东西」——把实现改坏，测试必须红。
+# 6 个变异点：增益上限放开 / 曲线改线性 / clamp 漏上界 / 不合并 bundleID /
+#             缺失键返回 0 / 增益方向反了。
+echo "--- 变异测试：音频控制逻辑改坏必须被抓住 ---"
+if bash scripts/test-audio-control-mutation.sh > /tmp/t_audio_mut.log 2>&1; then
+    echo "  [通过] 6 个变异点全部被测试抓住"
+    PASS=$((PASS + 1))
+else
+    echo "  [失败] 有变异点漏过了 —— 断言没在测那一行"
+    grep -E '^\s+\[失败\]' /tmp/t_audio_mut.log | head -5 | sed 's/^/      /'
+    FAILED_LIST+=("audio-control-mutation")
+    FAIL=$((FAIL + 1))
 fi
 
 echo

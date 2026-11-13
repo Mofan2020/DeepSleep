@@ -384,6 +384,9 @@ starting ──(initialSleepDelaySeconds 后)──▶ 关屏 ──▶ locked
 | `DeepSleep/Core/PowerActivityMonitor.swift` | 外部活动：断言持有者、设置改动、抢控制权程序 | 抢控制权检测宁可漏报不误报 |
 | `DeepSleep/Core/AutomationRule.swift` / `AutomationEngine.swift` | 自动化规则模型与求值 | 规则只表达意图，不直接操作断言 |
 | `DeepSleep/Core/QuickQuit.swift` | 快速退出引擎：目标名单、解析、双路执行、演练 | app 侧与助手侧**各自独立算一遍**，不合并两边的猜测 |
+| `DeepSleep/Core/AudioControlModels.swift` | 音频控制的纯逻辑：增益曲线、clamp、同 bundleID 合并、存储键 | 增益**上限必须锁在 1.0** —— 放大会削波；改语义要同步 `scripts/test-audio-control.swift` |
+| `DeepSleep/Core/AudioControlEngine.swift` | 单个应用的音频引擎：process tap + 聚合设备 + IOProc + vDSP 增益 | **IOProc 里不许有锁、分配、Swift 堆操作**；tap 是 muted-when-tapped，进程死掉前必须显式 `stop()` |
+| `DeepSleep/Core/AudioControlManager.swift` | 音频控制管理器：发现输出进程、启停引擎、持久化 | 实验性功能，默认关闭；退出路径上必须调 `shutdownForAppExit()` |
 | `DeepSleep/Core/GlobalHotkey.swift` | 全局快捷键（Carbon `RegisterEventHotKey`） | 不要换成 `NSEvent` 全局监听，那需要「输入监控」权限 |
 | `DeepSleep/Core/URLCommands.swift` | `deepsleep://` 命令表与解析 | 命令表是界面说明、`--automation` 与文档的单一来源 |
 | `DeepSleep/Intents/DeepSleepIntents.swift` | App Intents（Siri / 快捷指令 / 聚焦） | 每个 intent 先 `ensureReady()`；复用应用内方法，不绕过授权 |

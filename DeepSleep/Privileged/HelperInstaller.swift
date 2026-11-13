@@ -23,6 +23,7 @@ enum HelperInstallError: LocalizedError {
     case embeddedHelperMissing(String)
     case scriptResourceMissing(String)
     case authorizationCancelled
+    case bundleTranslocated(String)
     case scriptFailed(String)
 
     var errorDescription: String? {
@@ -33,6 +34,8 @@ enum HelperInstallError: LocalizedError {
             return "应用内置的脚本缺失：\(name)"
         case .authorizationCancelled:
             return "用户取消了管理员授权，助手未安装"
+        case .bundleTranslocated:
+            return "先把 Deep Sleep 拖进「应用程序」再装助手：现在它是从临时位置运行的，装完重启就会失效。"
         case .scriptFailed(let output):
             return "脚本执行失败：\(output)"
         }
@@ -72,6 +75,12 @@ enum HelperInstaller {
     static func install() async throws {
         guard FileManager.default.isExecutableFile(atPath: embeddedHelperPath) else {
             throw HelperInstallError.embeddedHelperMissing(embeddedHelperPath)
+        }
+        // app 还挂在磁盘映像里、或者被 App Translocation 挡住的时候，root
+        // 读不到 bundle 里的文件，脚本里 `cp` 就会报「No such file or
+        // directory」——而那句话完全指不到真正的原因。这里提前说明。
+        if Bundle.main.bundlePath.contains("/AppTranslocation/") {
+            throw HelperInstallError.bundleTranslocated(Bundle.main.bundlePath)
         }
         let script = try scriptPath(named: "install-helper")
         try await runWithAdministratorPrivileges(
@@ -116,10 +125,18 @@ enum HelperInstaller {
         scriptPath: String,
         environment: [(String, String)]
     ) async throws {
+        // **脚本先复制到 /tmp 再执行。**
+        // 直接让 root 去读 app bundle 里的脚本有两个坑：bundle 在磁盘映像
+        // 里、或者带着 com.apple.quarantine 时，root 读不到，报的是一句
+        // 「Permission denied」；而那句话指向的是脚本路径，看上去像权限
+        // 配置错了。复制一份到 /tmp（1777，谁都能读）就没有这一类问题了。
+        let stagedScript = try stageScript(scriptPath)
+        defer { try? FileManager.default.removeItem(atPath: stagedScript) }
+
         let assignments = environment
             .map { "\($0.0)=\(shellQuoted($0.1))" }
             .joined(separator: " ")
-        let command = "\(assignments) /bin/sh \(shellQuoted(scriptPath))"
+        let command = "\(assignments) /bin/sh \(shellQuoted(stagedScript))"
 
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             DispatchQueue.global(qos: .userInitiated).async {
@@ -160,6 +177,23 @@ enum HelperInstaller {
                 }
             }
         }
+    }
+
+    /// 把脚本复制到 /tmp 并返回新路径。
+    private static func stageScript(_ sourcePath: String) throws -> String {
+        let name = "deepsleep-installer-\(UUID().uuidString).sh"
+        let destination = (NSTemporaryDirectory() as NSString).appendingPathComponent(name)
+        do {
+            if FileManager.default.fileExists(atPath: destination) {
+                try FileManager.default.removeItem(atPath: destination)
+            }
+            try FileManager.default.copyItem(atPath: sourcePath, toPath: destination)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o755], ofItemAtPath: destination)
+        } catch {
+            throw HelperInstallError.scriptFailed("无法把安装脚本放到临时目录：\(error.localizedDescription)")
+        }
+        return destination
     }
 
     /// POSIX 单引号转义：把值安全地包进单引号，内部的单引号用 '\'' 表示。

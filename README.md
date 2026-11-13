@@ -20,7 +20,7 @@ macOS has never had a real answer to: *"I want my Mac to stay awake until this d
 - **App name**: Deep Sleep
 - **Minimum system**: macOS 26.0
 - **Language / framework**: Swift 5, SwiftUI + AppKit, IOKit, LocalAuthentication
-- **当前版本**：1.11.4
+- **当前版本**：1.12.0
 
 ## Highlights
 
@@ -33,6 +33,7 @@ macOS has never had a real answer to: *"I want my Mac to stay awake until this d
 - **`deepsleep://` URL scheme** — call any action from shell scripts, AppleScript, or Automator.
 - **Quick Quit** — bind a global hotkey (default ⌥⇧⌘H) to force-kill selected apps and their entire process tree.
 - **Toolbox** — every tool lives on one page; pin the ones you use most to the top.
+- **Audio control (experimental)** — set the volume of individual apps without touching the system master volume. Off by default; turn it on in the toolbox.
 - **AI keep-alive** — send a tiny request to a subscription AI service at set times each day, so its rolling usage window keeps moving.
 - **External activity** — see who else is blocking sleep or changing power settings (`--blockers`, `--changes`, `--rivals`).
 - **System monitor** — CPU/RAM overload alerts, single-process RSS threshold, and live CPU temperature with an adjustable alert threshold (40–105°C). A temperature alert notifies you; it never freezes or kills a process.
@@ -90,6 +91,9 @@ open -a "Deep Sleep" --args --status
 | `--hotkey-status` | Print the Quick Quit hotkey registration status (for "the key does nothing" issues) |
 | `--autostart` | Mark this launch as LaunchAgent-driven (no window focus) |
 | `--server-mode <0\|1>` | Enable or disable server mode |
+| `--audio` | Print audio control state (switch + per-app volume) |
+| `--audio on\|off` | Enable or disable per-app volume control |
+| `--audio set <app> <volume>` | Set one app's volume (0–1, or 0–100 as a percentage) |
 | `--nice <pid> <value>` | Set process nice value (system processes are rejected by the helper) |
 | `--hosts <sub>` | Hosts editor: `list` / `read` / `write <file>` / `allow [uids=...] [names=...]` |
 | `--quarantine <sub>` | Quarantine: `scan <dir>` / `clear <dir>` |
