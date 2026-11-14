@@ -646,6 +646,14 @@ powerd 会停止累加 `HIDIdleTime`**。实测 30 秒不动机器，值在 0~1.
 服务器模式核心使用场景下，路径 (2) 不可信。Deep Sleep v1.6.1 用了这条
 路径，导致「倒计时永远不动 / 到点也不息屏」。
 
+> **2026-11 复查（macOS 27.3）：这条已经不成立。**
+> 在同一场景下（Deep Sleep 主进程持 `PreventUserIdleSystemSleep`、助手持
+> `PreventSystemSleep`）连续采样 30 秒，`HIDIdleTime` 稳定单调递增
+> （6.62 → 35.51，每 2 秒约 +2.07）。原始数据见 `docs/notes.md` 的
+> 「跨重启恢复运行状态」一节。上面那段保留作历史记录：它当时是真的，
+> 后来的系统版本改了行为。现在服务器模式的倒计时就压在这个结论上，
+> 哪天现象再变，先回来复查这一条。
+
 ### (3) `CGEventSourceSecondsSinceLastEventType(.hidSystemState, kAny)`
 
 macOS 26 上签名变了（Swift 枚举 / `kCGAnyInputEventType = 0xFFFFFFFF`

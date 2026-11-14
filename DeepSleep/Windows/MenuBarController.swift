@@ -312,7 +312,8 @@ final class MenuBarController: NSObject {
             if !enable {
                 // 关闭服务器模式时把 disablesleep 交回系统 ——
                 // 与主界面「服务器模式」开关的行为保持一致。
-                await controller.setSleepDisabled(false)
+                // 按副作用记：这不是用户去按了「完全禁止系统睡眠」。
+                await controller.setSleepDisabled(false, source: .derived)
             }
         }
     }

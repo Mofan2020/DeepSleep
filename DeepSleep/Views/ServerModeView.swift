@@ -21,7 +21,6 @@ struct ServerModeView: View {
     @EnvironmentObject private var controller: SleepController
     @ObservedObject private var mode = ServerModeController.shared
     @State private var idleMinutes: Int = 10
-    @State private var initialSleepSeconds: Int = 5
     @State private var detectionMode: IdleDetectionMode = .kernelIdle
     @State private var enablingError: String?
 
@@ -37,7 +36,6 @@ struct ServerModeView: View {
         .onAppear {
             // 把 controller 当前值同步到控件初值。
             idleMinutes = Int(mode.idleThresholdSeconds / 60)
-            initialSleepSeconds = Int(mode.initialSleepDelaySeconds)
             detectionMode = mode.idleDetectionMode
         }
     }
@@ -48,7 +46,7 @@ struct ServerModeView: View {
         SectionCard(
             title: "服务器模式",
             subtitle: controller.helperState.isReady
-                ? "开启后系统永不睡眠，\(initialSleepSeconds) 秒后关屏锁屏；空闲 \(idleMinutes) 分钟再重复。"
+                ? "开启后系统永不睡眠；空闲 \(idleMinutes) 分钟后自动关屏锁屏，你回来操作后重新计时。"
                 : "请先在「完全控制」页安装助手。",
             symbol: "server.rack",
             accessory: AnyView(
@@ -110,18 +108,8 @@ struct ServerModeView: View {
             symbol: "timer"
         ) {
             VStack(alignment: .leading, spacing: DS.Space.md) {
-                Stepper(value: $initialSleepSeconds, in: 0...60, step: 1) {
-                    LabeledContent("首次关屏延迟") {
-                        Text("\(initialSleepSeconds) 秒")
-                            .metricNumber(15)
-                    }
-                }
-                .onChange(of: initialSleepSeconds) { _, v in
-                    mode.initialSleepDelaySeconds = TimeInterval(v)
-                }
-
                 Stepper(value: $idleMinutes, in: 1...60, step: 1) {
-                    LabeledContent("自动锁屏间隔") {
+                    LabeledContent("空闲多久后关屏") {
                         Text("\(idleMinutes) 分钟")
                             .metricNumber(15)
                     }
@@ -130,7 +118,8 @@ struct ServerModeView: View {
                     mode.idleThresholdSeconds = TimeInterval(v * 60)
                 }
 
-                Text("空闲按最后一次键盘或鼠标操作计时，屏幕关掉后暂停。")
+                Text("开启服务器模式不会立刻关屏。空闲按最后一次键盘或鼠标操作计时，"
+                     + "达到上面的时长才关屏锁屏。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

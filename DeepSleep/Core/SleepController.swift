@@ -375,8 +375,9 @@ final class SleepController: ObservableObject {
         remoteHeld.removeAll()
         releaseLocalAssertions()
         // v1.6.2：服务器模式若开着，释放 CGEvent tap + 关闭对账层。
-        await ServerModeController.shared.setEnabled(false, controller: self)
-        await setSleepDisabled(false)
+        // 退出收尾：不写存档，下次启动要把服务器模式接回来。
+        await ServerModeController.shared.setEnabled(false, controller: self, source: .shutdown)
+        await setSleepDisabled(false, source: .shutdown)
         appendLog("Deep Sleep 退出，已释放全部 assertion")
     }
 
@@ -466,25 +467,39 @@ final class SleepController: ObservableObject {
 
     /// 明确设置某个 assertion 的开关状态（供 UI 的 Toggle 使用）。
     func setAssertion(_ kind: AssertionKind, enabled: Bool) async {
+        await setAssertion(kind, enabled: enabled, source: .user)
+    }
+
+    /// - Parameter source: 用户操作 / 启动恢复 / 退出收尾。只有用户操作写存档。
+    func setAssertion(_ kind: AssertionKind,
+                      enabled: Bool,
+                      source: StateChangeSource) async {
         if enabled {
             guard !manualAssertions.contains(kind) else { return }
             if kind.requiresPrivilege && !helperState.isReady {
-                banner = Banner(level: .error, text: "「\(kind.title)」需要先启用完全控制")
+                if source == .restore {
+                    appendLog("恢复「\(kind.title)」失败：需要先启用完全控制", isError: true)
+                } else {
+                    banner = Banner(level: .error, text: "「\(kind.title)」需要先启用完全控制")
+                }
                 return
             }
             manualAssertions.insert(kind)
         } else {
             guard manualAssertions.contains(kind) else {
-                if sleepDisabledBacking && kind == .preventSystemSleep {
-                    banner = Banner(level: .info, text: "「\(kind.title)」由「完全禁止系统睡眠」加固维持，请在「完全控制」页关闭该功能")
-                } else if ruleAssertions.contains(kind) {
-                    banner = Banner(level: .info, text: "「\(kind.title)」正由自动化规则维持，请到「自动化」页调整对应规则")
+                if source == .user {
+                    if sleepDisabledBacking && kind == .preventSystemSleep {
+                        banner = Banner(level: .info, text: "「\(kind.title)」由「完全禁止系统睡眠」加固维持，请在「完全控制」页关闭该功能")
+                    } else if ruleAssertions.contains(kind) {
+                        banner = Banner(level: .info, text: "「\(kind.title)」正由自动化规则维持，请到「自动化」页调整对应规则")
+                    }
                 }
                 return
             }
             manualAssertions.remove(kind)
         }
-        await reconcile()
+        await reconcile(requireConfirmation: source.requiresPrompt)
+        persistManualAssertionsIfNeeded(source)
     }
 
     /// 切换一个手动 assertion。
@@ -499,6 +514,18 @@ final class SleepController: ObservableObject {
         manualAssertions.removeAll()
         ruleAssertions.removeAll()
         await reconcile()
+        // 用户点了「全部释放」：存档跟着清空，下次启动不该把它们捡回来。
+        RunStateStore.update { state in
+            state.manualAssertions = []
+            state.holdUntil = nil
+        }
+    }
+
+    /// 把「用户手动打开的保持」写进存档。
+    private func persistManualAssertionsIfNeeded(_ source: StateChangeSource) {
+        guard source.writesArchive else { return }
+        let raws = manualAssertions.map(\.rawValue).sorted()
+        RunStateStore.update { $0.manualAssertions = raws }
     }
 
     // MARK: - 定时保持（Siri / 快捷指令 / URL 用）
@@ -526,8 +553,18 @@ final class SleepController: ObservableObject {
         cancelHoldDeadline()
         guard let minutes, minutes > 0 else { return }
 
-        holdDeadline = Date().addingTimeInterval(TimeInterval(minutes * 60))
+        let deadline = Date().addingTimeInterval(TimeInterval(minutes * 60))
+        armHoldDeadline(deadline)
         appendLog("已设定 \(minutes) 分钟后自动释放保持")
+    }
+
+    /// 把「到点自动释放」的约定记下来并起定时器。
+    ///
+    /// 与 `scheduleHoldDeadline(minutes:)` 分开：启动恢复时要按存档里的
+    /// **绝对时刻**接着数剩下的时间，而不是从「现在」重新数满一轮。
+    private func armHoldDeadline(_ deadline: Date) {
+        holdDeadline = deadline
+        RunStateStore.update { $0.holdUntil = deadline }
 
         let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in
@@ -546,10 +583,23 @@ final class SleepController: ObservableObject {
         holdTimer?.invalidate()
         holdTimer = nil
         holdDeadline = nil
+        RunStateStore.update { $0.holdUntil = nil }
+    }
+
+    /// 恢复「N 分钟后自动释放」的约定。
+    ///
+    /// 按存档里的绝对时刻接着数：用户关了 20 分钟应用再打开，剩下的是原来
+    /// 那一轮剩下的时间，不是重新数满一轮。
+    func restoreHoldDeadline(until deadline: Date) {
+        guard deadline > Date() else { return }
+        holdTimer?.invalidate()
+        holdTimer = nil
+        armHoldDeadline(deadline)
     }
 
     /// 合并意图并落实差异。
-    private func reconcile() async {
+    /// - Parameter requireConfirmation: 自动恢复场景传 false —— 见 `acquire`。
+    private func reconcile(requireConfirmation: Bool = true) async {
         guard !isReconciling else { return }
         isReconciling = true
         defer { isReconciling = false }
@@ -561,7 +611,7 @@ final class SleepController: ObservableObject {
             await release(kind)
         }
         for kind in desired.subtracting(activeAssertions) {
-            await acquire(kind)
+            await acquire(kind, requireConfirmation: requireConfirmation)
         }
     }
 
@@ -664,7 +714,11 @@ final class SleepController: ObservableObject {
     }
 
     /// 提权操作前的本地授权确认。
-    func confirmPrivilegedAction(reason: String) async -> Bool {
+    ///
+    /// - Parameter requiresPrompt: 启动恢复传 false —— 恢复的是用户此前已经
+    ///   授权过的同一件事，不该在他们没看着屏幕的时候弹指纹框。
+    func confirmPrivilegedAction(reason: String, requiresPrompt: Bool = true) async -> Bool {
+        guard requiresPrompt else { return true }
         guard requireConfirmationPerAction else { return true }
         let allowed = await BiometricAuth.authenticate(reason: reason)
         if !allowed {
@@ -676,12 +730,21 @@ final class SleepController: ObservableObject {
     // MARK: - 完全禁用睡眠（disablesleep）
 
     /// 设置 `pmset disablesleep`。这是「合盖也不休眠」的开关。
-    func setSleepDisabled(_ disabled: Bool) async {
+    ///
+    /// - Parameter source: 用户操作 / 启动恢复 / 退出收尾。
+    ///   退出收尾那次会把系统设置改回 0，但**不写存档** ——
+    ///   退出不是用户改主意，下次启动还要恢复成用户当时的样子。
+    func setSleepDisabled(_ disabled: Bool, source: StateChangeSource = .user) async {
         guard helperState.isReady else {
-            banner = Banner(level: .error, text: "该功能需要先启用完全控制")
+            if source != .restore {
+                banner = Banner(level: .error, text: "该功能需要先启用完全控制")
+            }
             return
         }
-        guard await confirmPrivilegedAction(reason: disabled ? "允许 Deep Sleep 完全禁止系统睡眠" : "允许 Deep Sleep 恢复系统睡眠") else {
+        guard await confirmPrivilegedAction(
+            reason: disabled ? "允许 Deep Sleep 完全禁止系统睡眠" : "允许 Deep Sleep 恢复系统睡眠",
+            requiresPrompt: source.requiresPrompt
+        ) else {
             return
         }
 
@@ -691,10 +754,20 @@ final class SleepController: ObservableObject {
         // disablesleep 只在 powerd 评估空闲睡眠时起作用，而合盖 / 菜单睡眠是
         // 主动请求，断言才能让 powerd 在决策阶段就挡下来。
         sleepDisabledBacking = disabled
-        await reconcile()
+        await reconcile(requireConfirmation: source.requiresPrompt)
 
-        await applySleepDisabled(disabled, announce: true)
+        await applySleepDisabled(disabled, announce: source == .user)
         await refreshPowerSettings()
+
+        if source.writesArchive {
+            RunStateStore.update { $0.sleepDisabled = disabled }
+        } else if source == .derived && !disabled {
+            // 服务器模式关闭时会把 disablesleep 交回系统，界面上那个开关
+            // 跟着变暗。存档要跟界面一致：不然用户看到的是「关着」，
+            // 重启后却被恢复成「完全禁止系统睡眠」，白耗电还找不到原因。
+            // 反向（服务器模式开启顺带打开）不记 —— 那一项只跟用户自己按的开关走。
+            RunStateStore.update { $0.sleepDisabled = false }
+        }
     }
 
     /// 真正把 disablesleep 写进系统。
@@ -1056,7 +1129,11 @@ final class SleepController: ObservableObject {
             // 退出时恢复 disablesleep = 0（让系统回到正常睡眠行为）。
             // 用户在「完全控制」页主动开的 disablesleep 会被这条一并
             // 撤销 —— 这是 server mode 的语义：「开了 server 就关系统睡眠」
-            await setSleepDisabled(false)
+            //
+            // 按 `.derived` 记：这次关的是服务器模式，用户并没有去按
+            // 「完全禁止系统睡眠」那个开关，存档里他自己那份选择要留着，
+            // 下次启动才恢复成他当时设的样子。
+            await setSleepDisabled(false, source: .derived)
         }
     }
 

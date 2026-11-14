@@ -329,6 +329,9 @@ final class FanController: ObservableObject {
     private let queue = DispatchQueue(label: "com.skyc8266.deepsleep.fancontrol")
     private var timer: DispatchSourceTimer?
     private var emergencyTracker = FanEmergencyTracker()
+    /// 启动流程的句柄。启动恢复要等它跑完再开风扇控制 ——
+    /// 否则「清上次残留」会把刚恢复的控制权又交回系统。
+    private var bootstrapTask: Task<Void, Never>?
     /// 上次真正下发的值 / 时刻，按风扇序号记。滞回与节流都靠它。
     private var lastWrittenRPM: [Int: Int] = [:]
     private var lastWrittenAt: [Int: Date] = [:]
@@ -402,7 +405,15 @@ final class FanController: ObservableObject {
     /// 不清一次就可能继续按上一次的目标转速跑。
     func start() {
         guard !helperLacksFanCommands else { return }
-        Task { await bootstrap() }
+        bootstrapTask = Task { await bootstrap() }
+    }
+
+    /// 等启动清理跑完。
+    ///
+    /// 启动恢复用：`bootstrap` 第一件事是把上次残留的控制权交回系统，
+    /// 恢复风扇控制必须排在它之后，否则会被自己清掉。
+    func waitUntilStarted() async {
+        await bootstrapTask?.value
     }
 
     private func bootstrap() async {
@@ -442,7 +453,10 @@ final class FanController: ObservableObject {
     /// 开启 / 关闭风扇控制。
     ///
     /// 关闭时把所有风扇交回系统 —— 这是安全动作，不能只改一个布尔值。
-    func setEnabled(_ enabled: Bool) async {
+    ///
+    /// - Parameter source: 用户操作 / 启动恢复 / 退出收尾。只有用户操作写存档；
+    ///   恢复时存档已经是「开着」，再写一次没意义。
+    func setEnabled(_ enabled: Bool, source: StateChangeSource = .user) async {
         if enabled {
             guard FanDisclaimer.isAccepted else {
                 lastError = FanControlError.disclaimerNotAccepted.errorDescription
@@ -454,11 +468,17 @@ final class FanController: ObservableObject {
             await refreshFanState()
             startLoop()
             log("风扇控制已开启", isError: false)
+            if source.writesArchive {
+                RunStateStore.update { $0.fanControlEnabled = true }
+            }
         } else {
             isEnabled = false
             stopLoop()
             await releaseAllFans(reason: "用户关闭风扇控制")
             log(FanDisclaimer.handoverNotice, isError: false)
+            if source.writesArchive {
+                RunStateStore.update { $0.fanControlEnabled = false }
+            }
         }
     }
 

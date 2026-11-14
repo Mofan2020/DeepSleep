@@ -333,13 +333,23 @@ Deep Sleep 自己的断言也会列出并标记「本应用」，方便对照。
 off
  │ 开启
  ▼
-starting ──(initialSleepDelaySeconds 后)──▶ 关屏 ──▶ locked
-                                                      ▲
-              ┌───────────────────────────────────────┘
-              │ 用户操作（idle 归零）
-              ▼
-        waitingForIdle ──(idle ≥ 阈值)──▶ 关屏 ──┘
+starting ──(准备动作做完：写 disablesleep、装事件监听)──▶ waitingForIdle
+                                                              │
+                                     ┌────────────────────────┘
+                                     │ 空闲达到阈值
+                                     ▼
+                                  关屏 ──▶ locked
+                                              ▲
+                    ┌─────────────────────────┘
+                    │ 用户操作（idle 归零）
+                    ▼
+              waitingForIdle ──(idle ≥ 阈值)──▶ 关屏 ──┘
 ```
+
+进入服务器模式**不立刻关屏**：`starting` 只覆盖准备动作，做完就进
+`waitingForIdle` 开始倒计时。倒计时用的空闲值扣掉了「开启之前已经空闲的
+时间」（口径在 `DeepSleep/Core/ServerModeIdleWindow.swift`）：
+远程开启时机器可能已经空闲几小时，直接用原始空闲值会一开启就熄屏。
 
 几个不能动的约定：
 
@@ -348,7 +358,7 @@ starting ──(initialSleepDelaySeconds 后)──▶ 关屏 ──▶ locked
 | `locked` 阶段保持归零、**不**重复关屏 | 屏幕已经关着，再发 `pmset displaysleepnow` 只是噪声 |
 | 全程 5 秒 tick 从开启跑到关闭，**不**在关屏时停 | 停掉就没人监听「用户回来」，界面会永远停在归零（v1.6.2 的 bug） |
 | 「用户回来了」的判据 = idle **掉回阈值以下** | 两种检测方式都提供这个语义，tick 不需要区分模式 |
-| 首次关屏与超时关屏**共用**一个函数 | 早期版本给首次路径加了 `guard phase == .starting`，超时路径直接被挡回（v1.6.2 的 bug） |
+| 首次关屏与超时关屏**共用**一条路径 | 早期版本给首次路径加了 `guard phase == .starting`，超时路径直接被挡回（v1.6.2 的 bug）；现在干脆取消了独立的首次路径，第一次关屏也走同一个阈值 |
 
 空闲检测有两种方式，共用同一个判据「距离用户上次操作过去多久」：
 

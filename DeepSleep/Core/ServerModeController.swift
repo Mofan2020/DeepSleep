@@ -18,20 +18,28 @@
 //      `setServerMode(_:)` 钩入；任何时候关闭这个 controller，
 //      SleepController 仍然跑自己的对账。
 //
-//  ## 状态机（v1.6.3）
+//  ## 状态机
 //
 //      off
 //       │ setEnabled(true)
 //       ▼
-//      starting ──(initialSleepDelaySeconds 后)──▶ 关屏 ──▶ locked
-//                                                            ▲
-//                         ┌──────────────────────────────────┘
-//                         │ 用户操作（idle 掉回阈值以下）
-//                         ▼
-//                   waitingForIdle ──(idle ≥ 阈值)──▶ 关屏 ──┘
+//      starting ──(准备工作做完)──▶ waitingForIdle
+//                                        │
+//                     ┌──────────────────┘
+//                     ▼  空闲达到阈值
+//                  关屏 ──▶ locked
+//                              ▲
+//        ┌─────────────────────┘
+//        │ 用户操作（idle 掉回阈值以下）
+//        ▼
+//   waitingForIdle ──(idle ≥ 阈值)──▶ 关屏 ──┘
 //
-//    `locked` 语义：屏幕已关、系统未睡，倒计时**保持归零**且不重复关屏；
-//    只有检测到用户操作（idle 归零）才回到 `waitingForIdle` 重新计时。
+//  进入服务器模式**不立刻关屏**：`starting` 只覆盖准备动作（写 disablesleep、
+//  装事件监听），做完就进 `waitingForIdle` 开始倒计时。想立刻熄屏的人可以
+//  直接把空闲阈值调到最小，这条路径不再另留一个「首次关屏」的开关。
+//
+//  `locked` 语义：屏幕已关、系统未睡，倒计时**保持归零**且不重复关屏；
+//  只有检测到用户操作（idle 归零）才回到 `waitingForIdle` 重新计时。
 //
 //  ## 空闲检测（双模式）
 //
@@ -103,11 +111,17 @@ final class ServerModeController: ObservableObject {
     @Published private(set) var phase: Phase = .off
     @Published private(set) var lastEventDescription: String = ""
 
-    /// 「空闲多久后再次关屏锁屏」。默认 10 分钟。
-    @Published var idleThresholdSeconds: TimeInterval = 10 * 60
-
-    /// 「从开始到首次关屏」的延迟。默认 5 秒。
-    @Published var initialSleepDelaySeconds: TimeInterval = 5
+    /// 「空闲多久后关屏锁屏」。默认 10 分钟。
+    ///
+    /// 这是服务器模式唯一的关屏口径：开启后的第一次关屏也走这里，
+    /// 不再有单独的「首次关屏延迟」。改值即落盘 —— 用户调过的节奏
+    /// 不该因为退出应用就回到默认。
+    @Published var idleThresholdSeconds: TimeInterval = 10 * 60 {
+        didSet {
+            guard oldValue != idleThresholdSeconds else { return }
+            UserDefaults.standard.set(idleThresholdSeconds, forKey: Self.thresholdKey)
+        }
+    }
 
     /// 空闲检测方式。默认 `kernelIdle`（不需要授权）。
     @Published var idleDetectionMode: IdleDetectionMode = .kernelIdle {
@@ -118,16 +132,19 @@ final class ServerModeController: ObservableObject {
     }
 
     private static let modeKey = "ServerModeController.idleDetectionMode"
+    private static let thresholdKey = "ServerModeController.idleThresholdSeconds"
 
     /// 全程 5 秒 tick。从 enable 起一直活到 disable。
     ///
     /// **不**在关屏时停掉：否则「用户回来了」就没人监听，界面会永远停在
     /// 归零不动（v1.6.2 的 bug 之一）。
     private var tickTimer: Timer?
-    /// 「首次关屏」的一次性定时器。
-    private var initialSleepTimer: Timer?
-    /// 关屏动作进行中 —— 防止 tick 与一次性定时器重入。
+    /// 关屏动作进行中 —— 防止 tick 重入。
     private var isPerformingSleep = false
+
+    /// 本轮的开启时刻。倒计时用它把「开启之前的空闲」排除掉，
+    /// 见 `ServerModeIdleWindow`。
+    private var enabledAt: Date?
 
     /// 应用层时间戳：上次侦听到的键盘 / 鼠标事件的时间。仅 `eventTap` 模式用。
     private var lastActivityAt: Date = Date()
@@ -141,6 +158,11 @@ final class ServerModeController: ObservableObject {
         if let raw = UserDefaults.standard.string(forKey: Self.modeKey),
            let mode = IdleDetectionMode(rawValue: raw) {
             idleDetectionMode = mode
+        }
+        // 没存过就保持默认 10 分钟 —— 不把默认值当成「用户设过」写回去。
+        if let saved = UserDefaults.standard.object(forKey: Self.thresholdKey) as? Double,
+           saved > 0 {
+            idleThresholdSeconds = saved
         }
     }
 
@@ -158,6 +180,20 @@ final class ServerModeController: ObservableObject {
         case .eventTap:
             return Date().timeIntervalSince(lastActivityAt)
         }
+    }
+
+    /// 倒计时用的空闲秒数：开启之前的空闲不算数。
+    ///
+    /// 为什么不直接用 `currentIdleSeconds()`：远程开启时机器可能已经空闲了几个
+    /// 小时，那样一开启就会立刻关屏 —— 正是这一版要改掉的行为。
+    /// 口径见 `ServerModeIdleWindow`。
+    func countdownIdleSeconds(now: Date = Date()) -> TimeInterval {
+        let raw = currentIdleSeconds()
+        guard let start = enabledAt else { return max(0, raw) }
+        return ServerModeIdleWindow.effectiveIdle(
+            rawIdle: raw,
+            sinceEnabled: now.timeIntervalSince(start)
+        )
     }
 
     // MARK: - 状态机（纯逻辑见 Shared/ServerModeIdlePolicy.swift）
@@ -178,15 +214,19 @@ final class ServerModeController: ObservableObject {
     ///   2. `eventTap` 模式下需要辅助功能授权
     ///   3. 用户授权（沿用 SleepController 的 confirmPrivilegedAction）
     ///   4. 已开启 disablesleep（最稳的「系统不睡」手段）
-    func setEnabled(_ enabled: Bool, controller: SleepController) async {
+    ///
+    /// - Parameter source: 这次开关是谁发起的，决定要不要写存档、要不要弹授权。
+    func setEnabled(_ enabled: Bool,
+                    controller: SleepController,
+                    source: StateChangeSource = .user) async {
         if enabled {
-            await enable(on: controller)
+            await enable(on: controller, source: source)
         } else {
-            await disable(on: controller)
+            await disable(on: controller, source: source)
         }
     }
 
-    private func enable(on controller: SleepController) async {
+    private func enable(on controller: SleepController, source: StateChangeSource) async {
         guard controller.helperState.isReady else {
             controller.banner = Banner(level: .error, text: "服务器模式需要先启用完全控制")
             return
@@ -198,20 +238,22 @@ final class ServerModeController: ObservableObject {
         // 只有事件监听模式需要辅助功能授权。未授权时明确拒绝，不静默降级 ——
         // 用户选了哪个模式就该跑哪个模式。
         if idleDetectionMode == .eventTap {
-            let authorized = await ensureAccessibilityAuthorized(controller: controller)
+            let authorized = await ensureAccessibilityAuthorized(controller: controller,
+                                                                 prompt: source.requiresPrompt)
             guard authorized else { return }
         }
-        guard await controller.confirmPrivilegedAction(reason: "允许 Deep Sleep 开启服务器模式") else {
+        guard await controller.confirmPrivilegedAction(reason: "允许 Deep Sleep 开启服务器模式",
+                                                      requiresPrompt: source.requiresPrompt) else {
             return
         }
 
         phase = .starting
-        controller.appendLog("服务器模式已开启（空闲检测：\(idleDetectionMode.displayName)）："
-                             + "\(initialSleepDelaySeconds) 秒后关屏锁屏")
         lastEventDescription = "开启中……"
 
         // 1. 先把 disablesleep 打开 —— 这是「系统不睡」的兜底层。
-        await controller.setSleepDisabled(true)
+        //    这是服务器模式的副作用，不记成「用户按了完全禁止系统睡眠」：
+        //    存档里那一项只跟着用户自己按的开关走。
+        await controller.setSleepDisabled(true, source: derivedSource(from: source))
 
         // 2. 事件监听模式才装 tap；失败即回滚（不留下跑不动的模式）。
         if idleDetectionMode == .eventTap, !installUserActivityMonitor() {
@@ -219,23 +261,41 @@ final class ServerModeController: ObservableObject {
             controller.banner = Banner(
                 level: .error,
                 text: "事件监听模式启动失败：无法创建 CGEvent tap。可改用「内核空闲计时」模式。")
-            await controller.setSleepDisabled(false)
+            await controller.setSleepDisabled(false, source: derivedSource(from: source))
             phase = .off
             lastEventDescription = "启动失败"
             return
         }
 
-        // 3. 首次关屏：一次性定时器。
-        scheduleInitialSleepAndLock()
+        // 3. 从这一刻起开始计空闲。开启之前的空闲不算数，所以不需要
+        //    「首次关屏延迟」这条独立路径 —— 第一次关屏也走同一个阈值。
+        enabledAt = Date()
+        phase = .waitingForIdle
+        lastEventDescription = "空闲 \(Int(idleThresholdSeconds)) 秒后关屏锁屏"
+        controller.appendLog("服务器模式已开启（空闲检测：\(idleDetectionMode.displayName)）："
+                             + "空闲 \(Int(idleThresholdSeconds)) 秒后关屏锁屏")
+
         // 4. 全程 5 秒 tick：负责「用户回来 → 重新计时 → 再次关屏」。
         startTickTimer()
+
+        if source.writesArchive {
+            RunStateStore.update { $0.serverModeEnabled = true }
+        }
     }
 
     /// 检查辅助功能授权。已授权返回 true；未授权时调
     /// `AXIsProcessTrustedWithOptions(prompt: true)` 弹系统对话框引导用户
     /// 去设置，然后最多等 30 秒重检。
-    private func ensureAccessibilityAuthorized(controller: SleepController) async -> Bool {
+    ///
+    /// - Parameter prompt: 启动恢复时传 false —— 恢复不该在用户面前弹授权框，
+    ///   缺授权就直接跳过（跳过原因由恢复流程负责告诉用户）。
+    private func ensureAccessibilityAuthorized(controller: SleepController,
+                                              prompt: Bool) async -> Bool {
         if isAccessibilityTrusted() { return true }
+        guard prompt else {
+            controller.appendLog("服务器模式恢复：缺少辅助功能授权，已跳过", isError: true)
+            return false
+        }
 
         // prompt: true 让系统弹一次授权对话框（用户可点「打开系统设置」）。
         _ = AXIsProcessTrustedWithOptions(
@@ -265,41 +325,32 @@ final class ServerModeController: ObservableObject {
         AXIsProcessTrusted()
     }
 
-    private func disable(on controller: SleepController) async {
-        guard phase.isActive else { return }
+    /// 服务器模式副作用（写 disablesleep）该按哪种来源记：
+    /// 恢复就继续按恢复（不弹确认），否则算 `.derived`（弹确认、不写存档）。
+    private func derivedSource(from source: StateChangeSource) -> StateChangeSource {
+        source == .restore ? .restore : .derived
+    }
+
+    private func disable(on controller: SleepController, source: StateChangeSource) async {
+        guard phase.isActive else {
+            // 恢复流程可能遇到「存档说要开、实际已经关了」—— 静默收尾即可。
+            return
+        }
         controller.appendLog("正在退出服务器模式……")
         uninstallUserActivityMonitor()
-        initialSleepTimer?.invalidate()
-        initialSleepTimer = nil
         tickTimer?.invalidate()
         tickTimer = nil
         isPerformingSleep = false
+        enabledAt = nil
         phase = .off
         lastEventDescription = "已关闭"
         controller.appendLog("服务器模式已关闭")
+        if source.writesArchive {
+            RunStateStore.update { $0.serverModeEnabled = false }
+        }
     }
 
     // MARK: - 关屏 + 锁屏
-
-    private enum SleepTrigger {
-        /// 开启后的首次关屏
-        case initial
-        /// 空闲倒计时到点后的关屏
-        case idleTimeout
-    }
-
-    /// 首次关屏：`initialSleepDelaySeconds` 后执行一次。
-    private func scheduleInitialSleepAndLock() {
-        initialSleepTimer?.invalidate()
-        let delay = max(0, initialSleepDelaySeconds)
-        let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
-            Task { @MainActor in
-                await self?.performSleepAndLock(reason: .initial)
-            }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        initialSleepTimer = timer
-    }
 
     /// 关屏（等同锁屏，前提是系统设置勾了「立即要求密码」）。
     ///
@@ -307,15 +358,12 @@ final class ServerModeController: ObservableObject {
     /// `guard phase == .starting else { return }`，而倒计时到点时
     /// phase 已是 `.waitingForIdle` —— 于是直接被挡回，屏幕不关。
     /// 表现为「首次 5 秒关屏正常，但倒计时归零后没反应」。
-    /// 现在两条路径都能进来。
-    private func performSleepAndLock(reason: SleepTrigger) async {
+    ///
+    /// 现在只有「空闲到点」一条路径进来（首次关屏不再单独走），
+    /// 所以只需要守 `waitingForIdle`。
+    private func performSleepAndLock() async {
         guard !isPerformingSleep else { return }
-        switch reason {
-        case .initial:
-            guard phase == .starting else { return }
-        case .idleTimeout:
-            guard phase == .waitingForIdle else { return }
-        }
+        guard phase == .waitingForIdle else { return }
 
         isPerformingSleep = true
         defer { isPerformingSleep = false }
@@ -328,15 +376,9 @@ final class ServerModeController: ObservableObject {
                 lastEventDescription = "关屏失败：\(sleep.message)"
                 return
             }
-            if reason == .initial {
-                initialSleepTimer?.invalidate()
-                initialSleepTimer = nil
-            }
             phase = .locked
             lastEventDescription = "已熄屏锁定；倒计时保持归零，你回来操作后重新计时"
-            controller.appendLog(reason == .initial
-                                 ? "服务器模式：已关屏，等待用户唤醒"
-                                 : "服务器模式：空闲到点，已再次关屏")
+            controller.appendLog("服务器模式：空闲到点，已关屏")
         } catch {
             controller.appendLog("服务器模式：与助手通信失败 \(error.localizedDescription)",
                                  isError: true)
@@ -359,8 +401,10 @@ final class ServerModeController: ObservableObject {
     }
 
     private func tick() {
-        let idle = currentIdleSeconds()
-        switch Self.decide(phase: phase, idle: idle, threshold: idleThresholdSeconds) {
+        let now = Date()
+        switch Self.decide(phase: phase,
+                           idle: countdownIdleSeconds(now: now),
+                           threshold: idleThresholdSeconds) {
         case .idle:
             return
         case .countdown(let remaining):
@@ -372,7 +416,7 @@ final class ServerModeController: ObservableObject {
         case .sleepNow:
             lastEventDescription = "空闲到点，正在关屏……"
             Task { @MainActor in
-                await performSleepAndLock(reason: .idleTimeout)
+                await performSleepAndLock()
             }
         case .holdAtZero:
             lastEventDescription = "已熄屏锁定；倒计时保持归零，你回来操作后重新计时"

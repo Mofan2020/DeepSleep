@@ -47,6 +47,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.menuBar?.presentHangAlert(event)
             }
             HangDetector.shared.start()
+            // 恢复上次的运行状态（风扇 / 保持 / 服务器模式 / 音量）。
+            // 放在这里而不是更早：需要等助手 socket、风扇引擎与音频设备都就位，
+            // 恢复流程自己也会再等一小会儿助手。
+            await RunStateRestorer.shared.restoreIfNeeded()
             await Self.handleLaunchArguments()
         }
     }

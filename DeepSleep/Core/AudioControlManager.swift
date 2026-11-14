@@ -177,6 +177,46 @@ final class AudioControlManager: ObservableObject {
         shutdown(reason: "app exit")
     }
 
+    // MARK: - 跨重启恢复
+
+    /// 把上次的音量状态讲清楚：谁已经套上了、谁还在等应用回来。
+    ///
+    /// 音量本身的持久化不需要新存档 —— `performRefresh` 每轮都会用
+    /// `storedVolume(for:)` 把存档值套到发现的应用上。这里只补一句
+    /// 用户能看懂的话，让「没恢复」不是静默失败。
+    ///
+    /// 目标应用当前没在运行不算错误：音量留在存储里，等它下次出声时
+    /// `performRefresh` 会把值套上去。
+    func reportRestoredVolumes() {
+        guard isEnabled else { return }
+        let storedKeys = defaults.dictionaryRepresentation().keys
+            .filter { $0.hasPrefix(AudioControlSupport.volumeKeyPrefix) }
+        guard !storedKeys.isEmpty else { return }
+
+        // 先刷一轮拿到当前在出声的列表 —— 应用刚启动时 controlledApps 还是空的，
+        // 不刷新会把「还没发现」误报成「没在运行」。
+        performRefresh()
+        let liveKeys = Set(controlledApps.map(\.uniqueKey))
+        let plan = AudioControlSupport.volumeRestorePlan(storedKeys: storedKeys,
+                                                        liveKeys: liveKeys)
+        if plan.pending.isEmpty {
+            os_log(.info, log: log, "restored volume for %d app(s)", plan.applied.count)
+        } else {
+            os_log(.info, log: log,
+                   "restored volume for %d app(s); %d waiting for app to run: %{public}@",
+                   plan.applied.count, plan.pending.count,
+                   plan.pending.joined(separator: ", "))
+        }
+
+        if !plan.applied.isEmpty || !plan.pending.isEmpty {
+            let restored = "已恢复 \(plan.applied.count) 个应用的音量"
+            let waiting = plan.pending.isEmpty
+                ? ""
+                : "；\(plan.pending.count) 个应用当前没在出声（也可能没在运行），音量等它们下次出声时生效"
+            SleepController.shared.appendLog("逐应用音量：" + restored + waiting)
+        }
+    }
+
     // MARK: - 启动与停止
 
     private func start() {

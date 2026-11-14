@@ -104,7 +104,7 @@ build_and_run "fan-models"          /tmp/t_fanmodels Shared/FanModels.swift scri
 build_and_run "fan-mode-store"      /tmp/t_fanmodestore DeepSleep/Core/FanMode.swift DeepSleep/Core/FanModeStore.swift scripts/test-fan-mode-store.swift
 build_and_run "fan-stall"           /tmp/t_fanstall Shared/FanModels.swift Shared/FanWriteFailureTracker.swift scripts/test-fan-stall.swift
 build_and_run "cpu-accounting"      /tmp/t_cpuacct Shared/CPUAccounting.swift scripts/test-cpu-accounting.swift
-build_and_run "fan-control"         /tmp/t_fanctl Shared/FanModels.swift Shared/HelperProtocol.swift Shared/UnixSocket.swift DeepSleep/Privileged/HelperClient.swift DeepSleep/Core/ThermalMonitor.swift DeepSleep/Core/FanMode.swift DeepSleep/Core/FanModeStore.swift DeepSleep/Core/FanController.swift DeepSleep/Core/FanDisclaimer.swift scripts/test-fan-control.swift
+build_and_run "fan-control"         /tmp/t_fanctl Shared/FanModels.swift Shared/HelperProtocol.swift Shared/UnixSocket.swift DeepSleep/Privileged/HelperClient.swift DeepSleep/Core/ThermalMonitor.swift DeepSleep/Core/FanMode.swift DeepSleep/Core/FanModeStore.swift DeepSleep/Core/RunState.swift DeepSleep/Core/FanController.swift DeepSleep/Core/FanDisclaimer.swift scripts/test-fan-control.swift
 build_and_run "alert-rules"         /tmp/t_alertrules DeepSleep/Core/AlertRule.swift DeepSleep/Core/AlertRuleEngine.swift scripts/test-alert-rules.swift
 build_and_run "disk-idle-assertion" /tmp/t_diskidle scripts/test-disk-idle-assertion.swift
 build_and_run_raw "cgeventtap"       /tmp/t_cgevtap  -parse-as-library -framework ApplicationServices scripts/test-cgeventtap.swift
@@ -253,6 +253,31 @@ else
     echo "  [失败] 有变异点漏过了 —— 断言没在测那一行"
     grep -E '^\s+\[失败\]' /tmp/t_audio_mut.log | head -5 | sed 's/^/      /'
     FAILED_LIST+=("audio-control-mutation")
+    FAIL=$((FAIL + 1))
+fi
+
+# -{64} 跨重启运行状态恢复
+# 跨重启运行状态恢复：存档编解码、恢复判据、服务器模式的倒计时口径。
+# 全部是纯逻辑 —— 恢复失败在真机上只表现为「设置没回来」，开发机复现不了。
+build_and_run_env "state-restore" \
+    "DEEPSLEEP_RUNSTATE_SUITE=com.skyc8266.deepsleep.tests.runstate" \
+    /tmp/t_state DeepSleep/Core/RunState.swift DeepSleep/Core/ServerModeIdleWindow.swift \
+    DeepSleep/Core/AudioControlModels.swift \
+    Shared/ServerModeIdlePolicy.swift scripts/test-state-restore.swift
+
+echo
+# 变异测试 4：跨重启恢复的判据。
+# 「测试绿了不代表它在测东西」——把恢复判据改坏，测试必须红。
+# 6 个变异点：特权断言不检查助手 / 定时到期照旧恢复 / 到期后断言仍恢复 /
+#             风扇不检查免责声明 / 缺字段存档整份作废 / 倒计时不扣掉开启前的空闲。
+echo "--- 变异测试：跨重启恢复判据改坏必须被抓住 ---"
+if bash scripts/test-state-restore-mutation.sh > /tmp/t_state_mut.log 2>&1; then
+    echo "  [通过] 6 个变异点全部被测试抓住"
+    PASS=$((PASS + 1))
+else
+    echo "  [失败] 有变异点漏过了 —— 断言没在测那一行"
+    grep -E '^\s+\[失败\]' /tmp/t_state_mut.log | head -5 | sed 's/^/      /'
+    FAILED_LIST+=("state-restore-mutation")
     FAIL=$((FAIL + 1))
 fi
 

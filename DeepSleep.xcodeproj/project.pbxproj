@@ -64,6 +64,7 @@
 		629AF9961611BE5DEBCFE641 /* IdleTime.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFD43F8F82DD114B7424CF91 /* IdleTime.swift */; };
 		62DD5A6CBDF34B77F0875289 /* WeeklyRestartManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A765E484E4DB325FDDA6E62 /* WeeklyRestartManager.swift */; };
 		6659B6122A8EEA38871C4070 /* ProcessPriority.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBB5D215E2943FDD3FC7BEDB /* ProcessPriority.swift */; };
+		677B9C99EEB9420AA94C53C0 /* RunState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9690FCB3426C0A732FBF7300 /* RunState.swift */; };
 		683EF363E4F084BEF59CD0EB /* BiometricAuth.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BE799E3FF01373354EC7D76 /* BiometricAuth.swift */; };
 		68BBD23F6A82CF25F557453C /* CPUTemperatureSample.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16BB6D07F5EFD58141E50A48 /* CPUTemperatureSample.swift */; };
 		697159DF6592C3DF33AFB152 /* FanModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE02139511172EAC3BE83EDC /* FanModels.swift */; };
@@ -74,6 +75,7 @@
 		708B71B465D2605742446DBD /* PowerActivityMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C993F30605CB3C3BB8F0EC18 /* PowerActivityMonitor.swift */; };
 		7199FB5E6E665788C67B22C3 /* HostsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A84DDB9E0CFBF5F7269C34B8 /* HostsView.swift */; };
 		739671A0C4D83A406D54898E /* FanModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE02139511172EAC3BE83EDC /* FanModels.swift */; };
+		739F52F4E53A635916D56651 /* RunStateRestorer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6013B2584A0B48A24569FD7E /* RunStateRestorer.swift */; };
 		73ACAA59B7A7FB882CB55A50 /* AutomationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65EE86101EAC650FBB5F0CBB /* AutomationEngine.swift */; };
 		7581419CC3478E6FE8FCCDE2 /* GlassDesign.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67C207BF7C749859AE2ADA38 /* GlassDesign.swift */; };
 		77342CE17E42BF9491EB9D30 /* FanDisclaimer.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAE18F7C52D61C3E6970A309 /* FanDisclaimer.swift */; };
@@ -152,6 +154,7 @@
 		E648F9B8460CA4DC6467A511 /* ProcessGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09942C2FCA248432F203B05D /* ProcessGuard.swift */; };
 		E6B30B55F1CF5DBAB648E548 /* KeepAliveClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69B10B1FADA3DF8080DA3076 /* KeepAliveClient.swift */; };
 		EB176F453E09BC7233F07626 /* AlertRuleEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65A74B9772DF7497322E7265 /* AlertRuleEngine.swift */; };
+		EDAB0C9F4FBF26860CEA6130 /* ServerModeIdleWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16FFBC95190B9774E6FCE0E8 /* ServerModeIdleWindow.swift */; };
 		EDD6AC5A315B659622797185 /* UpdateManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03B58135C030FD6D97DD7D84 /* UpdateManager.swift */; };
 		EE3890A1A4901BA8921BC74E /* ServerModeIdlePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27F7A85603F8F24BB4412911 /* ServerModeIdlePolicy.swift */; };
 		EE8F090E23622184B5D04D17 /* UnixSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58014010D89130A9A194BE3F /* UnixSocket.swift */; };
@@ -193,6 +196,7 @@
 		13496FAE978C672E3F2EA8B8 /* AutoStartSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoStartSettings.swift; sourceTree = "<group>"; };
 		13BD008C8B73D8005C11EFAC /* MenuBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarController.swift; sourceTree = "<group>"; };
 		16BB6D07F5EFD58141E50A48 /* CPUTemperatureSample.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CPUTemperatureSample.swift; sourceTree = "<group>"; };
+		16FFBC95190B9774E6FCE0E8 /* ServerModeIdleWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerModeIdleWindow.swift; sourceTree = "<group>"; };
 		17210D6CB4894B79813780AD /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		178D52B0BEF95859AB8B6D88 /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
 		1DAFF6F4654DCF7056F1BA67 /* QuickQuit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickQuit.swift; sourceTree = "<group>"; };
@@ -238,6 +242,7 @@
 		5DAF3C6A60D4EA7E2A137094 /* ImageUpscaleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageUpscaleView.swift; sourceTree = "<group>"; };
 		5FE2DC1696782B1AD5D14235 /* DiagnosticModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticModel.swift; sourceTree = "<group>"; };
 		6012695D8816727E333287FF /* FanController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FanController.swift; sourceTree = "<group>"; };
+		6013B2584A0B48A24569FD7E /* RunStateRestorer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunStateRestorer.swift; sourceTree = "<group>"; };
 		64A44533D85F54CB2BC70D48 /* HelperInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelperInstaller.swift; sourceTree = "<group>"; };
 		6577DBB50BCE48AD868CB0EE /* ScheduledWakeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduledWakeManager.swift; sourceTree = "<group>"; };
 		65A74B9772DF7497322E7265 /* AlertRuleEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertRuleEngine.swift; sourceTree = "<group>"; };
@@ -260,6 +265,7 @@
 		93CA9A7A347FB22FA26F20B5 /* DashboardSystemCards.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardSystemCards.swift; sourceTree = "<group>"; };
 		950C18882A5E056E157F7741 /* SMCTemperature.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SMCTemperature.swift; sourceTree = "<group>"; };
 		960F8920CB0412CB44C5FB31 /* install-helper.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = "install-helper.sh"; sourceTree = "<group>"; };
+		9690FCB3426C0A732FBF7300 /* RunState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunState.swift; sourceTree = "<group>"; };
 		96C806AFB3348F78552890DE /* KeepAliveError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeepAliveError.swift; sourceTree = "<group>"; };
 		96ED86613A6A98B3C2D18307 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		97F9B8DB97EBAB1D7BF69631 /* ShellConfigView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShellConfigView.swift; sourceTree = "<group>"; };
@@ -403,9 +409,12 @@
 				ED60BFA7B2D37DD4613795ED /* ProcessStatsProvider.swift */,
 				B20EF4F84074F785EE30C16A /* QuarantineService.swift */,
 				1DAFF6F4654DCF7056F1BA67 /* QuickQuit.swift */,
+				9690FCB3426C0A732FBF7300 /* RunState.swift */,
+				6013B2584A0B48A24569FD7E /* RunStateRestorer.swift */,
 				DE95755CD1A5144551AD6774 /* ScheduledCommand.swift */,
 				6577DBB50BCE48AD868CB0EE /* ScheduledWakeManager.swift */,
 				9984708438247E1D6DD0C2DF /* ServerModeController.swift */,
+				16FFBC95190B9774E6FCE0E8 /* ServerModeIdleWindow.swift */,
 				D0957277560CE8A4B64F4A27 /* ShellConfigService.swift */,
 				93C5E4B4358BF400FACC53DC /* SleepController.swift */,
 				E13408104C16C642713945FC /* SystemMonitor.swift */,
@@ -791,11 +800,14 @@
 				DD4E960A423AD43036E88DBA /* QuarantineView.swift in Sources */,
 				C5C82FA1DED31F6CAD42F13E /* QuickQuit.swift in Sources */,
 				2CF3383D939893655F3DD14A /* QuickQuitView.swift in Sources */,
+				677B9C99EEB9420AA94C53C0 /* RunState.swift in Sources */,
+				739F52F4E53A635916D56651 /* RunStateRestorer.swift in Sources */,
 				9429A1EB6266F9702E9D9158 /* ScheduleView.swift in Sources */,
 				293AAE69A3F01595AF98272F /* ScheduledCommand.swift in Sources */,
 				5D4E0D12589875B3246CCEFE /* ScheduledWakeManager.swift in Sources */,
 				017E43688EF7300FD313BCA4 /* ServerModeController.swift in Sources */,
 				EE3890A1A4901BA8921BC74E /* ServerModeIdlePolicy.swift in Sources */,
+				EDAB0C9F4FBF26860CEA6130 /* ServerModeIdleWindow.swift in Sources */,
 				C9B76A5A6E3BC83B1DA8F016 /* ServerModeView.swift in Sources */,
 				F89E51313B3D9C4CB42EA07D /* ShellConfigService.swift in Sources */,
 				F21DB4CD51453F39B234299D /* ShellConfigView.swift in Sources */,
@@ -1049,7 +1061,7 @@
 				INFOPLIST_FILE = DeepSleep/Resources/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
-				MARKETING_VERSION = 1.12.0;
+				MARKETING_VERSION = 1.13.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.skyc8266.deepsleep;
 				PRODUCT_NAME = "Deep Sleep";
 				SDKROOT = macosx;
@@ -1066,7 +1078,7 @@
 				INFOPLIST_FILE = DeepSleep/Resources/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
-				MARKETING_VERSION = 1.12.0;
+				MARKETING_VERSION = 1.13.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.skyc8266.deepsleep;
 				PRODUCT_NAME = "Deep Sleep";
 				SDKROOT = macosx;

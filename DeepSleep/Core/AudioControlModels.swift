@@ -124,6 +124,41 @@ enum AudioControlSupport {
         return defaults.double(forKey: key)
     }
 
+    /// 存档里全是这种前缀的键：`volume:<uniqueKey>`。
+    static let volumeKeyPrefix = "volume:"
+
+    /// 一次「把存档音量套回应用」的结果。
+    ///
+    /// 分开两条是有意义的：套上的可以就此不管，没套上的要等目标应用
+    /// 重新出现 —— 那是「暂时还没恢复」，不是「恢复失败」。
+    struct VolumeRestorePlan: Equatable {
+        /// 目标应用正在运行，音量已经套上。
+        var applied: [String] = []
+        /// 目标应用当前没在运行，音量留到它出现时再生效。
+        var pending: [String] = []
+    }
+
+    /// 算出这次能套上哪些、哪些还得等。
+    ///
+    /// - Parameters:
+    ///   - storedKeys: 存档里的键（`volume:<uniqueKey>`）。
+    ///   - liveKeys: 当前发现的应用 uniqueKey。
+    static func volumeRestorePlan(storedKeys: [String], liveKeys: Set<String>) -> VolumeRestorePlan {
+        var plan = VolumeRestorePlan()
+        for key in storedKeys where key.hasPrefix(volumeKeyPrefix) {
+            let target = String(key.dropFirst(volumeKeyPrefix.count))
+            guard !target.isEmpty else { continue }
+            if liveKeys.contains(target) {
+                plan.applied.append(target)
+            } else {
+                plan.pending.append(target)
+            }
+        }
+        plan.applied.sort()
+        plan.pending.sort()
+        return plan
+    }
+
     /// 判断是否需要为该 app 建立引擎（音量 != unity）。
     static func needsEngine(volume: Double, isProducing: Bool) -> Bool {
         let v = clampVolume(volume)
