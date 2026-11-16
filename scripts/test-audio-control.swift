@@ -123,10 +123,10 @@ struct AudioControlTests {
         print("\n== 同 bundleID 合并 ==")
 
         let merged = AudioControlSupport.mergeByBundleID([
-            (objectID: 1, pid: 100, bundleID: "com.apple.Safari", isProducing: true),
-            (objectID: 2, pid: 101, bundleID: "com.apple.Safari", isProducing: false),
-            (objectID: 3, pid: 200, bundleID: "com.apple.Music", isProducing: true),
-            (objectID: 4, pid: 300, bundleID: nil, isProducing: true),
+            (objectID: 1, pid: 100, bundleID: "com.apple.Safari", processName: "Safari", isProducing: true),
+            (objectID: 2, pid: 101, bundleID: "com.apple.Safari", processName: "Safari", isProducing: false),
+            (objectID: 3, pid: 200, bundleID: "com.apple.Music", processName: "Music", isProducing: true),
+            (objectID: 4, pid: 300, bundleID: nil, processName: nil, isProducing: true),
         ])
 
         checkEqual("合并后是 3 行（Safari 两个进程合成一行）", merged.count, 3)
@@ -148,10 +148,63 @@ struct AudioControlTests {
 
         // 无 bundleID 的两个不同 pid 不能被合并
         let merged2 = AudioControlSupport.mergeByBundleID([
-            (objectID: 10, pid: 400, bundleID: nil, isProducing: true),
-            (objectID: 11, pid: 401, bundleID: nil, isProducing: true),
+            (objectID: 10, pid: 400, bundleID: nil, processName: nil, isProducing: true),
+            (objectID: 11, pid: 401, bundleID: nil, processName: nil, isProducing: true),
         ])
         checkEqual("两个无 bundleID 的进程是 2 行", merged2.count, 2)
+
+        // MARK: - 子进程分行
+
+        print("\n== 子进程分行 ==")
+
+        // 同一个 app，主进程和 GPU 进程是同一个 bundleID。
+        let webview = AudioControlSupport.mergeByBundleID([
+            (objectID: 20, pid: 500, bundleID: "com.skyc8266.skycmedia", processName: "SkycMedia", isProducing: false),
+            (objectID: 21, pid: 501, bundleID: "com.skyc8266.skycmedia", processName: "GPU", isProducing: true),
+        ], appNames: ["com.skyc8266.skycmedia": "SkycMedia"])
+        checkEqual("主进程和 GPU 进程是 2 行", webview.count, 2)
+
+        let main = webview.first { $0.processName == "SkycMedia" }
+        let gpu = webview.first { $0.processName == "GPU" }
+        checkEqual("主进程只显示 app 名", main?.displayName ?? "", "SkycMedia")
+        checkEqual("GPU 进程显示 app 名加进程名", gpu?.displayName ?? "", "SkycMedia/GPU")
+        check("两行的 ID 不一样（UI 才分得开）", main?.id != gpu?.id)
+        check("两行的存储键一样（音量设置共享）", main?.uniqueKey == gpu?.uniqueKey)
+
+        // 同一个 app 里进程名相同的还是合成一行
+        let sameName = AudioControlSupport.mergeByBundleID([
+            (objectID: 30, pid: 600, bundleID: "com.apple.Safari", processName: "Safari", isProducing: true),
+            (objectID: 31, pid: 601, bundleID: "com.apple.Safari", processName: "Safari", isProducing: true),
+        ])
+        checkEqual("进程名相同的是 1 行", sameName.count, 1)
+
+        // 查不到 app 名时退回 bundleID 的最后一段（虽然是小写的，
+        // 但总比显示 "无 bundleID" 强）。
+        let noName = AudioControlSupport.mergeByBundleID([
+            (objectID: 25, pid: 550, bundleID: "com.skyc8266.skycmedia", processName: "GPU", isProducing: true),
+        ])
+        checkEqual(
+            "查不到 app 名时用 bundleID 最后一段",
+            noName.first?.displayName ?? "",
+            "skycmedia/GPU"
+        )
+
+        // MARK: - 不管理自己
+
+        print("\n== 不管理自己 ==")
+
+        let withSelf = AudioControlSupport.mergeByBundleID([
+            (objectID: 40, pid: 700, bundleID: "com.skyc8266.deepsleep", processName: "Deep Sleep", isProducing: true),
+            (objectID: 41, pid: 701, bundleID: "com.skyc8266.deepsleep.helper", processName: "deepsleep-helper", isProducing: true),
+            (objectID: 42, pid: 702, bundleID: "com.apple.Music", processName: "Music", isProducing: true),
+        ])
+        checkEqual("自己的两个进程都不进列表", withSelf.count, 1)
+        checkEqual("别人的进程还在", withSelf.first?.bundleID ?? "", "com.apple.Music")
+
+        check("自己的 bundle id 认得出来", AudioControlSupport.isSelfBundleID("com.skyc8266.deepsleep"))
+        check("助手的 bundle id 也认得出来", AudioControlSupport.isSelfBundleID("com.skyc8266.deepsleep.helper"))
+        check("别人的 bundle id 不算自己", !AudioControlSupport.isSelfBundleID("com.apple.Music"))
+        check("没有 bundle id 不算自己", !AudioControlSupport.isSelfBundleID(nil))
 
         // MARK: - 显示名
 
@@ -160,6 +213,36 @@ struct AudioControlTests {
         checkEqual("bundleID 取最后一段", AudioControlSupport.displayName(bundleID: "com.apple.Safari", processIDs: [1]), "Safari")
         checkEqual("无 bundleID 用 pid", AudioControlSupport.displayName(bundleID: nil, processIDs: [42]), "进程 42")
         checkEqual("空 bundleID 当作无", AudioControlSupport.displayName(bundleID: "", processIDs: [7]), "进程 7")
+
+        checkEqual("没有进程名就是 app 名", AudioControlSupport.displayName(appName: "SkycMedia", processName: nil), "SkycMedia")
+        checkEqual("进程名跟 app 名一样就只显示 app 名", AudioControlSupport.displayName(appName: "SkycMedia", processName: "SkycMedia"), "SkycMedia")
+        checkEqual("子进程是 app 名加进程名", AudioControlSupport.displayName(appName: "SkycMedia", processName: "GPU"), "SkycMedia/GPU")
+        checkEqual("空进程名当没有", AudioControlSupport.displayName(appName: "SkycMedia", processName: ""), "SkycMedia")
+        checkEqual(
+            "进程名已经含 app 名就不写两遍",
+            AudioControlSupport.displayName(appName: "SkycMedia", processName: "SkycMedia Helper"),
+            "SkycMedia"
+        )
+
+        // MARK: - 命令行匹配
+
+        print("\n== 命令行匹配 ==")
+
+        let gpuRow = AudioControlledApp(
+            id: "com.skyc8266.skycmedia\u{1}GPU",
+            displayName: "SkycMedia/GPU",
+            bundleID: "com.skyc8266.skycmedia",
+            processIDs: [501],
+            audioObjectIDs: [21],
+            isProducingAudio: true,
+            volume: 1.0,
+            processName: "GPU"
+        )
+        check("bundleID 能匹配", AudioControlSupport.matches(target: "com.skyc8266.skycmedia", app: gpuRow))
+        check("完整显示名能匹配", AudioControlSupport.matches(target: "SkycMedia/GPU", app: gpuRow))
+        check("只写 app 名也能匹配", AudioControlSupport.matches(target: "SkycMedia", app: gpuRow))
+        check("大小写不敏感", AudioControlSupport.matches(target: "skycmedia", app: gpuRow))
+        check("别的 app 匹配不上", !AudioControlSupport.matches(target: "Music", app: gpuRow))
 
         // MARK: - 是否需要建引擎
 

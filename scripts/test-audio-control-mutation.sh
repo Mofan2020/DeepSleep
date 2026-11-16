@@ -79,7 +79,7 @@ run_mutation "clamp 漏掉上界" \
 
 # 4. 同 bundleID 不合并 —— 用 pid 当 key
 run_mutation "同 bundleID 不合并" \
-    's|let key = p.bundleID ?? "pid:\\(p.pid)"|let key = "pid:\\(p.pid)"|'
+    's|let key = p.bundleID.map { "\\($0)\\u{1}\\(p.processName ?? "")" }|let key = "pid:\\(p.pid)"|'
 
 # 5. storedVolume 对缺失键返回 0（没设过 = 静音）
 run_mutation "缺失键返回 0 而不是 unity" \
@@ -88,6 +88,26 @@ run_mutation "缺失键返回 0 而不是 unity" \
 # 6. 增益反了 —— 音量越大越小声
 run_mutation "增益方向反了" \
     's|return Float(v \* v)|return Float((1.0 - v) * (1.0 - v))|'
+
+# 7. 不过滤自己的进程 —— DeepSleep 自己的声音会被用户调掉
+run_mutation "不过滤自己的进程" \
+    's|if isSelfBundleID(p.bundleID) { continue }||'
+
+# 8. 子进程不分行 —— WebView 的 GPU 进程跟主进程又挤成一行
+run_mutation "子进程不分行" \
+    's|let key = p.bundleID.map { "\\($0)\\u{1}\\(p.processName ?? "")" }|let key = p.bundleID ?? "pid:\\(p.pid)"|'
+
+# 9. 显示名不带进程名 —— 用户看到的是 "SkycMedia" 而不是 "SkycMedia/GPU"
+run_mutation "显示名不带进程名" \
+    's|return "\\(appName)/\\(processName)"|return appName|'
+
+# 10. 不查 app 名 —— "SkycMedia" 变成小写的 "skycmedia"
+run_mutation "不查 app 显示名" \
+    's|let appName = bid.flatMap { appNames\[$0\] }|let appName = displayName(bundleID: bid, processIDs: g.pids)|'
+
+# 11. 命令行不认 app 名 —— --audio set SkycMedia 找不到那一行
+run_mutation "命令行不认 app 名" \
+    's|let appName = app.displayName|let appName = ""|'
 
 echo
 echo "=== 结果 ==="

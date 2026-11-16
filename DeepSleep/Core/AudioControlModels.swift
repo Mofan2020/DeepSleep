@@ -12,22 +12,54 @@
 import Foundation
 
 /// 一个「能单独调音量」的应用聚合行。
-/// 同一 bundleID 的多个进程（如浏览器渲染进程）合并成一行。
+///
+/// **一个 app 的多个进程可能分成好几行。** 比如 WebView 的 GPU 进程：
+/// 它跟主进程同一个 bundleID，但它是另一个进程，出声的是它。合成一行
+/// 就看不出「谁在响」，调节的时候也不知道调的是谁。
+///
+/// 所以分组键是 **bundleID + 进程名**：同一个 app 里进程名相同的合成一行
+/// （浏览器的多个同类型标签页），进程名不同的分开列。
 struct AudioControlledApp: Identifiable, Equatable, Hashable {
-    let id: String            // bundleID；没有时用 "pid:<pid>"
+    /// UI 里的唯一标识。同一 bundleID 下的不同进程名是不同的行。
+    let id: String
+    /// 显示名：`App Name`，或者 `App Name/进程名`（子进程）。
     let displayName: String
     let bundleID: String?
     let processIDs: [pid_t]
     let audioObjectIDs: [AudioObjectID]
     var isProducingAudio: Bool
     var volume: Double        // 0...1，存时已 clamp
+    /// 这一行的进程名（可执行文件名，如 "GPU"）。
+    let processName: String?
+
+    /// 显式写出来是因为成员初始化器不会把带默认值的参数暴露成可传参数，
+    /// 而 `processName` 是后来加的（原来按 bundleID 合并成一行，不需要
+    /// 区分进程）。
+    init(id: String,
+         displayName: String,
+         bundleID: String?,
+         processIDs: [pid_t],
+         audioObjectIDs: [AudioObjectID],
+         isProducingAudio: Bool,
+         volume: Double,
+         processName: String? = nil) {
+        self.id = id
+        self.displayName = displayName
+        self.bundleID = bundleID
+        self.processIDs = processIDs
+        self.audioObjectIDs = audioObjectIDs
+        self.isProducingAudio = isProducingAudio
+        self.volume = volume
+        self.processName = processName
+    }
 
     /// 进程名回退：无 bundleID 时用 pid
     var fallbackName: String {
         bundleID ?? "进程 \(processIDs.first ?? -1)"
     }
 
-    /// 供 UI 显示的唯一标识（同一 bundleID 的多进程已合并）
+    /// 存储用的键。**只用 bundleID**：同一个 app 的所有进程共享一份音量
+    /// 设置，用户拖一次滑块就该整个 app 都变。
     var uniqueKey: String {
         bundleID ?? "pid:\(processIDs.sorted().map(String.init).joined(separator: ","))"
     }
@@ -75,29 +107,103 @@ enum AudioControlSupport {
         return "进程 \(processIDs.first ?? -1)"
     }
 
+    /// 一行的显示名。
+    ///
+    /// **格式：`App Name`，子进程用 `App Name/进程名`。**
+    ///
+    /// - 进程名跟 app 名一样（主进程）→ 只显示 app 名
+    /// - 进程名不一样（WebView 的 "GPU"）→ `App Name/GPU`
+    ///
+    /// 为什么非要带上进程名：CoreAudio 只报得出 bundleID，WebView 的
+    /// GPU 进程跟主进程是同一个 bundleID，光看 app 名用户根本不知道
+    /// 响的是哪个进程。
+    static func displayName(appName: String, processName: String?) -> String {
+        guard let processName, !processName.isEmpty else { return appName }
+        if processName.caseInsensitiveCompare(appName) == .orderedSame {
+            return appName
+        }
+        // 进程名里已经带了 app 名（可执行文件名常常是 "SkycMedia"，helper
+        // 进程是 "SkycMedia Helper"），那就不用再写一遍。
+        if processName.lowercased().contains(appName.lowercased())
+            || appName.lowercased().contains(processName.lowercased()) {
+            return appName
+        }
+        return "\(appName)/\(processName)"
+    }
+
+    /// 本应用自己的 bundle id。**自己的音频不归自己管。**
+    ///
+    /// 理由很实在：DeepSleep 自己在跑音频引擎（IOProc、聚合设备），
+    /// 它自己的进程也在那个音频图里。要是把它列出来，用户拖一下滑块
+    /// 就把自己的声音调没了；更要命的是别的应用（播放器）接的是
+    /// 聚合设备，DeepSleep 一调就把它们的音量也带下去。
+    static let selfBundleIDs: Set<String> = [
+        "com.skyc8266.deepsleep",
+        "com.skyc8266.deepsleep.helper",
+    ]
+
+    /// 这个 bundle id 是不是自己的。
+    static func isSelfBundleID(_ bundleID: String?) -> Bool {
+        guard let bundleID, !bundleID.isEmpty else { return false }
+        return selfBundleIDs.contains(bundleID)
+    }
+
+    /// 命令行里给的名字能不能指到这一行。
+    ///
+    /// 认三种写法：
+    /// - bundleID（`com.skyc8266.skycmedia`）
+    /// - 完整显示名（`SkycMedia/GPU`）
+    /// - 只写 app 名（`SkycMedia`）—— 这一行的 app 名部分一样就算，
+    ///   否则用户想调 GPU 进程却得先记住带斜杠的写法。
+    static func matches(target: String, app: AudioControlledApp) -> Bool {
+        let wanted = target.lowercased()
+        if let bid = app.bundleID, bid.lowercased() == wanted { return true }
+        if app.displayName.lowercased() == wanted { return true }
+        // app 名部分：显示名是 "App Name/进程名"，取斜杠前面那段。
+        let appName = app.displayName
+            .components(separatedBy: "/")
+            .first?
+            .lowercased() ?? ""
+        return !appName.isEmpty && appName == wanted
+    }
+
     /// 将同一 bundleID 的多进程合并成一行。
     /// 输入：进程对象级别的原始数据。
-    /// 输出：按 bundleID 分组、合并的应用行。
-    static func mergeByBundleID(_ processes: [(objectID: AudioObjectID, pid: pid_t, bundleID: String?, isProducing: Bool)]) -> [AudioControlledApp] {
-        var groups: [String: (objects: [AudioObjectID], pids: [pid_t], producing: Bool)] = [:]
+    /// 输出：按 bundleID + 进程名分组、合并的应用行。
+    ///
+    /// **分组键是 bundleID + 进程名。** 同一 app 里进程名不同的分开列
+    /// （WebView 的主进程和 GPU 进程），名字相同的合成一行。
+    ///
+    /// - Parameter appNames: bundleID → 应用显示名。查不到就用 bundleID
+    ///   的最后一段兜底（那玩意儿是小写的，"com.skyc8266.skycmedia" 会变成
+    ///   "skymedia"，不是用户眼里那个 "SkycMedia"）。
+    static func mergeByBundleID(_ processes: [(objectID: AudioObjectID, pid: pid_t, bundleID: String?, processName: String?, isProducing: Bool)],
+                                 appNames: [String: String] = [:]) -> [AudioControlledApp] {
+        var groups: [String: (objects: [AudioObjectID], pids: [pid_t], producing: Bool, bundleID: String?, processName: String?)] = [:]
         for p in processes {
-            let key = p.bundleID ?? "pid:\(p.pid)"
-            var g = groups[key] ?? ([], [], false)
+            // 自己的进程不进列表。
+            if isSelfBundleID(p.bundleID) { continue }
+            let key = p.bundleID.map { "\($0)\u{1}\(p.processName ?? "")" }
+                ?? "pid:\(p.pid)"
+            var g = groups[key] ?? ([], [], false, p.bundleID, p.processName)
             g.objects.append(p.objectID)
             g.pids.append(p.pid)
             g.producing = g.producing || p.isProducing
             groups[key] = g
         }
         return groups.map { key, g in
-            let bid = key.hasPrefix("pid:") ? nil : key
+            let bid = g.bundleID
+            let appName = bid.flatMap { appNames[$0] }
+                ?? displayName(bundleID: bid, processIDs: g.pids)
             return AudioControlledApp(
                 id: key,
-                displayName: displayName(bundleID: bid, processIDs: g.pids),
+                displayName: displayName(appName: appName, processName: g.processName),
                 bundleID: bid,
                 processIDs: g.pids.sorted(),
                 audioObjectIDs: g.objects,
                 isProducingAudio: g.producing,
-                volume: maxVolume  // 默认 unity
+                volume: maxVolume,  // 默认 unity
+                processName: g.processName
             )
         }.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
     }

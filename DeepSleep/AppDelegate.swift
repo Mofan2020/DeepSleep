@@ -368,8 +368,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             manager.refreshNow()
             let apps = manager.controlledApps
             guard let app = apps.first(where: {
-                $0.bundleID?.lowercased() == target.lowercased()
-                    || $0.displayName.lowercased() == target.lowercased()
+                AudioControlSupport.matches(target: target, app: $0)
             }) else {
                 emit("没找到正在输出音频的应用「\(target)」。当前列表：")
                 for item in apps {

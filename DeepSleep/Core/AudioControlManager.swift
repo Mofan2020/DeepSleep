@@ -139,6 +139,9 @@ final class AudioControlManager: ObservableObject {
     }
 
     /// 切换某 app 静音（音量 0 <-> 1）。按 key 取当下值，避免用到过期快照。
+    ///
+    /// 一个 app 可能有好几行（主进程、GPU 进程），它们共享一份音量：
+    /// 取第一行的音量就够了，静音是整个 app 一起静音。
     func toggleMute(forKey key: String) {
         guard let app = controlledApps.first(where: { $0.uniqueKey == key }) else { return }
         setVolume(app.volume > 0.001 ? 0 : 1, for: app)
@@ -270,7 +273,10 @@ final class AudioControlManager: ObservableObject {
         defer { isRefreshing = false }
 
         let processes = discoverOutputProcesses()
-        let merged = AudioControlSupport.mergeByBundleID(processes)
+        let merged = AudioControlSupport.mergeByBundleID(
+            processes,
+            appNames: displayNames(for: processes)
+        )
 
         var withVolumes: [AudioControlledApp] = []
         for var app in merged {
@@ -602,7 +608,7 @@ final class AudioControlManager: ObservableObject {
     }
 
     /// 发现所有 IsRunningOutput=true 的进程对象。
-    private func discoverOutputProcesses() -> [(objectID: AudioObjectID, pid: pid_t, bundleID: String?, isProducing: Bool)] {
+    private func discoverOutputProcesses() -> [(objectID: AudioObjectID, pid: pid_t, bundleID: String?, processName: String?, isProducing: Bool)] {
         let system = AudioObjectID(kAudioObjectSystemObject)
         var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyProcessObjectList,
                                                 mScope: kAudioObjectPropertyScopeGlobal,
@@ -612,7 +618,7 @@ final class AudioControlManager: ObservableObject {
         var objects = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
         guard AudioObjectGetPropertyData(system, &address, 0, nil, &size, &objects) == noErr else { return [] }
 
-        var result: [(AudioObjectID, pid_t, String?, Bool)] = []
+        var result: [(AudioObjectID, pid_t, String?, String?, Bool)] = []
         for object in objects {
             var pidAddress = AudioObjectPropertyAddress(mSelector: kAudioProcessPropertyPID,
                                                        mScope: kAudioObjectPropertyScopeGlobal,
@@ -638,10 +644,64 @@ final class AudioControlManager: ObservableObject {
                                && running != 0)
 
             if isProducing {
-                result.append((object, pid, bundleID, true))
+                // 进程名取**可执行文件名**，不是 CoreAudio 的
+                // kAudioProcessPropertyName：后者对 WebView 的子进程报的是
+                // app 的名字（「SkycMedia」），用户看到一堆同名行，
+                // 分不清哪个是 GPU 进程。
+                result.append((object, pid, bundleID, executableName(for: pid), true))
             }
         }
         return result
+    }
+
+    /// 进程的可执行文件名（如 "GPU"、"SkycMedia"）。
+    ///
+    /// 用 `proc_pidpath` 而不是 `NSRunningApplication.localizedName`：
+    /// 后者对子进程返回的是**宿主 app 的名字**，正好把要区分的信息抹掉。
+    private func executableName(for pid: pid_t) -> String? {
+        guard pid > 0 else { return nil }
+        var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+        guard proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 else { return nil }
+        let path = String(cString: buffer)
+        let leaf = (path as NSString).lastPathComponent
+        return leaf.isEmpty ? nil : leaf
+    }
+
+    /// 应用的名字：bundleID → 用户眼里那个名字。
+    ///
+    /// **不能用 bundleID 的最后一段。** "com.skyc8266.skycmedia" 的最后一段
+    /// 是小写的 "skymedia"，而 app 里的名字是 "SkycMedia"。
+    ///
+    /// 查的是 app bundle 的 Info.plist（CFBundleDisplayName，没有就用
+    /// CFBundleName）。查不到就退回 bundleID 的最后一段。
+    private func displayNames(
+        for processes: [(objectID: AudioObjectID, pid: pid_t, bundleID: String?, processName: String?, isProducing: Bool)]
+    ) -> [String: String] {
+        var names: [String: String] = [:]
+        for process in processes {
+            guard let bid = process.bundleID, !bid.isEmpty, names[bid] == nil else { continue }
+            if let name = applicationName(bundleID: bid) {
+                names[bid] = name
+            }
+        }
+        return names
+    }
+
+    /// 读 app bundle 里的显示名。
+    private func applicationName(bundleID: String) -> String? {
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
+            return nil
+        }
+        let plist = url.appendingPathComponent("Contents/Info.plist")
+        guard let data = try? Data(contentsOf: plist),
+              let dict = try? PropertyListSerialization.propertyList(
+                from: data, options: [], format: nil) as? [String: Any] else {
+            return nil
+        }
+        for key in ["CFBundleDisplayName", "CFBundleName"] {
+            if let name = dict[key] as? String, !name.isEmpty { return name }
+        }
+        return nil
     }
 
     // MARK: - 持久化
@@ -650,9 +710,13 @@ final class AudioControlManager: ObservableObject {
         defaults.set(volume, forKey: AudioControlSupport.volumeKey(for: app))
     }
 
-    /// 更新 @Published 数组里单个 app 的 volume（触发 UI 刷新）。
+    /// 更新 @Published 数组里某个 app 的 volume（触发 UI 刷新）。
+    ///
+    /// **更新所有同 uniqueKey 的行。** 一个 app 现在可能有好几行（主进程、
+    /// GPU 进程），它们共享一份音量设置 —— 拖一行，另一行也得跟着变，
+    /// 不然用户会以为只有一半生效了。
     private func updateAppVolume(_ key: String, _ volume: Double) {
-        if let index = controlledApps.firstIndex(where: { $0.uniqueKey == key }) {
+        for index in controlledApps.indices where controlledApps[index].uniqueKey == key {
             controlledApps[index].volume = volume
         }
     }

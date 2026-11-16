@@ -33,7 +33,7 @@ macOS has never had a real answer to: *"I want my Mac to stay awake until this d
 - **`deepsleep://` URL scheme** — call any action from shell scripts, AppleScript, or Automator.
 - **Quick Quit** — bind a global hotkey (default ⌥⇧⌘H) to force-kill selected apps and their entire process tree.
 - **Toolbox** — every tool lives on one page; pin the ones you use most to the top.
-- **Audio control (experimental)** — set the volume of individual apps without touching the system master volume. Off by default; turn it on in the toolbox.
+- **Audio control (experimental)** — set the volume of individual apps without touching the system master volume. Off by default; turn it on in the toolbox. The list shows one row per app; an app with several processes is listed as `App Name/Process Name` (e.g. `SkycMedia/GPU`). DeepSleep's own processes are neither listed nor adjustable.
 - **AI keep-alive** — send a tiny request to a subscription AI service at set times each day, so its rolling usage window keeps moving.
 - **External activity** — see who else is blocking sleep or changing power settings (`--blockers`, `--changes`, `--rivals`).
 - **System monitor** — CPU/RAM overload alerts, single-process RSS threshold, and live CPU temperature with an adjustable alert threshold (40–105°C). A temperature alert notifies you; it never freezes or kills a process.

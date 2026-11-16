@@ -4066,3 +4066,98 @@ t= 28.9 HIDIdleTime=   35.51
 - 助手刚更新完立刻重启应用时，5 秒等待够不够
 - TCC 授权被撤销后，服务器模式恢复的跳过提示是否准确
 - 真实重启（不是重启应用）后的恢复 —— 本机只验证了退出重开
+
+## 音频控制：不过滤自己 + 按进程分行（2026-11-16）
+
+用户提了两件事。
+
+### 自己的音频不给管
+
+DeepSleep 自己就在音频图里：它跑 IOProc、建聚合设备。用户要是在列表里看到
+DeepSleep 自己，拖一下滑块就把自己的声音调没了；更要命的是别的应用（播放器）
+接的是那个聚合设备，DeepSleep 一调就把它们的音量也带下去。
+
+所以 `mergeByBundleID` 直接把 `com.skyc8266.deepsleep` 和
+`com.skyc8266.deepsleep.helper` 过滤掉：不列，也不给调。
+
+过滤放在**分组之前**。放在之后过滤也行，但那样引擎会先给 DeepSleep 建出来
+再拆掉，中间有一段声音是错的状态。
+
+### 显示名要带进程名
+
+原来的显示名是 bundleID 的最后一段，两个毛病：
+
+1. **名字不对**。`com.skyc8266.skycmedia` 的最后一段是 `skycmedia`（小写），
+   用户眼里那个 app 叫 `SkycMedia`。现在改成读 app bundle 的 Info.plist
+   （CFBundleDisplayName，没有就用 CFBundleName），查不到才退回 bundleID 末段。
+2. **分不出进程**。WebView 的 GPU 进程跟主进程是同一个 bundleID，合成一行
+   用户根本不知道响的是哪个。
+
+现在的格式：
+
+- 应用自己播放 → `SkycMedia`
+- 应用下的别的进程播放 → `SkycMedia/GPU`
+
+### 分组键从 bundleID 变成 bundleID + 进程名
+
+同 bundleID 的进程不再一律合成一行：进程名相同才合成（浏览器的多个同类型
+标签页），进程名不同就分开列。
+
+**存储键没变**：`uniqueKey` 还是 bundleID。同一个 app 的所有进程共享一份音量
+设置，用户拖一次滑块整个 app 都变。变的只有 `id`（UI 用的唯一标识），加了
+进程名进去，两行才分得开。
+
+### 进程名取可执行文件名，不是 CoreAudio 的属性
+
+`kAudioProcessPropertyName` 对 WebView 的子进程报的是**宿主 app 的名字**，
+正好把要区分的信息抹掉。改用 `proc_pidpath` 取可执行文件名的最后一段 ——
+那才是 "GPU"。
+
+`NSRunningApplication.localizedName` 也不能用，理由一样。
+
+### 拖一行要更新所有行
+
+`updateAppVolume` 原来只更新 `firstIndex(where:)` 匹配到的那一行。现在一个 app
+有几行，拖一行另一行不动，用户会以为只有一半生效了。改成遍历所有同
+`uniqueKey` 的行。
+
+### 命令行匹配
+
+`--audio set <应用> <音量>` 认三种写法：bundleID、完整显示名（`SkycMedia/GPU`）、
+只写 app 名（`SkycMedia`）。最后那个是给用户的 —— 要调 GPU 进程不必先记住带
+斜杠的写法。
+
+### 验证
+
+- `scripts/test-audio-control.swift`：67 项全过
+- `scripts/test-audio-control-mutation.sh`：11 种坏实现全被抓住（新增 5 条：
+  不过滤自己、子进程不分行、显示名不带进程名、不查 app 显示名、命令行不认
+  app 名）
+- `xcodebuild` 整个 App 编译通过
+
+### 没验证的部分
+
+- 真机上的显示效果：WebView app（SkycMedia）出声时到底显示几行、"GPU" 这个
+  进程名在真机上取不取得到
+- 过滤掉自己之后，DeepSleep 的 IOProc 链路还正常（自己不出声了，别人接聚合
+  设备的声音会不会掉）
+
+### 顺手修的：check-docs 负向测试的用例失效了
+
+全量测试跑出来一条红：`check-docs 负向测试` 里有两条失败，而且是**基线就
+失败**（stash 掉本轮改动重跑一样红），跟这次改动无关。
+
+原因是那两条用例的假设过时了：workflow 早改成用 awk 从累积的
+`release-notes.md` 里截出本版那一段写到 `/tmp/release-body.md`，
+`body_path` 指那个临时文件。用例还在找旧的
+`if [ ! -f release-notes.md ]` 那段，找不到就报「用例本身失效」。
+
+**失效的用例等于那两条规则没守着。** 所以按现在的写法重写：
+
+- 「直接把累积的 release-notes.md 当 body」→ `check-docs.py` 第 5 条会拦
+- 「body_path 指向不存在的文件」→ 第 4 条会拦
+
+第一条的关键词断言也调了：原来盯 "body_path"，但 `check-docs.py` 报的是
+「workflow 直接把累积的 release-notes.md 当 release body」，里面没有那个
+词。关键词要跟报错文案对得上，不然用例红了而拦截其实是生效的。
+

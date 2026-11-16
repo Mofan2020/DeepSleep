@@ -112,22 +112,26 @@ CASES = [
 
     # 发布 workflow 的三条。硬规则是 runner 只发 pre-release，
     # 实测确认之后才手动翻正式版 —— 这三条锁住那条规则不被改掉。
+    #
+    # **这两条跟着 workflow 的写法变过。** release-notes.md 现在是累积
+    # 文件（新版在最上面），workflow 用 awk 截出本版那一段写到
+    # /tmp/release-body.md，body_path 指那个临时文件。所以「覆写
+    # release-notes.md」那种破坏方式已经不存在了，真正的风险变成
+    # 「直接把累积文件当 body」和「body_path 指向不存在的文件」。
     ("发布 workflow：把 prerelease 改成 false（绕过实测）",
      ".github/workflows/release.yml",
      "prerelease: true", "prerelease: false",
      "prerelease"),
 
-    ("发布 workflow：又无条件覆写 release-notes.md",
+    ("发布 workflow：直接把累积的 release-notes.md 当 body",
      ".github/workflows/release.yml",
-     "            if [ ! -f release-notes.md ]; then\n"
-     "              echo \"## v${{ steps.ver.outputs.version }}\" > release-notes.md\n"
-     "            fi",
-     "            echo \"## v${{ steps.ver.outputs.version }}\" > release-notes.md",
-     "release-notes.md"),
+     "          body_path: /tmp/release-body.md",
+     "          body_path: release-notes.md",
+     "累积"),
 
     ("发布 workflow：body_path 指向不存在的文件",
      ".github/workflows/release.yml",
-     "body_path: release-notes.md", "body_path: no-such-notes.md",
+     "body_path: /tmp/release-body.md", "body_path: no-such-notes.md",
      "body_path"),
 ]
 
