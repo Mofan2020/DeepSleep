@@ -133,6 +133,13 @@ CASES = [
      ".github/workflows/release.yml",
      "body_path: /tmp/release-body.md", "body_path: no-such-notes.md",
      "body_path"),
+
+    # 版本号：两份 README 都要对上。中文那份以前没人管，停在 1.11.2
+    # 没人发现。
+    ("版本号：中文 README 写的版本跟 project.yml 不一致",
+     "README.zh-CN.md",
+     "**当前版本**：1.14.0", "**当前版本**：1.11.2",
+     "版本号"),
 ]
 
 

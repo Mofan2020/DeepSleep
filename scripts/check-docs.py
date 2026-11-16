@@ -303,6 +303,26 @@ def check_version():
     else:
         print("  ✓ 一致")
 
+    # 中文 README 也要对上。
+    #
+    # **两份都得查。** 以前只查英文那份，中文那份的「当前版本」就没人管了，
+    # 停在 1.11.2 没人发现 —— 两条 README 摆在一起，一个 1.13.0 一个
+    # 1.11.2，用户看到哪个都以为自己看错了。
+    zh_readme = read("README.zh-CN.md")
+    if zh_readme:
+        zh_match = re.search(r"\*\*当前版本\*\*：([0-9][0-9.]*)", zh_readme)
+        if not zh_match:
+            failures.append(
+                "README.zh-CN.md 里找不到「**当前版本**：x.y.z」—— "
+                "该行是 check-docs.py 的检查依据，不要改格式")
+        else:
+            zh_version = zh_match.group(1)
+            print(f"  README.zh-CN.md: {zh_version}")
+            if zh_version != code_version:
+                failures.append(
+                    f"版本号不一致：project.yml 是 {code_version}，"
+                    f"README.zh-CN.md 写的是 {zh_version}")
+
     # 版本格式：纯数字三段式。带字母的版本号会让自动更新静默失效。
     if not re.fullmatch(r"\d+\.\d+\.\d+", code_version):
         failures.append(
