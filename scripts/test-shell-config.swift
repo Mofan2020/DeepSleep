@@ -45,11 +45,12 @@ struct ShellConfigTests {
 
         // 生产路径：真实家目录。只 stat 不读内容。
         let realCandidates = ShellConfigService.candidates()
-        checkEqual("默认候选是 7 个", realCandidates.count, 7)
+        checkEqual("默认候选是 8 个", realCandidates.count, 8)
         checkEqual(
             "默认候选顺序",
             realCandidates.map(\.name),
-            [".zshenv", ".zprofile", ".zshrc", ".zlogin", ".bash_profile", ".bashrc", ".profile"]
+            [".zshenv", ".zprofile", ".zshrc", ".zlogin",
+             ".bash_profile", ".bash_login", ".profile", ".bashrc"]
         )
         let realHome = FileManager.default.homeDirectoryForCurrentUser.path
         check(
@@ -68,7 +69,7 @@ struct ShellConfigTests {
         defer { try? FileManager.default.removeItem(at: fakeHome) }
 
         let candidates = ShellConfigService.candidates(home: fakeHome)
-        checkEqual("假 HOME 下候选也是 7 个", candidates.count, 7)
+        checkEqual("假 HOME 下候选也是 8 个", candidates.count, 8)
         check(
             "假 HOME 下路径都在假目录下",
             candidates.allSatisfy { $0.url.path.hasPrefix(fakeHome.path) }
@@ -77,7 +78,77 @@ struct ShellConfigTests {
         checkEqual(
             "假 HOME 下候选顺序不变",
             candidates.map(\.name),
-            [".zshenv", ".zprofile", ".zshrc", ".zlogin", ".bash_profile", ".bashrc", ".profile"]
+            [".zshenv", ".zprofile", ".zshrc", ".zlogin",
+             ".bash_profile", ".bash_login", ".profile", ".bashrc"]
+        )
+
+        // MARK: - 加载顺序
+
+        print("\n== 加载顺序 ==")
+
+        // zsh 的顺序：.zshenv → .zprofile → .zshrc → .zlogin
+        checkEqual(
+            "zsh 加载链有 4 个文件",
+            ShellConfigShell.zsh.loadChain.map(\.name),
+            [".zshenv", ".zprofile", ".zshrc", ".zlogin"]
+        )
+        checkEqual(
+            "zsh 的 .zshenv 是每次运行都读",
+            ShellConfigService.stage(for: ".zshenv")?.when,
+            "每次运行 zsh"
+        )
+        checkEqual(
+            "zsh 的 .zshrc 是交互式才读",
+            ShellConfigService.stage(for: ".zshrc")?.when,
+            "交互式 shell 启动时"
+        )
+        checkEqual(
+            "zsh 的 .zlogin 在 .zshrc 之后",
+            ShellConfigService.stage(for: ".zlogin")?.when,
+            "登录 shell，在 .zshrc 之后"
+        )
+
+        // bash 的顺序：.bash_profile → .bash_login → .profile（三选一），.bashrc 靠 source
+        checkEqual(
+            "bash 加载链有 4 个文件",
+            ShellConfigShell.bash.loadChain.map(\.name),
+            [".bash_profile", ".bash_login", ".profile", ".bashrc"]
+        )
+        checkEqual(
+            "bash 的 .bash_profile 说明三选一",
+            ShellConfigService.stage(for: ".bash_profile")?.note,
+            "和 .bash_login、.profile 三选一，只读第一个存在的"
+        )
+        checkEqual(
+            "bash 的 .bashrc 说明要靠 source",
+            ShellConfigService.stage(for: ".bashrc")?.note,
+            "登录时不会被自动读，要靠 .bash_profile 里 source 一次"
+        )
+
+        // 每个候选文件都要能在加载链里找到
+        for name in ShellConfigService.candidateNames {
+            check(
+                "\(name) 在加载链里有位置",
+                ShellConfigService.stage(for: name) != nil
+            )
+        }
+
+        // 候选清单的顺序要与加载链一致（zsh 段、bash 段各自连续）
+        let zshOrder = ShellConfigService.candidateNames.filter { name in
+            ShellConfigService.shellKind(for: name) == .zsh
+        }
+        checkEqual(
+            "候选清单里 zsh 段与加载链同序",
+            zshOrder,
+            ShellConfigShell.zsh.loadChain.map(\.name)
+        )
+        let bashOrder = ShellConfigService.candidateNames.filter { name in
+            ShellConfigService.shellKind(for: name) == .bash
+        }
+        checkEqual(
+            "候选清单里 bash 段与加载链同序",
+            bashOrder,
+            ShellConfigShell.bash.loadChain.map(\.name)
         )
 
         // MARK: - 读

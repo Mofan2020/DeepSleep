@@ -92,14 +92,23 @@ struct ShellConfigView: View {
         return Button {
             select(file)
         } label: {
-            HStack(alignment: .firstTextBaseline, spacing: DS.Space.sm) {
-                Text(file.name)
-                    .font(.system(.body, design: .monospaced).weight(.medium))
-                    .lineLimit(1)
-                if !file.exists {
-                    Tag(text: "不存在", color: DS.Tone.idle)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(alignment: .firstTextBaseline, spacing: DS.Space.sm) {
+                    Text(file.name)
+                        .font(.system(.body, design: .monospaced).weight(.medium))
+                        .lineLimit(1)
+                    if !file.exists {
+                        Tag(text: "不存在", color: DS.Tone.idle)
+                    }
+                    Spacer(minLength: DS.Space.xs)
                 }
-                Spacer(minLength: DS.Space.xs)
+                // 什么时候被读写在这里，省得用户去查手册。
+                if let stage = ShellConfigService.stage(for: file.name) {
+                    Text(stage.when)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, DS.Space.xs)
@@ -153,6 +162,8 @@ struct ShellConfigView: View {
                      : "文件还不存在，保存时新建。")
                     .caption2()
 
+                loadOrderPanel(file)
+
                 TextEditor(text: $draft)
                     .font(.system(.body, design: .monospaced))
                     .frame(minHeight: 320)
@@ -182,6 +193,63 @@ struct ShellConfigView: View {
                 systemImage: "doc.text"
             )
         }
+    }
+
+    /// 加载顺序：这一族 shell 的启动文件按什么顺序被读。
+    ///
+    /// 摆在编辑器正上方，因为改启动文件最常踩的坑就是「改了这个文件
+    /// 为什么没生效」——多半是改错了文件，或者改的文件根本不在这一次
+    /// shell 会读的名单里。
+    private func loadOrderPanel(_ file: ShellConfigFile) -> some View {
+        let stages = file.shell.loadChain
+        return VStack(alignment: .leading, spacing: DS.Space.xxs) {
+            HStack(spacing: DS.Space.xs) {
+                Image(systemName: "list.number")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Text("\(file.shell.displayName) 的加载顺序")
+                    .font(.caption.weight(.semibold))
+                Spacer(minLength: 0)
+            }
+
+            ForEach(Array(stages.enumerated()), id: \.element.id) { index, stage in
+                let isCurrent = stage.name == file.name
+                HStack(alignment: .firstTextBaseline, spacing: DS.Space.xs) {
+                    Text("\(index + 1)")
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 12, alignment: .trailing)
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(spacing: DS.Space.xs) {
+                            Text(stage.name)
+                                .font(.system(.caption, design: .monospaced))
+                            if isCurrent {
+                                Tag(text: "当前", color: DS.Tone.info)
+                            }
+                        }
+                        Text(stage.when)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        if let note = stage.note {
+                            Text(note)
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+
+            Text(file.shell == .bash
+                 ? "登录时 .bash_profile、.bash_login、.profile 只会读第一个存在的那个。"
+                 : "非登录的交互式 shell 只读 .zshenv 和 .zshrc，.zprofile、.zlogin 都不读。")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(DS.Space.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .insetPanel(cornerRadius: DS.Radius.control)
     }
 
     /// 保存区。按钮标题直接写明会写哪个文件 —— 保存的是用户家目录里的

@@ -46,6 +46,57 @@ enum ShellConfigShell: String {
         case .bash: return "bash"
         }
     }
+
+    /// 这个 shell 的启动文件加载链，一行一条。
+    ///
+    /// 只列家目录里的文件：系统级的那几个（/etc/zshenv、/etc/profile …）
+    /// 归系统管，用户在这里改不了，写出来反而让人去找。
+    var loadChain: [ShellConfigStage] {
+        switch self {
+        case .zsh:
+            return [
+                ShellConfigStage(name: ".zshenv",
+                                 when: "每次运行 zsh",
+                                 note: "所有 shell 都会读，包括脚本"),
+                ShellConfigStage(name: ".zprofile",
+                                 when: "登录 shell 启动时",
+                                 note: "只跑一次的初始化"),
+                ShellConfigStage(name: ".zshrc",
+                                 when: "交互式 shell 启动时",
+                                 note: "别名、提示符写这里"),
+                ShellConfigStage(name: ".zlogin",
+                                 when: "登录 shell，在 .zshrc 之后",
+                                 note: "登录之后要做的事")
+            ]
+        case .bash:
+            return [
+                ShellConfigStage(name: ".bash_profile",
+                                 when: "登录 shell 启动时",
+                                 note: "和 .bash_login、.profile 三选一，只读第一个存在的"),
+                ShellConfigStage(name: ".bash_login",
+                                 when: "登录 shell 启动时",
+                                 note: "上面那个不存在时才读它"),
+                ShellConfigStage(name: ".profile",
+                                 when: "登录 shell 启动时",
+                                 note: "上面两个都不存在时才读它"),
+                ShellConfigStage(name: ".bashrc",
+                                 when: "交互式 shell 启动时",
+                                 note: "登录时不会被自动读，要靠 .bash_profile 里 source 一次")
+            ]
+        }
+    }
+}
+
+/// 启动文件在加载链上的位置。
+struct ShellConfigStage: Identifiable, Equatable {
+    /// 文件名。
+    let name: String
+    /// 什么时候被读。
+    let when: String
+    /// 还要注意什么。
+    let note: String?
+
+    var id: String { name }
 }
 
 /// 一个可编辑的 shell 配置文件。
@@ -86,12 +137,19 @@ enum ShellConfigService {
     /// 候选文件名，按「shell + 加载顺序」排列。
     ///
     /// zsh：.zshenv → .zprofile → .zshrc → .zlogin
-    /// bash：.bash_profile（通常再 source .bashrc）→ .bashrc
+    /// bash：.bash_profile → .bash_login → .profile（登录时三选一），
+    ///        .bashrc 由 .bash_profile 里 source 一次
     /// .profile 是 POSIX sh 的老写法，bash 语法是它的超集，用 bash -n 检查即可。
     static let candidateNames = [
         ".zshenv", ".zprofile", ".zshrc", ".zlogin",
-        ".bash_profile", ".bashrc", ".profile"
+        ".bash_profile", ".bash_login", ".profile", ".bashrc"
     ]
+
+    /// 某个文件在加载链上的位置。找不到时返回 nil。
+    static func stage(for fileName: String) -> ShellConfigStage? {
+        let shell = shellKind(for: fileName)
+        return shell.loadChain.first { $0.name == fileName }
+    }
 
     /// 候选文件清单（按 shell 与加载顺序）。
     ///
