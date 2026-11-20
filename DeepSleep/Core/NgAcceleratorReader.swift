@@ -9,10 +9,13 @@
 //  读得到）。走助手反而要求用户先装上新版助手才能看到这一格 —— 一个
 //  不需要提权的数据，不该被提权通道卡住。
 //
-//  NPU：macOS 没有把 Apple Neural Engine 的使用率暴露出来。整棵 IORegistry
-//  里没有 ANE 设备节点 → 读不到，界面上如实写「不可用」并说明原因。
-//  （`powermetrics` 确实会报 ANE 的**功耗**，但那要 root，而且报的是功耗
-//  不是使用率，所以不作为数据来源。）
+//  NPU：macOS **没有**把 Apple Neural Engine 的使用率暴露给应用 ——
+//  活动监视器在 Apple Silicon 上就没有 ANE 那一栏。ANE 硬件节点在
+//  IORegistry 里是有的（`ANEClientHints` / `H11ANEIn` 等），但里面没有
+//  任何使用率计数器，IOReport 的 `ANS2` 组里也只有电源状态和 AMC 带宽，
+//  没有算力占用。所以这一格如实写「不可用」并说明原因，不拿 0 冒充。
+//  （`powermetrics` 能报 ANE 的**活跃驻留率**，但那要 root，而且报的是
+//  驻留率不是使用率，所以不作为数据来源。）
 //
 //  解码与状态判定在 `Shared/NgAcceleratorMetrics.swift`（纯逻辑，可单测）。
 //
@@ -72,11 +75,30 @@ enum NgAcceleratorReader {
         let reason: NgNPUUnavailableReason?
     }
 
-    /// 找 ANE（Apple Neural Engine）设备节点。
+    /// ANE（Apple Neural Engine）节点在 IORegistry 里的类名。
     ///
-    /// macOS 27.2 / Apple M2 上实测：这三个类名一个都没有命中，
-    /// 整棵 IOService 树里也搜不到任何带 ANE / NEURAL 的节点。
-    private static let aneClassNames = ["IOANEDevice", "AppleANE", "AppleANEDevice"]
+    /// macOS 27.3 / M2 上实测：`IOANEDevice` / `AppleANE` / `AppleANEDevice`
+    /// 三个名字一个都没命中 —— 但 ANE 硬件确实在树里，只是类名不叫这个。
+    /// 真正存在的（类名 / 节点名）：
+    ///   - `ANEClientHints` —— 属性是空的
+    ///   - `H11ANEIn`（节点名 `H11ANE`）
+    ///   - `H1xANELoadBalancer`（节点名 `ANEDriverRoot`）
+    ///   - `H1xANELoadBalancerClient` / `H1xANELoadBalancerDirectPathClient`
+    ///   - DeviceTree 里的 `ane`（compatible = `ane,t8020`）
+    ///
+    /// 把这些都列上，是为了让「机器上有没有 ANE」这件事能被如实判断：
+    /// 找不到 → 这台机器没有 ANE 硬件；找到了但里面没有使用率计数器
+    /// → 系统没公开这个数。两种情况在界面上要分开说。
+    private static let aneClassNames = [
+        "ANEClientHints",
+        "H11ANEIn",
+        "H1xANELoadBalancer",
+        "H1xANELoadBalancerClient",
+        "H1xANELoadBalancerDirectPathClient",
+        "IOANEDevice",
+        "AppleANE",
+        "AppleANEDevice",
+    ]
 
     private static func readNPU() -> NPUReading {
         for className in aneClassNames {

@@ -11,7 +11,8 @@
 //   - 三秒一次：SystemMonitor.liveSnapshot()（走特权助手拿进程快照）。
 //     进程排行与整机累计口径来自这里；助手不可用时这些项显示「不可用」。
 //   - 三秒一次：GPU / NPU 使用率（本机 IOKit 的 IOAccelerator 性能计数器，
-//     不需要特权助手）。NPU 在 macOS 上没有公开接口，那一格显示「不可用」。
+//     不需要特权助手）。NPU 在 macOS 上没有公开的使用率计数器，那一格显示
+//     「不可用」并说明原因。
 //
 //  为什么曲线用本机采样而不是助手：助手一次快照要 3~5 秒，拿来喂
 //  每秒一个点的曲线会变成台阶。曲线的目的是看趋势，1 秒粒度才有意义；
@@ -1150,20 +1151,20 @@ struct MonitoringView: View {
     /// NPU 那一格的状态词。
     ///
     /// macOS 没有公开 NPU 使用率，所以这一格基本上永远是「不可用」。
-    /// 原因要说清楚：是系统里根本没有 ANE 设备节点，还是有节点但没有
-    /// 使用率计数器 —— 两种情况以后 macOS 补上接口时的表现不一样。
+    /// 原因要说清楚：是这台机器上根本没有 ANE 硬件，还是有硬件但系统
+    /// 没给出使用率计数器 —— 两种情况以后 macOS 补上接口时的表现不一样。
     private var npuStatusText: String {
         guard let sample = snapshot.accelerator else {
             return "不可用 · 还没有采到加速器数据"
         }
         switch sample.npuUnavailableReason {
         case .noANEDevice:
-            return "不可用 · 系统没有暴露 NPU 设备节点"
+            return "不可用 · 这台机器没有 NPU 硬件"
         case .noUtilizationCounter:
-            return "不可用 · NPU 节点里没有使用率计数器"
+            return "不可用 · 系统没有公开 NPU 使用率"
         case nil:
             if sample.hasNPUReading { return "已读数" }
-            return "不可用 · 系统没有暴露 NPU 使用率"
+            return "不可用 · 系统没有公开 NPU 使用率"
         }
     }
 

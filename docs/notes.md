@@ -4161,3 +4161,104 @@ DeepSleep 自己，拖一下滑块就把自己的声音调没了；更要命的�
 「workflow 直接把累积的 release-notes.md 当 release body」，里面没有那个
 词。关键词要跟报错文案对得上，不然用例红了而拦截其实是生效的。
 
+## NPU 使用率：macOS 没有公开这个数（2026-11-20）
+
+### 结论
+
+Apple Silicon 的 NPU（ANE）**有使用率，但 macOS 不把它暴露给应用**。
+活动监视器在 M 系列上没有 ANE 那一栏（Intel Mac 的 T2 才有）。所以
+DeepSleep 这一格如实显示「不可用」。
+
+### 之前写错了什么
+
+原来的代码和文案说「整棵 IORegistry 里没有 ANE 设备节点」。这是错的。
+实测（macOS 27.3 / M2，Mac14,7）：
+
+- `IOANEDevice` / `AppleANE` / `AppleANEDevice` —— 三个类名**一个都没命中**，
+  但这不代表硬件不在，只是类名不叫这个
+- 真正在树里的：`ANEClientHints`（属性是空的）、`H11ANEIn`（节点名 `H11ANE`，
+  17 项属性）、`H1xANELoadBalancer`（节点名 `ANEDriverRoot`，11 项属性）、
+  DeviceTree 里的 `ane`（compatible = `ane,t8020`）
+
+所以「找不到节点」和「找到节点但没计数器」是两回事，界面上的说法要分开。
+现在 `aneClassNames` 里列了真实的类名，找不到才报「这台机器没有 NPU 硬件」，
+找到但没有使用率计数器就报「系统没有公开 NPU 使用率」。
+
+### 查过的路，都不通
+
+IOReport 的 `ANS2` 组一共 167 个通道，逐个看过，没有一个叫 utilization：
+
+- `ANS2/IOP State`（9 状态：unused / Off / Sleep / Quiesce / Wait Vr /
+  Vers OK / Ready / Pwr Dwn / Running）—— 电源状态机。空闲时 `Running`
+  的 duty 恒为 1.0，负载下也是 1.0，量的是通电与否，不是忙碌度
+- `ANS2/Power`（8 通道）—— `Duty cycle`（channel id `RTDutyCl`）的 v0 恒为 0
+- `ANS2/Performance/Thread time`（32 个 ANE 固件线程：Null、Cmd、DataXfer、
+  PreNand、PostNand、aspcore、SVC、IRQ …）—— duty 之和恰好 1.0000，读法是对的，
+  但**空闲时在 0.16~0.5 乱跳，负载下同样乱跳**。均值对照还显示负载下
+  `Null` 线程占比反而更高（0.40 → 0.70）、`Cmd` 更低（0.17 → 0.07）：
+  推理交给 ANE 硬件后，固件自己的 CPU 反而闲下来。这个通道量的是
+  固件 CPU 忙碌度，跟算力占用不是一回事
+- `ANS2/BW Monitor`（8 个 AMC 带宽计数器：Raid Write / Raid Read /
+  AES F2H / AES H2F / VLane Write / VLane Read / P0 DLink Write /
+  P0 DLink Read）—— 单位是 128 KiB 一格（unit 0x0900820000000000：
+  数量 9 = 数据量，刻度 cardinal 0x08 = 4 KiB 页 × IEC 指数 0x20 = 32）。
+  这个**确实随 ANE 活动变化**（见下），但它是数据搬运流量，
+  不是算力占用 —— 同样的算力、不同数据复用率，带宽差很远
+
+### 唯一能测出区别的：AMC 带宽（但没采用）
+
+用 CoreML 造了个 3x3 卷积模型（`coremlcompiler` 编出 `model.espresso.net`，
+espresso 就是 ANE 编译器产物），Swift 循环推理把 ANE 打满。负载确实落在
+ANE 上：`RTSlpCnt` 从 4 涨到 7、`RTWakeCnt` 从 4 涨到 5，ANE 在反复进出活跃。
+
+AMC 带宽对照（单位：格/秒）：
+
+| 通道 | 空闲 | 负载 |
+|---|---|---|
+| AES F2H | 925696 / 212992 | 10747904 / 27283456 |
+| VLane Write | 575296 / 37600 | 2367520 / 1826976 |
+| P0 DLink Write | 15137120 / 1500928 | 76759200 / 115034560 |
+| P0 DLink Read | 0 | 1684224 / 858624 |
+
+`P0 DLink Write` 涨了约 7.7 倍。**但没有采用**：它是流量不是占用率，
+转成百分比需要一个「满载基准」，而基准随芯片代际和散热状态浮动，
+报出来的数只能是估算。
+
+### IOReport 的 API 契约（踩过的坑）
+
+`/usr/lib/libIOReport.dylib` 没有公开头文件，签名是试出来的：
+
+- `IOReportCopyChannelsInGroup(group, subGroup, 0, 0, 0)` —— **5 个参数**。
+  传 2 个拿不到通道
+- `IOReportStateGetCount` / `GetNameForIndex` / `GetResidency` / `GetCurrent` /
+  `GetDutyCycle(el, index, duration)` 只吃**字典**元素。喂非字典会崩在
+  `getChannelType` → `objectForKey:` 里
+- `IOReportStateGetDutyCycle` 第三个参数是时长，传 0 / 1ms / 1s 结果相同；
+  取 1e9 时各状态 duty 之和恰好 1.0000
+- **必须** `IOReportCreateSubscription` + 两次 `IOReportCreateSamples` +
+  `IOReportCreateSamplesDelta` 求差，拿到的才是 delta 通道元素。在全量通道表上
+  直接调 `StateGet*` 只会返回 INT64_MIN
+- 通道元素字典里的 `RawElements` 是 CFData，每 64 字节一个 `IOReportElement`：
+  `provider_id` / `channel_id` / `channel_type` / `timestamp` / 4 个 uint64。
+  state 格式（`report_format == 2`）时每 4 个 uint64 是一个状态的四元组：
+  `state_id` / `intransitions` / `upticks` / `last_intransition`
+- `LegendChannel` 里的元素**不是 CF 对象**，是裸结构体指针。用 CF API 读会
+  打出乱七八糟的 type id
+
+`powermetrics` 报的是 `ANE %u SW active residency`，但它要 root，而且靠
+`IODeviceTree:/arm-io/ane%u` 这个路径 —— 本机 M2 上这个路径**不存在**
+（DT 里的节点名就叫 `ane`），它在 M2 上大概率也报不出 ANE。
+
+### 没验证的部分
+
+- `ANS2` 这个组名在 M1 / M3 / M4 上是否一样，没在别的机型上试过
+- `IOReport` 的通道表在 macOS 26 与 27 之间是否有差异，只在 27.3 上验过
+- `powermetrics` 在 M2 上到底能不能报出 ANE，没法验（要 root，本机 sudo
+  需要交互输入密码）
+
+### 探针留在哪
+
+`~/.hermes/cache/scratch/npu-probe/probe10.c` 到 `probe32.c`：IOReport 通道
+枚举、duty cycle 读法、AMC 带宽对照、ANE 节点扫描。scratch 目录 24 小时
+不碰会被清掉，这些是一次性验证工具，不是仓库资产。
+

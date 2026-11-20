@@ -123,13 +123,13 @@ struct NgAcceleratorMetricsTests {
 
         let noDevice = NgAcceleratorDecoder.decodeStatistics(
             [:], npuPercent: nil, npuUnavailableReason: .noANEDevice)
-        check("系统没有 ANE 节点时原因是 noANEDevice",
+        check("机器上没有 NPU 硬件时原因是 noANEDevice",
               noDevice.npuUnavailableReason == .noANEDevice)
         check("NPU 没有读数", !noDevice.hasNPUReading)
 
         let noCounter = NgAcceleratorDecoder.decodeStatistics(
             [:], npuPercent: nil, npuUnavailableReason: .noUtilizationCounter)
-        check("有节点但没计数器时原因是 noUtilizationCounter",
+        check("有 NPU 硬件但系统没给使用率时原因是 noUtilizationCounter",
               noCounter.npuUnavailableReason == .noUtilizationCounter)
 
         let withValue = NgAcceleratorDecoder.decodeStatistics(

@@ -13,8 +13,9 @@
 //     里面有 "Device Utilization %" / "Renderer Utilization %" /
 //     "Tiler Utilization %" 三个计数器。普通用户进程就能读，不需要特权助手。
 //   - NPU：macOS 没有把 Apple Neural Engine 的使用率暴露给应用。
-//     整棵 IORegistry 里找不到 ANE 设备节点（`IOANEDevice` / `AppleANE`
-//     都没有），也没有任何可用的使用率计数器 → 读不到。
+//     ANE 硬件节点在 IORegistry 里是有的（`ANEClientHints` / `H11ANEIn` 等），
+//     但里面没有任何使用率计数器，IOReport 的 `ANS2` 组里也只有电源状态
+//     和 AMC 带宽，没有算力占用 → 读不到。
 //
 //  规矩跟仓库其它地方一致：**读不到就是 nil**，界面上显示「不可用」并说明
 //  原因，不拿 0 冒充。
@@ -29,10 +30,13 @@ import Foundation
 /// 界面上要按这个说人话：光写「不可用」用户没法判断是系统不支持、
 /// 还是这台机器的读数出不来。
 public enum NgNPUUnavailableReason: String, Sendable, Equatable {
-    /// 系统的 IORegistry 里没有 ANE（Apple Neural Engine）设备节点。
-    /// macOS 27.2 / Apple M2 上实测就是这样。
+    /// 这台机器上找不到 ANE 节点 —— 没有 Apple Silicon 那块 NPU。
     case noANEDevice
-    /// 有 ANE 节点，但节点里没有暴露使用率计数器。
+    /// 找到 ANE 节点了，但系统没有在里面公开使用率计数器。
+    ///
+    /// macOS 就是这样：活动监视器在 Apple Silicon 上也没有 ANE 那一栏，
+    /// 硬件在（`ANEClientHints` / `H11ANEIn` 等节点都在注册表里），
+    /// 但没有任何地方给出算力占用率。
     case noUtilizationCounter
 }
 
